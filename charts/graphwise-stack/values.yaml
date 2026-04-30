@@ -1,0 +1,188 @@
+####################################################################
+# graphwise-stack — top-level umbrella values.
+#
+# Most teammates only need to change global.subdomain. Everything
+# else cascades from there.
+####################################################################
+
+global:
+  # Per-teammate subdomain. Required. All app hostnames are computed:
+  #   poolparty.<subdomain>.<baseDomain>, auth.<subdomain>.<baseDomain>,
+  #   graphrag.<subdomain>.<baseDomain>, ...
+  subdomain: ""
+  baseDomain: "semantic-proof.com"
+
+  # Image pull secret name for the Graphwise private registry.
+  # Created by scripts/cluster-bootstrap.sh in the namespaces that
+  # need it. Referenced by the vendored graphrag chart.
+  imagePullSecrets:
+    - name: graphwise
+
+####################################################################
+# Infrastructure pieces this umbrella owns directly (no sub-chart):
+# - Keycloak operator CR + CNPG Postgres for it
+# - n8n Postgres (CNPG cluster + bootstrap Secrets)
+# - GraphRAG ancillary Secrets/ConfigMaps
+####################################################################
+
+keycloak:
+  # Keycloak CR managed by the operator (installed by cluster-bootstrap.sh).
+  # Single instance for demo (the operator default of 2 chews RAM).
+  enabled: true
+  name: graphwise-keycloak
+  namespace: keycloak
+  instances: 1
+  postgres:
+    name: keycloak-postgres
+    instances: 1
+    storage: 5Gi
+    superuserPassword: "change-me-super"
+    appUsername: keycloak
+    appPassword: "change-me-app"
+  # Helm post-install/post-upgrade Job that creates the master-realm
+  # admin user PoolParty's chart expects (poolparty_auth_admin / admin)
+  # so a fresh `reset-helm.sh` run lands working out of the box. See
+  # templates/keycloak-bootstrap-admin-job.yaml for the rationale.
+  bootstrapAdmin:
+    enabled: true
+    username: poolparty_auth_admin
+    password: admin
+    # Image with kcadm.sh. Pin to the same version as the operator
+    # in scripts/cluster-bootstrap.sh (KEYCLOAK_OPERATOR_VERSION).
+    image: quay.io/keycloak/keycloak:26.4.2
+
+n8nPostgres:
+  enabled: true
+  name: graphrag-postgres-n8n
+  namespace: graphrag
+  instances: 1
+  storage: 5Gi
+  superuserPassword: "change-me-super"
+  appUsername: n8n
+  appPassword: "change-me-app"
+
+graphrag-secrets:
+  # Secrets / ConfigMap consumed by the vendored graphrag chart's
+  # values.example.yaml pattern. Idempotent — re-installs replace.
+  enabled: true
+  namespace: graphrag
+
+  # Secret graphrag-conversation-database-credentials
+  conversation:
+    dbUsername: "graphrag_conversation"
+    dbPassword: "change-me-conv"
+
+  # Secret graphrag-conversation-keycloak-client. clientSecret must
+  # match the conversation-api-client secret in the graphrag realm
+  # (keycloak-realms.graphragConversationClientSecret).
+  conversationKeycloak:
+    clientId: "conversation-api-client"
+    clientSecret: "change-me-please"
+    scope: "openid"
+
+  # ConfigMap graphrag-components-vector-database. We reuse
+  # poolparty-elasticsearch as the vector store (Q3: option a).
+  vectorDB:
+    vectorStore: "elasticsearch"
+    elasticUrl: "http://poolparty-elasticsearch.graphwise:9200"
+    vectorIndex: "graphrag-vectors"
+    vectorFieldName: "embedding"
+
+  # Secret graphrag-components-aws-credentials (Bedrock)
+  awsCredentials:
+    region: "us-east-1"
+    accessKeyId: "REPLACE_WITH_REAL_AWS_ACCESS_KEY_ID"
+    secretAccessKey: "REPLACE_WITH_REAL_AWS_SECRET_ACCESS_KEY"
+
+  # Secret graphrag-n8n-database-credentials
+  n8nDatabase:
+    username: "n8n"
+    password: "change-me-app"
+
+  # Secret graphrag-n8n-encryption — long random key, MUST stay
+  # constant or n8n credentials become unreadable.
+  n8nEncryption:
+    key: "change-me-32-character-random-string"
+
+  # Secret graphrag-n8n-license — n8n Enterprise activation key.
+  n8nLicense:
+    activationKey: "REPLACE_WITH_REAL_N8N_LICENSE_KEY"
+
+####################################################################
+# Sub-chart overrides
+####################################################################
+
+# Realm imports.
+keycloak-realms:
+  enabled: true
+  keycloakCRName: graphwise-keycloak
+  graphragConversationClientSecret: "change-me-please"
+
+# PoolParty's Elasticsearch (also vector store for graphrag-components).
+poolparty-elasticsearch:
+  enabled: true
+
+# Two GraphDB instances.
+graphdb-embedded:
+  enabled: true
+  externalUrl: ""           # filled by templates/graphdb-values.yaml at install time? No — fill via post-install? See below.
+  ingress:
+    host: ""
+
+graphdb-projects:
+  enabled: true
+  externalUrl: ""
+  ingress:
+    host: ""
+
+# PoolParty.
+poolparty:
+  enabled: true
+  externalUrl: ""
+  keycloak:
+    authUrl: ""
+  cors:
+    allowedOrigins: ""
+  urlBase:
+    scheme: ""
+    vocabulary: ""
+    user: ""
+    context: ""
+  ingress:
+    host: ""
+
+# Console landing page on the apex.
+console:
+  enabled: true
+  ingress:
+    host: ""
+
+# Optional add-on apps.
+addons:
+  enabled: true
+  adf:
+    enabled: true
+    externalUrl: ""
+    keycloak:
+      url: ""
+  semantic-workbench:
+    enabled: true
+    externalUrl: ""
+    keycloak:
+      url: ""
+  graphviews:
+    enabled: true
+    externalUrl: ""
+  rdf4j:
+    enabled: true
+    externalUrl: ""
+  unifiedviews:
+    enabled: true
+    externalUrl: ""
+
+# Note: vendored GraphRAG values (chatbot/conversation/components/
+# workflows) are NOT defined here -- the graphrag chart is installed
+# as a separate Helm release in the graphrag namespace by
+# scripts/reset-helm.sh. Deployment-agnostic defaults live in
+# charts/vendor/graphrag/values-graphwise.yaml; per-subdomain
+# overrides are emitted by scripts/render-values.sh.

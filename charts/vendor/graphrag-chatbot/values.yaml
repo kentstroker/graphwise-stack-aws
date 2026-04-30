@@ -1,0 +1,575 @@
+###############################################################################
+# Main configuration file                                                     #
+# To override single property use --set                                       #
+# To override multiple, provide another values-override.yaml with the -f flag #
+# See https://helm.sh/docs/chart_template_guide/values_files/                 #
+###############################################################################
+
+#########################
+# Global Configurations #
+#########################
+
+global:
+  # Overrides image.registry
+  # Can be used to override it globally when using umbrella charts.
+  imageRegistry: ""
+
+  # Inserts additional pull secret references together along with any from .Values.image.pullSecrets
+  # Can be used to override it globally when using umbrella charts.
+  # Values are processed as Helm templates.
+  # Ref: https://kubernetes.io/docs/concepts/configuration/secret/#using-imagepullsecrets
+  #
+  # Example:
+  # imagePullSecrets:
+  #   - name: my-pull-secret
+  imagePullSecrets: []
+
+###############################
+#   Metadata Configurations   #
+# Naming and labels overrides #
+###############################
+
+# Overrides the name of the chart affecting the names of the GraphRAG Chatbot resources.
+nameOverride: ""
+
+# Overrides the naming of all GraphRAG Chatbot resources, effectively removing the chart's name and the release name prefix.
+# This override takes precedence over anything in .Values.nameOverride
+fullnameOverride: ""
+
+# Overrides the deployment namespace in case of multi-namespace deployments, for example when using umbrella charts where some sub-charts should be
+# deployed in different namespaces.
+# This affects every resource deployed by this chart.
+# The default value is .Release.Namespace if this is left unspecified.
+namespaceOverride: ""
+
+# Additional common labels to add to all GraphRAG Chatbot resources.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+#
+# Example:
+# labels:
+#   foo: bar
+#   some-label: {{ .Values.someValue }}
+labels: {}
+
+# Additional common annotations to add to all GraphRAG Chatbot resources.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+#
+# Example:
+# annotations:
+#   foo: bar
+#   some-annotation: {{ .Values.someValue }}
+annotations: {}
+
+#########################################
+# GraphRAG Chatbot Image Configurations #
+#########################################
+
+# Image configurations for GraphRAG Chatbot service.
+# Ref: https://kubernetes.io/docs/concepts/containers/images/
+image:
+  # The registry that hosts the GraphRAG Chatbot image.
+  # The default is to pull it from the official Docker registry, but this can be overridden to pull from other public or private registries.
+  registry: maven.ontotext.com
+
+  # The repository name of the GraphRAG Chatbot image.
+  repository: graphrag-ui/chatbot
+
+  # Image tag that corresponds to the version of GraphRAG Chatbot.
+  # By default, the chart uses .Chart.AppVersion to construct the full image name.
+  # Use this to override the value from .Chart.AppVersion and effectively deploy a custom GraphRAG Chatbot version.
+  tag: ""
+
+  # Expected SHA256 digest of the used GraphRAG Chatbot image, e.g. "sha256@abc"
+  # Use the digest to make sure you are always deploying the exact same GraphRAG Chatbot image.
+  # Defining this would override .Chart.AppVersion and image.tag
+  digest: ""
+
+  # Defines the policy for pulling images
+  # Ref: https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy
+  pullPolicy: IfNotPresent
+
+  # Secrets for pulling GraphRAG Chatbot's image from secured registries.
+  # Values are processed as Helm templates.
+  # Ref: https://kubernetes.io/docs/concepts/configuration/secret/#using-imagepullsecrets
+  #
+  # Example:
+  # pullSecrets:
+  #   - name: my-pull-secret
+  pullSecrets: []
+
+##########################
+# Scaling Configurations #
+##########################
+
+# Number of GraphRAG Chatbot pods to be deployed as part of the Deployment resources.
+replicas: 1
+
+# Horizontal Pod Autoscaler configuration that can automatically scale the number of GraphRAG Chatbot pods based on
+# resource utilization.
+# Ref: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+###################################
+# GraphRAG Chatbot Configurations #
+###################################
+
+# GraphRAG Chatbot runtime configuration settings.
+# For reference, see https://gitlab.ontotext.com/graphwise-graphrag/graphrag-ui
+configuration:
+
+  # The external URL at which GraphRAG Chatbot would be accessible.
+  # This can be a publicly available domain name, an internal one or even a Kubernetes service address.
+  #
+  # It also configures the hostname in the default Ingress resource, if enabled.
+  # The value is processed as a Helm template.
+  #
+  # Note: If the external URL uses HTTPS and the default Ingress is enabled, you have to configure .Values.ingress.tls
+  #
+  # Note: When deploying on a context path different from /, you need to properly configure the Ingress according to the requirements of the
+  # Ingress controller implementation.
+  externalUrl: http://graphrag.127.0.0.1.nip.io/
+
+  # Configurations for inserting an additional NGINX configuration snippet into the default.conf file that will proxy pass requests to the
+  # GraphRAG Conversation API via the chatbot NGINX.
+  #
+  # By default, the proxy pass is enabled. so you don't need to expose the Conversation API separately.
+  # You just need to set GRAPHRAG_BACKEND_URL with a context path.
+  conversationProxy:
+    # Toggles the proxy pass configuration snippet in the default NGINX configuration.
+    enabled: true
+
+    # The service URL where the GraphRAG Conversation API is accessible.
+    #
+    # This is used to configure proxy locations in the NGINX configuration that will redirect requests to the GraphRAG Conversation API.
+    # Ideally, this should be the internal service address of the GraphRAG Conversation API.
+    #
+    # The value is processed as a Helm template.
+    url: http://conversation:8080/
+
+  # Main configurations for the GraphRAG Chatbot web application.
+  # These are environment variables that are passed to the GraphRAG Chatbot Nginx which then uses them to configure different URLs.
+  properties:
+    GRAPHRAG_BACKEND_URL: "http://graphrag.127.0.0.1.nip.io/api"
+    GRAPHRAG_KEYCLOAK_URL: "http://auth.127.0.0.1.nip.io/"
+    GRAPHRAG_KEYCLOAK_REALM: "graphrag"
+    GRAPHRAG_KEYCLOAK_CLIENT_ID: "graphrag-web"
+
+  # NGINX configurations for the GraphRAG Chatbot web application.
+  nginx:
+    # Reference to an existing ConfigMap resource containing a default.conf NGINX configuration file for the GraphRAG Chatbot web application.
+    # Providing this overrides the default.conf file that comes with the chart.
+    #
+    # The value is processed as a Helm template.
+    defaultConfConfigmap: ""
+    # The key in the ConfigMap resource that contains the default.conf NGINX configuration file.
+    defaultConfConfigmapKey: "default.conf"
+
+##########################
+# Ingress Configurations #
+##########################
+
+# Configurations for the default Ingress resource for GraphRAG Chatbot.
+#
+# The default Ingress in this chart makes no assumptions of what Ingress controller is being used, it's up to you to define any specific annotations
+# required by the controller implementation in your cluster.
+#
+# Ref: https://kubernetes.io/docs/concepts/services-networking/ingress/
+ingress:
+  # Toggles the deployment of the default Ingress resource.
+  enabled: true
+  # Specifies the ingress controller implementation that will control this Ingress resource.
+  # Not defining this would result in using the default ingress controller in the cluster, if there is one.
+  className: ""
+  # Additional labels to append to the Ingress resource.
+  # Values are processed as Helm templates.
+  labels: {}
+  # Additional annotations to append to the Ingress resource.
+  # Values are processed as Helm templates.
+  annotations: {}
+  # If set, overrides the host from .Values.configuration.externalUrl
+  host: ""
+  # If set, overrides the context path from .Values.configuration.externalUrl
+  path: ""
+  # Sets the ingress path type.
+  # If you need to use ImplementationSpecific, make sure to set any annotations needed by the controller implementation.
+  pathType: Prefix
+  # Configures SSL termination on Ingress level.
+  # Ref: https://kubernetes.github.io/ingress-nginx/examples/tls-termination/
+  tls:
+    # Feature toggle for SSL termination. Disabled by default.
+    # If TLS is enabled, the .Values.configuration.externalUrl should also be updated to use HTTPS.
+    enabled: false
+    # Name of a Kubernetes Secret object with the key and certificate.
+    # If TLS is enabled, it's required to be provided, depending on the deployment.
+    # This could be an existing Secret or one that is not yet created.
+    secretName: ""
+  # List of additional hostnames to append to the Ingress resource.
+  # Values are processed as Helm templates.
+  extraHosts: []
+  # List of additional TLS records to append to the Ingress resource.
+  # Values are processed as Helm templates.
+  extraTLS: []
+
+##########################
+# Service Configurations #
+##########################
+
+# Configurations for GraphRAG Chatbot Service.
+# Ref: https://kubernetes.io/docs/concepts/services-networking/service/
+service:
+  # Enables or disables the Service deployment
+  enabled: true
+  # Additional labels to append to the Service resource.
+  # Values are processed as Helm templates.
+  labels: {}
+  # Additional annotations to append to the Service resource.
+  # Values are processed as Helm templates.
+  annotations: {}
+  # Service type
+  # Ref: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+  type: ClusterIP
+  # Ports exposed by the Service.
+  # Note: If you want to add additional ports, use .Values.service.extraPorts.
+  ports:
+    # Port mapped to GraphRAG Chatbot HTTP API.
+    http: 8080
+  # Exposes the Service on a specific node port on the host machine when "serviceType: NodePort"
+  # If left undefined, K8S will pick a random port from the node port range of the cluster.
+  nodePort: ""
+  # Defines the policy for treating external ingress traffic.
+  # By default, Cluster does not preserve client IPs. Change to Local to preserve them.
+  # See https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip
+  externalTrafficPolicy: ""
+  # NodePort used by external load balancers when the external traffic policy is set to Local.
+  # By default, Kubernetes will assign a random port, use this to override it.
+  healthCheckNodePort: ""
+  # Defines the class that should select a particular load balancer implementation.
+  # By default, Kubernetes will assign the cluster default implementation, use this to override it.
+  # Ref: https://kubernetes.io/docs/concepts/services-networking/service/#load-balancer-class
+  loadBalancerClass: ""
+  # Source IP ranges for restricting external ingress traffic
+  loadBalancerSourceRanges: []
+  # External IP addresses at which the Service will be exposed
+  # Ref: https://kubernetes.io/docs/concepts/services-networking/service/#external-ips
+  externalIPs: []
+  # Additional ports to expose with the Service.
+  extraPorts: []
+
+##############################
+# Persistence Configurations #
+##############################
+
+# Configurations for an emptyDir volume where the chatbot configuration files are stored.
+# This is used to allow the chatbot to be configured at runtime by NGINX, in a read-only file system.
+# To avoid this volume, you need to disable the strict security context, which is not recommended.
+# This volume enables an init container that will copy the existing configuration files from the image to the volume.
+chatbotConfigVolume:
+  # Toggles the config folder emptyDir volume creation.
+  # - If enabled, the Deployment will use an emptyDir volume for /usr/share/nginx/html/config/ AND will copy the existing files from the image.
+  # - If disabled, the chart won't create and mount ephemeral volumes for /usr/share/nginx/html/config/.
+  enabled: true
+  # Default location of the config directory inside the container where the empty volume will be mounted.
+  mountPath: /usr/share/nginx/html/config/
+  # Configurations for an emptyDir volume to be used for /var/cache/nginx.
+  # Ref: https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/
+  spec:
+    # Default emptyDir limit, override to your needs.
+    sizeLimit: 1Gi
+
+# Configurations for an emptyDir volume for the Nginx cache folder in each GraphRAG Chatbot container.
+# Because the default security context in .Values.securityContext configures the root filesystem to be in read-only mode, certain features
+# cannot create and write files in /var/cache/nginx. If you don't use a read-only root filesystem, you can disable this with .Values.nginxCacheTempVolume.enabled
+nginxCacheTempVolume:
+  # Toggles the temp folder emptyDir volume creation.
+  # - If enabled, the Deployment will use an emptyDir volume for /var/cache/nginx.
+  # - If disabled, the chart won't create and mount ephemeral volumes for /var/cache/nginx.
+  enabled: true
+  # Default location of the cache directory inside the container where the empty volume will be mounted.
+  mountPath: /var/cache/nginx
+  # Configurations for an emptyDir volume to be used for /var/cache/nginx.
+  # Ref: https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/
+  spec:
+    # Default emptyDir limit, override to your needs.
+    sizeLimit: 1Gi
+
+# Configurations for an emptyDir volume for the /run folder in each GraphRAG Chatbot container.
+# Because the default security context in .Values.securityContext configures the root filesystem to be in read-only mode, certain features
+# cannot create and write files in /run. If you don't use a read-only root filesystem, you can disable this with .Values.runTempVolume.enabled
+runTempVolume:
+  # Toggles the temp folder emptyDir volume creation.
+  # - If enabled, the Deployment will use an emptyDir volume for /run.
+  # - If disabled, the chart won't create and mount ephemeral volumes for /run.
+  enabled: true
+  # Default location of the run directory inside the container where the empty volume will be mounted.
+  mountPath: /run/
+  spec:
+    # Default emptyDir limit, override to your needs.
+    sizeLimit: 1Gi
+
+#############################
+# Deployment Configurations #
+#############################
+
+# Configures the strategy of updating Deployment Pods.
+# Ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment
+updateStrategy:
+  type: RollingUpdate
+
+# Changes the maximum number of revisions that are kept.
+revisionHistoryLimit: 10
+
+# Grace period in seconds before terminating the Pods.
+# Ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination
+terminationGracePeriodSeconds: 120
+
+# Toggles the auto mounting of API credentials token into the Pods.
+# Enable this if you need to contact either the API server or need web identity credentials for federated authentication in cloud APIs.
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/#opt-out-of-api-credential-automounting
+automountServiceAccountToken: false
+
+# Overrides the default Kubernetes scheduler.
+# See https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/#specify-schedulers-for-pods
+schedulerName: ""
+
+# Overrides the Pod's DNS settings.
+# Ref: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-dns-config
+dnsConfig: {}
+
+# Defines the Pod's policy for DNS resolution.
+# Ref: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy
+dnsPolicy: ""
+
+# Name of an existing PriorityClass to assign, defining the importance of the pods compared to other pods in the cluster.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
+priorityClassName: ""
+
+# Overrides the default GraphRAG Chatbot container command.
+# Use only for troubleshooting!
+# See https://kubernetes.io/docs/tasks/inject-data-application/define-command-argument-container/
+command: []
+
+# Overrides the default GraphRAG Chatbot container command's arguments.
+# Use only for troubleshooting!
+# See https://kubernetes.io/docs/tasks/inject-data-application/define-command-argument-container/
+args: []
+
+# Ports used by the GraphRAG Chatbot container
+# Note: If you want to add additional ports, use .Values.extraContainerPorts.
+containerPorts:
+  # Port mapped to GraphRAG Chatbot Nginx listener.
+  http: 8080
+
+# Additional labels to append to the Pod definition.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+podLabels: {}
+
+# Additional annotations to append to the Pod definition.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+podAnnotations: {}
+
+###################################
+# Security Context Configurations #
+###################################
+
+# Defines privilege and access control settings for all containers in the GraphRAG Chatbot Pod.
+# See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+# Defines privilege and access control settings for the container running GraphRAG Chatbot.
+# See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-container
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# Defines privilege and access control settings for the init containers.
+# See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-container
+initContainerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+#############################
+# Scheduling Configurations #
+#############################
+
+# Selector labels to match when selecting nodes.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector
+# See https://kubernetes.io/docs/tasks/configure-pod-container/assign-pods-nodes/
+nodeSelector: {}
+
+# Node and pod affinity & anti affinity configurations for constraining the Pod scheduling.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity
+affinity: {}
+
+# Default podAntiAffinity rule ensuring that GraphRAG Chatbot pods are scheduled on different Kubernetes nodes.
+#
+# Possible values for .Values.podAntiAffinity.preset are:
+# - "soft" (default) - Configures a preferredDuringSchedulingIgnoredDuringExecution rule.
+# - "hard" - Configures a requiredDuringSchedulingIgnoredDuringExecution rule.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity
+podAntiAffinity:
+  enabled: true
+  preset: soft
+  topology: kubernetes.io/hostname
+
+# List of taint tolerations.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+tolerations: []
+
+# Configurations for spreading Pods across different failure domains.
+# Values are processed as Helm templates.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#pod-topology-spread-constraints
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+topologySpreadConstraints: []
+
+##########################
+# Resource Configuration #
+##########################
+
+# Resource configurations for the GraphRAG Chatbot containers.
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/assign-pods-nodes/
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    memory: 1Gi
+    cpu: 500m
+
+# Resource configurations for init containers.
+initContainerResources:
+  limits:
+    memory: 16Mi
+    cpu: 50m
+  requests:
+    memory: 16Mi
+    cpu: 50m
+
+#########################
+# Probes Configurations #
+#########################
+
+# Ref: https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/
+
+# Configurations for the GraphRAG Chatbot container startup probe.
+startupProbe:
+  tcpSocket:
+    port: http
+  failureThreshold: 300
+  timeoutSeconds: 1
+  periodSeconds: 3
+
+# Configurations for the GraphRAG Chatbot container readiness probe.
+readinessProbe:
+  tcpSocket:
+    port: http
+  timeoutSeconds: 5
+  periodSeconds: 10
+
+# Configurations for the GraphRAG Chatbot container liveness probe.
+livenessProbe:
+  tcpSocket:
+    port: http
+  initialDelaySeconds: 60
+  timeoutSeconds: 5
+  periodSeconds: 10
+
+########################################
+# Additional Deployment Configurations #
+########################################
+
+# Additional environment variables to be set for the GraphRAG Chatbot containers.
+# Values are processed as Helm templates.
+extraEnvFrom: []
+
+# Additional environment variables to be set for the GraphRAG Chatbot containers.
+# Values are processed as Helm templates.
+extraEnv: []
+
+# Additional volumes to be set for the GraphRAG Chatbot Pod.
+# Values are processed as Helm templates.
+extraVolumes: []
+
+# Additional volume mounts to be set for the GraphRAG Chatbot containers.
+# Values are processed as Helm templates.
+extraVolumeMounts: []
+
+# Additional init containers to be inserted after the provisioning init containers.
+# Values are processed as Helm templates.
+extraInitContainers: []
+
+# Additional GraphRAG Chatbot container ports to expose.
+extraContainerPorts: {}
+
+# Additional containers to insert into the GraphRAG Chatbot Pod, e.g. sidecar containers
+# Values are processed as Helm templates.
+extraContainers: []
+
+########################################
+# Pod Disruption Budget Configurations #
+########################################
+
+# Configurations for GraphRAG Chatbot default Pod Disruption Budget.
+# Ref: https://kubernetes.io/docs/concepts/workloads/pods/disruptions/#pod-disruption-budgets
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 51%
+  maxUnavailable: ""
+
+##################################
+# Service Account Configurations #
+##################################
+
+# Configurations for the default ServiceAccount for GraphRAG Chatbot.
+# Ref: https://kubernetes.io/docs/concepts/security/service-accounts/
+serviceAccount:
+  # Specifies whether a ServiceAccount should be created for GraphRAG Chatbot.
+  create: false
+
+  # The name of the ServiceAccount to use.
+  #
+  # There are three cases to be aware of when using this:
+  # - If not set and create is true, a name is generated using the fullname template
+  # - If set and create is true, it will use the provided name when creating the ServiceAccount
+  # - If set but create is false, it will use the provided ServiceAccount.
+  name: ""
+
+  # If .Values.serviceAccount.create is true, insert additional annotations to the created ServiceAccount.
+  # Values are processed as Helm templates.
+  annotations: {}
+
+#################################
+# Additional Kubernetes Objects #
+#################################
+
+# Additional objects to insert along with the release.
+# Values are processed as Helm templates with tpl function.
+# Ref: https://helm.sh/docs/howto/charts_tips_and_tricks/#using-the-tpl-function
+extraObjects: []

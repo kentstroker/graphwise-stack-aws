@@ -1,0 +1,133 @@
+{{- if .Values.basicAuth.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "rdf4j.fullname" . }}-basic-auth
+  labels: {{- include "rdf4j.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  auth: |
+    {{ .Values.basicAuth.htpasswd }}
+---
+{{- end }}
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rdf4j.fullname" . }}-data
+  labels: {{- include "rdf4j.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.accessMode | quote }}]
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.dataSize }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rdf4j.fullname" . }}-logs
+  labels: {{- include "rdf4j.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.accessMode | quote }}]
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.logsSize }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rdf4j.fullname" . }}
+  labels: {{- include "rdf4j.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  selector: {{- include "rdf4j.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rdf4j.fullname" . }}
+  labels: {{- include "rdf4j.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{- include "rdf4j.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "rdf4j.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: rdf4j
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: APP_LOGGING_LEVEL
+              value: {{ .Values.loggingLevel | quote }}
+            - name: APP_SERVER
+              value: {{ .Values.appServer | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/rdf4j
+            - name: logs
+              mountPath: /usr/local/tomcat/logs
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "rdf4j.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: logs
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "rdf4j.fullname" . }}-logs
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "rdf4j.fullname" . }}
+  labels: {{- include "rdf4j.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+    {{- if .Values.basicAuth.enabled }}
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: {{ include "rdf4j.fullname" . }}-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "RDF4J Workbench"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ include "rdf4j.host" . | quote }}]
+      secretName: {{ include "rdf4j.fullname" . }}-tls
+  rules:
+    - host: {{ include "rdf4j.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rdf4j.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

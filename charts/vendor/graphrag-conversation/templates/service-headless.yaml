@@ -1,0 +1,29 @@
+{{- if .Values.headlessService.enabled }}
+{{- $serviceAnnotatons := mergeOverwrite (deepCopy .Values.annotations) .Values.headlessService.annotations -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "graphrag-conversation.fullname.service.headless" . }}
+  namespace: {{ include "graphrag-conversation.namespace" . }}
+  labels:
+    {{- include "graphrag-conversation.labels" . | nindent 4 }}
+    {{- with .Values.headlessService.labels }}
+      {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- end }}
+  {{- with $serviceAnnotatons }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "graphrag-conversation.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.headlessService.ports.http }}
+      targetPort: http
+      protocol: TCP
+    {{- with .Values.headlessService.extraPorts -}}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: poolparty-elasticsearch
+description: |
+  Single-node Elasticsearch for the Graphwise stack. Backs PoolParty's
+  full-text index (used for thesaurus search, GraphSearch, etc.) and
+  also serves as the vector store for graphrag-components (separate
+  index, same cluster).
+
+  Mirrors the configuration of base.yaml's elasticsearch service:
+  ontotext/poolparty-elasticsearch:9.2.4, single-node discovery,
+  xpack.security.enabled=false. Demo-grade — no auth, no TLS,
+  no production tuning. ClusterIP-only; never exposed via Ingress.
+type: application
+version: 1.0.0
+appVersion: "9.2.4"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws
+keywords:
+  - elasticsearch
+  - poolparty
+  - graphwise

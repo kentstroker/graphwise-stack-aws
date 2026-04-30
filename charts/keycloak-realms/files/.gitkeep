@@ -1,0 +1,7 @@
+# This directory holds extracted Keycloak realm JSON files.
+#
+# Add the PoolParty realm here:
+#   ./scripts/extract-poolparty-realm.sh   # writes files/poolparty-realm.json
+#
+# poolparty-realm.json is gitignored — it contains client secrets and
+# password hashes that should not enter the public repo.

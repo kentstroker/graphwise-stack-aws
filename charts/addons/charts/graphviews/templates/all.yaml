@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gv.fullname" . }}
+  labels: {{- include "gv.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  selector: {{- include "gv.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gv.fullname" . }}
+  labels: {{- include "gv.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "gv.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "gv.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: graphviews
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # GraphViews 1.0.0 authenticates against PoolParty's REST
+            # API directly with a superadmin credential — does NOT use
+            # Keycloak (intentional design choice in that release).
+            - name: PP_USERNAME
+              value: "superadmin"
+            - name: PP_PASSWORD
+              value: {{ .Values.poolparty.superadminPassword | quote }}
+            - name: PP_URL
+              value: {{ .Values.poolparty.internalUrl | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "gv.fullname" . }}
+  labels: {{- include "gv.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ include "gv.host" . | quote }}]
+      secretName: {{ include "gv.fullname" . }}-tls
+  rules:
+    - host: {{ include "gv.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "gv.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

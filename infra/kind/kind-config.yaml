@@ -1,0 +1,45 @@
+# Single-node KIND cluster configuration for the Graphwise stack.
+#
+# Why one node, not the upstream graphrag-charts-main 4-node example?
+#   - This is a single-EC2 demo. Multi-node KIND on one host costs
+#     ~1.5 GB per worker container with no resilience benefit, and
+#     our Helm charts deploy single replicas anyway (see Q9 in the
+#     architecture decisions: "minimal demo-grade charts").
+#   - extraPortMappings work the same way: KIND maps host 80/443 to
+#     the control-plane node, ingress-nginx runs there.
+#
+# Why no digest pin on kindest/node?
+#   - kindest/node is multi-arch but the digest published by upstream
+#     is the manifest list digest. Pinning works on both archs in
+#     theory; we drop it here so a re-image to a fresher v1.33.x
+#     patch doesn't require touching this file.
+#
+# Why apiServerAddress=127.0.0.1?
+#   - The cluster API is for in-host use only; never exposed publicly.
+#     SSH-tunnel to it if you need kubectl from your laptop.
+#
+# Ref: https://kind.sigs.k8s.io/docs/user/configuration/
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.4
+    # ingress-nginx in KIND looks for nodes labelled ingress-ready=true
+    # to schedule its controller. With one node this is trivially the
+    # control-plane.
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+networking:
+  apiServerAddress: "127.0.0.1"
+  apiServerPort: 6443

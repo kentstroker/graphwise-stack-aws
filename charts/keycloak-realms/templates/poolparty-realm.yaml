@@ -1,0 +1,49 @@
+{{- if .Values.poolparty.enabled }}
+{{/*
+PoolParty realm — imported from files/poolparty-realm.json which the
+operator extracts from the ontotext/poolparty-keycloak image (see
+scripts/extract-poolparty-realm.sh). The JSON is embedded into the
+KeycloakRealmImport CR's spec.realm field.
+
+Hostname rewriting: the realm export typically has redirect URIs and
+web origins pointing at whatever Graphwise's reference deployment used
+(localhost / 127.0.0.1.nip.io). We do a string replace at install time
+to rewrite those to the PoolParty subdomain hostnames the chart needs.
+
+If files/poolparty-realm.json is missing, this template emits a Helm
+fail() with instructions for extracting it.
+*/}}
+{{- $realmJsonRaw := .Files.Get "files/poolparty-realm.json" -}}
+{{- if not $realmJsonRaw -}}
+{{- fail "files/poolparty-realm.json missing — run scripts/extract-poolparty-realm.sh first, OR set poolparty.enabled=false to skip importing the PoolParty realm." -}}
+{{- end -}}
+{{/*
+Rewrite the placeholder hostnames in the JSON to the per-deployment
+PoolParty + add-on subdomains. Add more replacements here as the
+poolparty realm export gains more redirectUris.
+*/}}
+{{- $ppHost := printf "https://poolparty.%s.%s" .Values.subdomain .Values.baseDomain -}}
+{{- $authHost := printf "https://auth.%s.%s" .Values.subdomain .Values.baseDomain -}}
+{{- $rewritten := $realmJsonRaw -}}
+{{- $rewritten = $rewritten | replace "https://stroker.semantic-proof.com" $ppHost -}}
+{{- $rewritten = $rewritten | replace "http://stroker.semantic-proof.com" $ppHost -}}
+{{- $rewritten = $rewritten | replace "https://localhost.127.0.0.1.nip.io" $ppHost -}}
+{{- $rewritten = $rewritten | replace "http://localhost.127.0.0.1.nip.io" $ppHost -}}
+{{- $realmObj := $rewritten | fromJson -}}
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: KeycloakRealmImport
+metadata:
+  name: poolparty-realm
+  # Pin to the namespace the Keycloak operator watches. The umbrella
+  # chart's release lives in graphwise, but the operator only
+  # reconciles CRs in keycloak (see operator log: "for namespace(s):
+  # [keycloak]"). Without this, the import CR was created but
+  # silently ignored and the realm never appeared.
+  namespace: {{ .Values.keycloakNamespace | default "keycloak" }}
+  labels:
+    {{- include "keycloak-realms.labels" . | nindent 4 }}
+spec:
+  keycloakCRName: {{ .Values.keycloakCRName }}
+  realm:
+    {{- toYaml $realmObj | nindent 4 }}
+{{- end }}

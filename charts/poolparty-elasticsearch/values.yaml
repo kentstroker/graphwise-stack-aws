@@ -1,0 +1,57 @@
+# poolparty-elasticsearch — single-node ES for PoolParty + GraphRAG vectors.
+#
+# Resource defaults sized for the r6g.2xlarge demo: 8 GB JVM heap, 10 GB
+# pod limit (heap + off-heap headroom). Storage is 30 GB on the KIND
+# default storage class (local-path-provisioner).
+
+image:
+  repository: ontotext/poolparty-elasticsearch
+  tag: "9.2.4"
+  pullPolicy: IfNotPresent
+
+# Demo settings — match base.yaml today.
+# - discovery.type=single-node skips cluster bootstrap entirely.
+# - xpack.security.enabled=false: no auth, no TLS. The Service is
+#   ClusterIP-only and never gets an Ingress, so no public exposure.
+config:
+  discoveryType: single-node
+  xpackSecurityEnabled: false
+  # Heap settings; -Xms must equal -Xmx or ES refuses to start.
+  javaOpts: "-Xms8g -Xmx8g"
+  # Inert because security is off, but kept here so flipping security
+  # on later is a one-line edit.
+  elasticPassword: "secret"
+
+service:
+  # ClusterIP only. Other pods reach this service via its DNS name
+  # within the namespace, e.g. http://poolparty-elasticsearch:9200.
+  type: ClusterIP
+  httpPort: 9200
+  transportPort: 9300
+
+persistence:
+  enabled: true
+  storageClass: ""          # use cluster default
+  size: 30Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 8Gi
+  limits:
+    memory: 10Gi
+
+# Single-replica StatefulSet (one ES node). Increasing replicas WILL
+# break things — single-node discovery doesn't form a cluster.
+replicas: 1
+
+# Pod-level security knobs left at sensible defaults. ES container
+# runs as the elasticsearch user (uid 1000) inside the image; we don't
+# override.
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,73 @@
+# graphdb — Ontotext GraphDB triple store. Install twice (embedded +
+# projects) under different release names; values below are defaults
+# suitable for either, with per-instance overrides via -f values-*.yaml.
+
+image:
+  repository: ontotext/graphdb
+  tag: "11.3.3"
+  pullPolicy: IfNotPresent
+
+# License Secret is created out-of-band by scripts/install-licenses.sh,
+# in the same namespace as this release. The secret has one key
+# ("graphdb.license") containing the binary license file.
+license:
+  secretName: graphdb-license
+  secretKey: graphdb.license
+
+# Public URL the GraphDB workbench advertises for self-referential
+# links. Must match the Ingress host below. Override per-release:
+#   graphdb-embedded → https://graphdb.<sub>.<base>
+#   graphdb-projects → https://graphdb-projects.<sub>.<base>
+externalUrl: ""
+
+service:
+  type: ClusterIP
+  port: 7200
+
+# Ingress with HTTPS via cert-manager + Let's Encrypt + nginx-ingress
+# basic auth.
+ingress:
+  enabled: true
+  className: nginx
+  # Hostname the Ingress matches on. Set per-release; if blank, the
+  # template falls back to the externalUrl host.
+  host: ""
+  # cert-manager ClusterIssuer that mints the TLS cert. letsencrypt-prod
+  # is created by scripts/cluster-bootstrap.sh.
+  clusterIssuer: letsencrypt-prod
+  # TLS Secret name — cert-manager populates it. Default per-release:
+  # <release>-tls.
+  tlsSecretName: ""
+
+# HTTP basic auth gating the Ingress. The chart creates a Secret named
+# <release>-basic-auth containing an htpasswd-format `auth` key. Default
+# credentials match the existing demo (demo:rdf#rocks). Rotate by
+# overriding `htpasswd` with `openssl passwd -apr1` output.
+basicAuth:
+  enabled: true
+  # Pre-computed APR-MD5 hash for password "rdf#rocks". Generated with:
+  #   htpasswd -nb demo 'rdf#rocks'
+  # If you change credentials, regenerate with the same command.
+  htpasswd: "demo:$apr1$1Ub6kYrD$xxG9zJZXPddeN2WT8E/Ro/"
+
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 30Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+
+replicas: 1
+
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

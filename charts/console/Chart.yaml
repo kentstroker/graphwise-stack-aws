@@ -1,0 +1,22 @@
+apiVersion: v2
+name: console
+description: |
+  Static HTML landing page for the Graphwise stack. Serves index.html
+  + bookmarks.html via nginx on the apex hostname (<sub>.<base>),
+  separate from any of the app subdomains.
+
+  HTML lives in files/console/ at the repo root; the chart loads it
+  with .Files.Glob and embeds into a ConfigMap so the chart is
+  self-contained and the same content can be deployed unchanged.
+
+  The HTML self-adapts: JS rewrites every reference hostname to
+  window.location.hostname, so no per-deployment editing is needed.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws
+keywords:
+  - graphwise
+  - console

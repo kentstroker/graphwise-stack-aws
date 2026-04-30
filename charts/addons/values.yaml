@@ -1,0 +1,72 @@
+# addons — defaults for each sub-chart. Toggle with <name>.enabled.
+# Hostnames + Keycloak URL filled in by the umbrella graphwise-stack
+# values overlay (per-deployment subdomain).
+
+adf:
+  enabled: true
+  image:
+    repository: ontotext/adf
+    tag: "1.8.2"
+  externalUrl: ""           # https://adf.<sub>.<base>
+  keycloak:
+    url: ""                 # https://auth.<sub>.<base>/
+    realm: poolparty
+    clientSecret: "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
+  poolparty:
+    internalUrl: "http://poolparty:8081"
+  ingress:
+    clusterIssuer: letsencrypt-prod
+
+semantic-workbench:
+  enabled: true
+  image:
+    repository: ontotext/semantic-workbench
+    tag: "2.4.2"
+  externalUrl: ""
+  keycloak:
+    url: ""
+    realm: poolparty
+    clientSecret: "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
+  poolparty:
+    internalUrl: "http://poolparty:8081"
+  license:
+    secretName: poolparty-license
+    secretKey: poolparty.key
+  ingress:
+    clusterIssuer: letsencrypt-prod
+
+graphviews:
+  enabled: true
+  image:
+    repository: ontotext/graphviews
+    tag: "1.0.0"
+  externalUrl: ""
+  poolparty:
+    internalUrl: "http://poolparty:8081"
+    superadminPassword: "poolparty"
+  ingress:
+    clusterIssuer: letsencrypt-prod
+
+rdf4j:
+  enabled: true
+  image:
+    repository: eclipse/rdf4j-workbench
+    tag: "5.1.2"
+  externalUrl: ""
+  ingress:
+    clusterIssuer: letsencrypt-prod
+  basicAuth:
+    enabled: true
+    htpasswd: "demo:$apr1$1Ub6kYrD$xxG9zJZXPddeN2WT8E/Ro/"
+
+unifiedviews:
+  enabled: true
+  image:
+    repository: ontotext/unifiedviews
+    tag: "10.2.0"
+  externalUrl: ""
+  license:
+    secretName: unifiedviews-license
+    secretKey: uv-license.key
+  ingress:
+    clusterIssuer: letsencrypt-prod

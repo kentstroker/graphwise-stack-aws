@@ -1,0 +1,20 @@
+apiVersion: v2
+name: graphrag-chatbot
+description: GraphRAG Chatbot user interface service
+type: application
+version: 1.1.1
+appVersion: 1.1.0
+kubeVersion: ^1.32.0-0
+home: https://graphwise.ai/
+maintainers:
+  - name: poolparty-semantic-suite
+    email: support@graphwise.ai
+    url: https://graphwise.ai
+sources:
+  - https://github.com/poolparty-semantic-suite/graphrag-charts
+keywords:
+  - graphwise
+  - graphrag
+  - semantic
+  - database
+  - knowledge

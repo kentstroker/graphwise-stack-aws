@@ -1,0 +1,68 @@
+{{- if .Values.graphrag.enabled }}
+{{/*
+GraphRAG realm — imported inline. Mirrors the structure of
+graphrag-charts-main/examples/dev/keycloak-realm-import.yaml but with
+hostnames templated from values.
+
+Two clients:
+- chatbot-app-client    : public, used by the chatbot SPA
+- conversation-api-client : confidential, used by the chatbot's
+                            backend (graphrag-conversation) for
+                            inter-service auth
+*/}}
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: KeycloakRealmImport
+metadata:
+  name: {{ .Values.graphrag.realm }}-realm
+  # Pin to the namespace the Keycloak operator watches (see comment
+  # in poolparty-realm.yaml).
+  namespace: {{ .Values.keycloakNamespace | default "keycloak" }}
+  labels:
+    {{- include "keycloak-realms.labels" . | nindent 4 }}
+spec:
+  keycloakCRName: {{ .Values.keycloakCRName }}
+  realm:
+    id: {{ .Values.graphrag.realm | quote }}
+    realm: {{ .Values.graphrag.realm | quote }}
+    enabled: true
+    registrationAllowed: false
+    resetPasswordAllowed: false
+    loginWithEmailAllowed: true
+    duplicateEmailsAllowed: false
+    users:
+      {{- range .Values.graphrag.users }}
+      - username: {{ .username | quote }}
+        enabled: true
+        emailVerified: true
+        firstName: {{ .firstName | quote }}
+        lastName: {{ .lastName | quote }}
+        email: {{ .email | quote }}
+        credentials:
+          - type: password
+            value: {{ .password | quote }}
+            temporary: false
+      {{- end }}
+    clients:
+      - clientId: chatbot-app-client
+        secret: null
+        enabled: true
+        protocol: openid-connect
+        publicClient: true
+        redirectUris:
+          - https://graphrag.{{ .Values.subdomain }}.{{ .Values.baseDomain }}/*
+          - https://graphrag.{{ .Values.subdomain }}.{{ .Values.baseDomain }}/
+        webOrigins:
+          - https://graphrag.{{ .Values.subdomain }}.{{ .Values.baseDomain }}
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: true
+      - clientId: conversation-api-client
+        secret: {{ .Values.graphragConversationClientSecret | quote }}
+        enabled: true
+        protocol: openid-connect
+        publicClient: false
+        redirectUris: []
+        webOrigins:
+          - https://graphrag.{{ .Values.subdomain }}.{{ .Values.baseDomain }}
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: true
+{{- end }}

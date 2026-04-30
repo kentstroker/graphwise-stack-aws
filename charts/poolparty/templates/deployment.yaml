@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "poolparty.fullname" . }}
+  labels:
+    {{- include "poolparty.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "poolparty.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "poolparty.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: poolparty
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: USE_SYSTEM_CA_CERTS
+              value: "yes"
+            - name: POOLPARTY_CORS_ALLOWEDORIGINS
+              value: {{ .Values.cors.allowedOrigins | quote }}
+            - name: POOLPARTY_KEYCLOAK_LOGIN_REALM
+              value: {{ .Values.keycloak.loginRealm | quote }}
+            - name: POOLPARTY_KEYCLOAK_ADMIN_REALM
+              value: {{ .Values.keycloak.adminRealm | quote }}
+            # *** CRITICAL: must equal the Keycloak public URL ***
+            # Spring Security strict-equality matches this against the
+            # issuer claim in JWTs / the issuer field in OIDC discovery.
+            - name: POOLPARTY_KEYCLOAK_AUTHURL
+              value: {{ required "keycloak.authUrl must be set" .Values.keycloak.authUrl | quote }}
+            - name: POOLPARTY_KEYCLOAK_LOGIN_CLIENTID
+              value: {{ .Values.keycloak.loginClientId | quote }}
+            - name: POOLPARTY_KEYCLOAK_LOGIN_CLIENTSECRET
+              value: {{ .Values.keycloak.loginClientSecret | quote }}
+            - name: POOLPARTY_KEYCLOAK_ADMIN_CLIENTID
+              value: {{ .Values.keycloak.adminClientId | quote }}
+            - name: POOLPARTY_KEYCLOAK_ADMIN_USERNAME
+              value: {{ .Values.keycloak.adminUsername | quote }}
+            - name: POOLPARTY_KEYCLOAK_ADMIN_PASSWORD
+              value: {{ .Values.keycloak.adminPassword | quote }}
+            - name: POOLPARTY_INDEX_TYPE
+              value: {{ .Values.elasticsearch.type | quote }}
+            - name: POOLPARTY_INDEX_URL
+              value: {{ .Values.elasticsearch.internalUrl | quote }}
+            - name: POOLPARTY_INDEX_USERNAME
+              value: {{ .Values.elasticsearch.username | quote }}
+            - name: POOLPARTY_INDEX_PASSWORD
+              value: {{ .Values.elasticsearch.password | quote }}
+            - name: POOLPARTY_GRAPHDB_URL
+              value: {{ .Values.graphdb.internalUrl | quote }}
+            - name: PP_HEAP_SIZE
+              value: {{ .Values.heapSize | quote }}
+            - name: _POOLPARTY_ENCRYPTION_PASSWORD
+              value: {{ .Values.encryptionPassword | quote }}
+            - name: _POOLPARTY_URL_BASE_SCHEME
+              value: {{ required "urlBase.scheme must be set" .Values.urlBase.scheme | quote }}
+            - name: _POOLPARTY_URL_BASE_VOCABULARY
+              value: {{ required "urlBase.vocabulary must be set" .Values.urlBase.vocabulary | quote }}
+            - name: _POOLPARTY_URL_BASE_USER
+              value: {{ required "urlBase.user must be set" .Values.urlBase.user | quote }}
+            - name: _POOLPARTY_URL_BASE_CONTEXT
+              value: {{ required "urlBase.context must be set" .Values.urlBase.context | quote }}
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          # PoolParty is slow to start (Tomcat + Spring + several
+          # webapps). Generous startup probe; quick liveness once up.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/poolparty
+            - name: license
+              mountPath: /usr/share/poolparty/config/licenses/poolparty.key
+              subPath: {{ .Values.license.secretKey }}
+              readOnly: true
+      volumes:
+        - name: license
+          secret:
+            secretName: {{ .Values.license.secretName }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "poolparty.fullname" . }}-data
+        {{- else }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

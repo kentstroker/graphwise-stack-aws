@@ -1,0 +1,16 @@
+{{- if not .Values.configuration.nginx.defaultConfConfigmap  }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "graphrag-chatbot.fullname.configmap.nginx" . }}
+  namespace: {{ include "graphrag-chatbot.namespace" . }}
+  labels:
+    {{- include "graphrag-chatbot.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+data:
+  {{ .Values.configuration.nginx.defaultConfConfigmapKey }}: |-
+    {{- tpl (.Files.Get "files/default.conf" | trim) . | nindent 4 }}
+{{- end }}

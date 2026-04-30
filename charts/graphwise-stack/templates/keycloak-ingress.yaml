@@ -1,0 +1,49 @@
+{{- if .Values.keycloak.enabled }}
+{{/*
+Custom Ingress for the Keycloak instance.
+
+Why we ship this instead of using the operator's:
+  The Keycloak operator (v26.x) generates an Ingress whose shape is
+  driven by spec.http.httpEnabled. With httpEnabled=true (our case --
+  TLS terminates at ingress-nginx, the pod speaks plain HTTP) the
+  operator emits an Ingress with NO `tls:` block. cert-manager's
+  ingress-shim only mints a Certificate when the Ingress carries a
+  `tls.hosts` + `tls.secretName` pair, so the cluster-issuer
+  annotation alone produced an HTTP-only Ingress with no LE cert and
+  every https://auth.<apex> request failed the TLS handshake.
+
+  The operator's CR doesn't expose a way to inject `tls:` directly.
+  Cleanest fix: spec.ingress.enabled=false on the Keycloak CR
+  (templates/keycloak.yaml) and ship our own Ingress here, matching
+  the pattern every other app in this chart uses.
+
+The operator-created backing Service is `<keycloak-name>-service`
+listening on port 8080 (HTTP).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.keycloak.name }}-ingress
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ include "graphwise-stack.authHost" . | quote }}
+      secretName: {{ .Values.keycloak.name }}-tls
+  rules:
+    - host: {{ include "graphwise-stack.authHost" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.keycloak.name }}-service
+                port:
+                  number: 8080
+{{- end }}

@@ -1,0 +1,32 @@
+image:
+  repository: ontotext/semantic-workbench
+  tag: "2.4.2"
+  pullPolicy: IfNotPresent
+externalUrl: ""
+keycloak:
+  url: ""
+  realm: poolparty
+  clientSecret: "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
+poolparty:
+  internalUrl: "http://poolparty:8081"
+license:
+  secretName: poolparty-license
+  secretKey: poolparty.key
+applicationVersion: "2.4.1"
+service:
+  port: 8080
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+persistence:
+  enabled: true
+  size: 5Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""

@@ -1,0 +1,98 @@
+# poolparty — main taxonomy authoring application.
+#
+# Most values here have direct counterparts in today's env-config /
+# base.yaml. The umbrella graphwise-stack chart fills in the
+# hostname-derived values (keycloakAuthUrl, ingress.host, the
+# _POOLPARTY_URL_BASE_* family) so this file mostly just declares
+# defaults and references to other Services/Secrets in the cluster.
+
+image:
+  repository: ontotext/poolparty
+  tag: "10.2.0"
+  pullPolicy: IfNotPresent
+
+# License Secret — created by scripts/install-licenses.sh.
+license:
+  secretName: poolparty-license
+  secretKey: poolparty.key
+
+# Public hostname (set by the umbrella). Must match ingress.host.
+externalUrl: ""
+
+# Internal references — Service DNS names within the same namespace.
+# Do NOT change to public URLs (these calls don't go through OIDC).
+graphdb:
+  internalUrl: "http://graphdb-embedded:7200"
+
+elasticsearch:
+  internalUrl: "http://poolparty-elasticsearch:9200"
+  type: ELASTICSEARCH
+  username: ""
+  password: ""
+
+# Keycloak wiring — see CLAUDE.md "OIDC issuer-match rule".
+# authUrl MUST be the public URL (https://auth.<sub>.<base>/) so it
+# matches the issuer claim Keycloak signs into JWTs.
+keycloak:
+  authUrl: ""           # set by umbrella, e.g. https://auth.<sub>.<base>/
+  loginRealm: "poolparty"
+  adminRealm: "master"
+  loginClientId: "ppt"
+  loginClientSecret: "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
+  adminClientId: "admin-cli"
+  adminUsername: "poolparty_auth_admin"
+  adminPassword: "admin"
+
+# Stable encryption key for PoolParty's secrets-in-GraphDB feature.
+# MUST stay constant across pod restarts or stored secrets become
+# unreadable. Treat as a vault credential.
+encryptionPassword: "1234567890"
+
+# URL bases used when minting new RDF resources. The umbrella sets
+# these to the PoolParty public URL.
+urlBase:
+  scheme: ""
+  vocabulary: ""
+  user: ""
+  context: ""
+
+# CORS — additional origins (e.g. graphrag.<sub>.<base>) appended to
+# the PoolParty public URL.
+cors:
+  allowedOrigins: ""
+
+# JVM heap. 8g is comfortable for medium workloads on r6g.2xlarge.
+heapSize: "8g"
+
+service:
+  type: ClusterIP
+  port: 8081
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ""
+  clusterIssuer: letsencrypt-prod
+  tlsSecretName: ""
+
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 30Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 8Gi
+  limits:
+    memory: 10Gi
+
+replicas: 1
+
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

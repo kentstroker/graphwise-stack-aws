@@ -1,0 +1,100 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "uv.fullname" . }}-data
+  labels: {{- include "uv.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.accessMode | quote }}]
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "uv.fullname" . }}
+  labels: {{- include "uv.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  selector: {{- include "uv.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "uv.fullname" . }}
+  labels: {{- include "uv.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{- include "uv.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "uv.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: unifiedviews
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # UnifiedViews has its own login (default admin/admin) — no
+          # Keycloak. Has its own license file at LICENSE_DIR.
+          env:
+            - name: LICENSE_DIR
+              value: /unified-views/license/
+          ports:
+            - name: http
+              containerPort: 8080
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /unified-views
+            - name: license
+              mountPath: /unified-views/license/uv-license.key
+              subPath: {{ .Values.license.secretKey }}
+              readOnly: true
+      volumes:
+        - name: license
+          secret:
+            secretName: {{ .Values.license.secretName }}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "uv.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "uv.fullname" . }}
+  labels: {{- include "uv.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ include "uv.host" . | quote }}]
+      secretName: {{ include "uv.fullname" . }}-tls
+  rules:
+    - host: {{ include "uv.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "uv.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

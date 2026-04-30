@@ -1,0 +1,105 @@
+{{/*
+StatefulSet rather than Deployment — ES holds index state in /usr/share/
+elasticsearch/data, and we want stable pod identity + a PVC that
+survives pod restarts.
+
+The image is multi-arch (ARM64 confirmed) so this works on the r6g
+Graviton host.
+*/}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "poolparty-elasticsearch.fullname" . }}
+  labels:
+    {{- include "poolparty-elasticsearch.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "poolparty-elasticsearch.fullname" . }}
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "poolparty-elasticsearch.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "poolparty-elasticsearch.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # ES writes to /usr/share/elasticsearch/data on first start. The
+      # image's default uid is 1000; the PVC mount needs to be writable
+      # by that user. KIND's local-path-provisioner creates volumes with
+      # permissive permissions, so no init-container chown is needed.
+      containers:
+        - name: elasticsearch
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: discovery.type
+              value: {{ .Values.config.discoveryType | quote }}
+            - name: xpack.security.enabled
+              value: {{ .Values.config.xpackSecurityEnabled | quote }}
+            - name: ES_JAVA_OPTS
+              value: {{ .Values.config.javaOpts | quote }}
+            - name: ELASTIC_PASSWORD
+              value: {{ .Values.config.elasticPassword | quote }}
+          ports:
+            - name: http
+              containerPort: 9200
+              protocol: TCP
+            - name: transport
+              containerPort: 9300
+              protocol: TCP
+          # /protocol is GraphDB-style; ES uses / for liveness. Returns
+          # 200 with a cluster-info JSON when the node is up.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [{{ .Values.persistence.accessMode | quote }}]
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

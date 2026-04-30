@@ -1,0 +1,31 @@
+# Defaults match the umbrella's adf.* block. Overridden when installed
+# under the addons umbrella; set here so this chart can be installed
+# standalone for testing.
+image:
+  repository: ontotext/adf
+  tag: "1.8.2"
+  pullPolicy: IfNotPresent
+externalUrl: ""
+keycloak:
+  url: ""
+  realm: poolparty
+  clientSecret: "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
+poolparty:
+  internalUrl: "http://poolparty:8081"
+service:
+  port: 8080
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+persistence:
+  enabled: true
+  size: 5Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""

@@ -1,0 +1,167 @@
+{{- if and .Values.keycloak.enabled .Values.keycloak.bootstrapAdmin.enabled }}
+{{/*
+Helm hook that creates the master-realm admin user PoolParty's chart
+expects (default: poolparty_auth_admin / admin), so a fresh
+`reset-helm.sh` run lands with a working PoolParty out of the box.
+
+Why this is needed:
+  charts/poolparty/values.yaml hard-codes adminUsername =
+  poolparty_auth_admin / adminPassword = admin against master realm.
+  On the Compose path, KEYCLOAK_ADMIN/_PASSWORD env vars on the
+  Keycloak container created that user automatically. The Keycloak
+  operator (v26.x) bootstraps a different user instead -- a temporary
+  "temp-admin" stored in the operator-generated
+  <keycloak>-initial-admin Secret -- and PoolParty's admin-cli token
+  request against poolparty_auth_admin/admin returns 401, killing
+  Spring Boot during DefaultPoolPartyRoleServiceFacade.init().
+
+  This Job uses kcadm.sh in a Keycloak image to:
+    1. Log in as temp-admin via the in-cluster service URL.
+    2. Create the poolparty_auth_admin user (idempotent on conflict).
+    3. Set the password (overwrites any existing).
+    4. Bind the master-realm `admin` role.
+
+  Talks to Keycloak via the in-cluster Service (no TLS, no ingress)
+  to avoid hairpin-NAT issues and the chicken/egg of cert issuance.
+
+Hook semantics:
+  - post-install,post-upgrade: runs every install/upgrade.
+  - hook-weight: 5 (after the Keycloak CR + operator-managed
+    bootstrap secret have a chance to come up).
+  - hook-delete-policy: before-hook-creation,hook-succeeded so the
+    last successful run is gone before we re-run, and a successful
+    run cleans up after itself. Failed runs stay in place for
+    inspection.
+
+The Job lives in the keycloak namespace because that's where the
+operator-generated initial-admin Secret lives -- pods can only mount
+Secrets from their own namespace.
+*/}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: poolparty-auth-admin
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+type: Opaque
+stringData:
+  username: {{ .Values.keycloak.bootstrapAdmin.username | quote }}
+  password: {{ .Values.keycloak.bootstrapAdmin.password | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-bootstrap-admin
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        # Order matters: include the chart's labels first, then
+        # override app.kubernetes.io/name. The previous order had
+        # graphwise-stack.labels overwrite our component-specific
+        # label, so kubectl -l app.kubernetes.io/name=keycloak-bootstrap-admin
+        # found nothing.
+        {{- include "graphwise-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: keycloak-bootstrap-admin
+        app.kubernetes.io/component: keycloak-bootstrap-admin
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kcadm
+          image: {{ .Values.keycloak.bootstrapAdmin.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KC_SERVER
+              value: "http://{{ .Values.keycloak.name }}-service.{{ .Values.keycloak.namespace }}:8080"
+            - name: TEMP_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.name }}-initial-admin
+                  key: username
+            - name: TEMP_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.name }}-initial-admin
+                  key: password
+            - name: NEW_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: poolparty-auth-admin
+                  key: username
+            - name: NEW_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: poolparty-auth-admin
+                  key: password
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              KCADM=/opt/keycloak/bin/kcadm.sh
+
+              # Use kcadm itself as the readiness probe -- the keycloak
+              # image doesn't ship curl. Retry login for up to 5 minutes;
+              # once it succeeds, Keycloak is up AND temp-admin works.
+              echo "Waiting for Keycloak at $KC_SERVER (via kcadm) ..."
+              for i in $(seq 1 60); do
+                  if "$KCADM" config credentials \
+                      --server "$KC_SERVER" \
+                      --realm master \
+                      --user "$TEMP_ADMIN_USER" \
+                      --password "$TEMP_ADMIN_PASS" >/dev/null 2>&1; then
+                      echo "kcadm login succeeded after ${i} attempt(s)."
+                      break
+                  fi
+                  if [ "$i" = "60" ]; then
+                      echo "kcadm login did not succeed within 5 minutes." >&2
+                      # Run once more without redirecting so the actual
+                      # error surfaces in the pod log.
+                      "$KCADM" config credentials \
+                          --server "$KC_SERVER" \
+                          --realm master \
+                          --user "$TEMP_ADMIN_USER" \
+                          --password "$TEMP_ADMIN_PASS" || true
+                      exit 1
+                  fi
+                  sleep 5
+              done
+
+              echo "Ensuring user '$NEW_ADMIN_USER' exists in master realm..."
+              if "$KCADM" get "users?username=${NEW_ADMIN_USER}&exact=true" -r master \
+                  | grep -q '"username"'; then
+                  echo "  User already exists -- skipping create."
+              else
+                  "$KCADM" create users -r master \
+                      -s username="$NEW_ADMIN_USER" \
+                      -s enabled=true \
+                      -s emailVerified=true
+              fi
+
+              echo "Setting password for '$NEW_ADMIN_USER'..."
+              "$KCADM" set-password -r master \
+                  --username "$NEW_ADMIN_USER" \
+                  --new-password "$NEW_ADMIN_PASS"
+
+              echo "Binding 'admin' role to '$NEW_ADMIN_USER'..."
+              "$KCADM" add-roles -r master \
+                  --uusername "$NEW_ADMIN_USER" \
+                  --rolename admin || echo "  Role already bound -- ok."
+
+              echo "Done."
+{{- end }}

@@ -1,0 +1,42 @@
+-----------------------------------------------------------------------------------------
+               _____ _____            _____  _    _ _____            _____
+              / ____|  __ \     /\   |  __ \| |  | |  __ \     /\   / ____|
+             | |  __| |__) |   /  \  | |__) | |__| | |__) |   /  \ | |  __
+             | | |_ |  _  /   / /\ \ |  ___/|  __  |  _  /   / /\ \| | |_ |
+             | |__| | | \ \  / ____ \| |    | |  | | | \ \  / ____ \ |__| |
+              \_____|_|  \_\/_/    \_\_|    |_|  |_|_|  \_\/_/    \_\_____|
+                                      by Graphwise
+-----------------------------------------------------------------------------------------
+
+GraphRAG chart version={{ .Chart.Version }}
+{{ "" }}
+{{- if .Values.chatbot.enabled }}
+GraphRAG Chatbot UI {{ coalesce .Values.chatbot.image.tag .Subcharts.chatbot.Chart.AppVersion }} on {{ include "graphrag-chatbot.external-url" .Subcharts.chatbot }}
+  chart version={{ .Subcharts.chatbot.Chart.Version }}
+  replicas={{ .Values.chatbot.replicas }}
+{{- end }}
+{{ "" }}
+{{- if .Values.conversation.enabled }}
+GraphRAG Conversation {{ coalesce .Values.conversation.image.tag .Subcharts.conversation.Chart.AppVersion }}
+  chart version={{ .Subcharts.conversation.Chart.Version }}
+  replicas={{ .Values.conversation.replicas }}
+{{- end }}
+{{ "" }}
+{{- if .Values.components.enabled }}
+GraphRAG Components {{ coalesce .Values.components.image.tag .Subcharts.components.Chart.AppVersion }}
+  chart version={{ .Subcharts.components.Chart.Version }}
+  replicas={{ .Values.components.replicas }}
+{{- end }}
+{{ "" }}
+{{- if .Values.workflows.enabled }}
+GraphRAG Workflows {{ coalesce .Values.workflows.image.tag .Subcharts.workflows.Chart.AppVersion }} on {{ include "graphrag-workflows.external-url" .Subcharts.workflows }}
+  chart version={{ .Subcharts.workflows.Chart.Version }}
+  replicas={{ .Values.workflows.replicas }}
+{{- end }}
+
+** Please be patient while the chart is being deployed and services are available **
+You can check their status with kubectl --namespace {{ .Release.Namespace }} get pods
+
+------------------------------------------------------------------------------------------
+For more information on configuring and running GraphRAG, visit https://graphwise.ai/
+------------------------------------------------------------------------------------------

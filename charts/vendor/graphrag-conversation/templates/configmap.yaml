@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "graphrag-conversation.fullname" . }}
+  namespace: {{ include "graphrag-conversation.namespace" . }}
+  labels:
+    {{- include "graphrag-conversation.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+data:
+  JAVA_OPTS: >-
+    {{ tpl .Values.configuration.defaultJavaArguments . }}
+    {{ tpl .Values.configuration.javaArguments . }}
+  {{- if .Values.configuration.properties -}}
+    {{- range $key, $value := .Values.configuration.properties -}}
+      {{- if ne $value nil -}}
+        {{- printf "%s: %s" $key ($value | quote) | nindent 2 -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}

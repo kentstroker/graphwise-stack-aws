@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "graphrag-workflows.fullname" . }}
+  namespace: {{ include "graphrag-workflows.namespace" . }}
+  labels:
+    {{- include "graphrag-workflows.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+data:
+  # See https://docs.n8n.io/hosting/configuration/environment-variables
+  {{- if not (hasKey .Values.configuration.environment "N8N_USER_FOLDER") }}
+  N8N_USER_FOLDER: {{ tpl .Values.persistence.path $ | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "QUEUE_HEALTH_CHECK_ACTIVE") }}
+  QUEUE_HEALTH_CHECK_ACTIVE: "true"
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_METRICS") }}
+  N8N_METRICS: "true"
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_RUNNERS_ENABLED") }}
+  N8N_RUNNERS_ENABLED: "true"
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS") }}
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_DIAGNOSTICS_ENABLED") }}
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_HIRING_BANNER_ENABLED") }}
+  N8N_HIRING_BANNER_ENABLED: "false"
+  {{- end }}
+  {{- /* License configurations */}}
+  {{- if and (.Values.configuration.license.existingSecret) (not (hasKey .Values.configuration.environment "N8N_LICENSE_TENANT_ID")) }}
+  N8N_LICENSE_TENANT_ID: {{ .Values.configuration.license.tenantId | quote }}
+  {{- end }}
+  {{- /* Database configurations */}}
+  {{- if eq .Values.configuration.environment.DB_TYPE "postgresdb" }}
+  {{- if not (hasKey .Values.configuration.environment "DB_POSTGRESDB_HOST") }}
+  DB_POSTGRESDB_HOST: {{ tpl .Values.configuration.postgresdb.host $ | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "DB_POSTGRESDB_PORT") }}
+  DB_POSTGRESDB_PORT: {{ .Values.configuration.postgresdb.port | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "DB_POSTGRESDB_DATABASE") }}
+  DB_POSTGRESDB_DATABASE: {{ .Values.configuration.postgresdb.database | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_PATH") }}
+  # https://docs.n8n.io/hosting/configuration/configuration-examples/webhook-url/#configure-n8n-webhooks-with-reverse-proxy
+  N8N_PATH: {{ include "graphrag-workflows.external-url.path" . | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "WEBHOOK_URL") }}
+  WEBHOOK_URL: {{ printf "http://localhost%s" (include "graphrag-workflows.external-url.path" .) | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_PROXY_HOPS") }}
+  N8N_PROXY_HOPS: "1"
+  {{- end }}
+  {{- if not (hasKey .Values.configuration.environment "N8N_PORT") }}
+  N8N_PORT: {{ .Values.containerPorts.http | quote }}
+  {{- end }}
+  {{- /* Overrides from values.yaml */}}
+  {{- if .Values.configuration.environment -}}
+    {{- range $key, $value := .Values.configuration.environment -}}
+      {{- if ne $value nil -}}
+        {{- printf "%s: %s" $key ($value | quote) | nindent 2 -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}

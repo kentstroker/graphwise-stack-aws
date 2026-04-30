@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<!--
+  Graphwise Stack — Console landing page.
+  Served by ingress-nginx at https://<sub>.<base>/ (the Console
+  Ingress targets the apex hostname).
+
+  Each app lives at its own subdomain (poolparty.<sub>.<base>,
+  auth.<sub>.<base>, graphrag.<sub>.<base>, …). Links in this page
+  use a placeholder apex (stroker.semantic-proof.com); the JS at the
+  bottom rewrites every occurrence to the apex the user actually
+  reached the page at, which means subdomain.<actual-apex> links all
+  resolve correctly without re-rendering this file per deployment.
+
+  Author: Kent Stroker
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graphwise Stack Console</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+  background: #f5f6f8; color: #1d1d1f; margin: 0; line-height: 1.5;
+}
+header {
+  background: linear-gradient(135deg, #0a2540 0%, #134e89 100%);
+  color: white; padding: 2rem 1.5rem; border-bottom: 4px solid #3b82f6;
+}
+header h1 { margin: 0 0 0.5rem; font-size: 1.75rem; letter-spacing: -0.01em; }
+header p { margin: 0; color: #a8b8d0; font-size: 0.95rem; }
+header code {
+  background: rgba(255,255,255,0.15); padding: 0.1rem 0.5rem; border-radius: 4px;
+  color: #ffd27a; font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+}
+main { max-width: 1240px; margin: 0 auto; padding: 1.5rem; }
+section { margin-bottom: 2.25rem; }
+section h2 {
+  font-size: 0.85rem; font-weight: 700; color: #6b7280;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin: 0 0 0.75rem; padding-bottom: 0.4rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+.grid {
+  display: grid; gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.card {
+  display: block; background: white; padding: 0.9rem 1rem;
+  border-radius: 8px; border: 1px solid #e5e7eb;
+  text-decoration: none; color: inherit;
+  transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+.card:hover {
+  border-color: #3b82f6; box-shadow: 0 4px 14px rgba(59,130,246,0.15);
+  transform: translateY(-1px);
+}
+.card.primary { background: #eef6ff; border-color: #3b82f6; }
+.card.primary:hover { border-color: #1d4ed8; }
+.card .title { font-weight: 600; color: #0a2540; margin-bottom: 0.2rem; }
+.card .desc { font-size: 0.88rem; color: #4b5563; margin-bottom: 0.35rem; }
+.card .auth {
+  font-size: 0.76rem; color: #3b82f6;
+  font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+}
+footer {
+  max-width: 1240px; margin: 0 auto; padding: 1.5rem;
+  color: #6b7280; font-size: 0.85rem; border-top: 1px solid #e5e7eb;
+}
+footer a { color: #3b82f6; text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+footer code {
+  background: #e5e7eb; padding: 0.08rem 0.35rem; border-radius: 3px;
+  font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 0.82rem;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Graphwise Stack Console</h1>
+  <p>Server: <code id="host">stroker.semantic-proof.com</code> &middot; Each app lives at its own subdomain. Every link below is HTTPS via ingress-nginx + Let's Encrypt.</p>
+</header>
+
+<main>
+
+<section>
+  <h2>Start here</h2>
+  <div class="grid">
+    <a class="card primary" href="https://poolparty.stroker.semantic-proof.com/PoolParty/">
+      <div class="title">PoolParty Thesaurus</div>
+      <div class="desc">Main authoring UI &mdash; taxonomies, concepts, projects</div>
+      <div class="auth">SSO &middot; superadmin / poolparty</div>
+    </a>
+    <a class="card primary" href="https://graphrag.stroker.semantic-proof.com/">
+      <div class="title">GraphRAG Chatbot</div>
+      <div class="desc">Conversational interface backed by your taxonomy</div>
+      <div class="auth">SSO &middot; alice / alice123 (or bob / bob123)</div>
+    </a>
+    <a class="card primary" href="https://auth.stroker.semantic-proof.com/admin/">
+      <div class="title">Keycloak Admin Console</div>
+      <div class="desc">Manage realms, users, clients, client secrets</div>
+      <div class="auth">poolparty_auth_admin / admin</div>
+    </a>
+  </div>
+</section>
+
+<section>
+  <h2>PoolParty Suite</h2>
+  <div class="grid">
+    <a class="card" href="https://poolparty.stroker.semantic-proof.com/GraphSearch/">
+      <div class="title">GraphSearch</div>
+      <div class="desc">Search frontend over PoolParty content</div>
+      <div class="auth">SSO &middot; same user as PoolParty</div>
+    </a>
+    <a class="card" href="https://poolparty.stroker.semantic-proof.com/extractor/">
+      <div class="title">Extractor (REST)</div>
+      <div class="desc">Concept-extraction REST API &mdash; no UI</div>
+      <div class="auth">SSO bearer token required</div>
+    </a>
+    <a class="card" href="https://semantic-workbench.stroker.semantic-proof.com/SemanticWorkbench/">
+      <div class="title">Semantic Workbench</div>
+      <div class="desc">RDF modeling, ontology editor, SHACL, SPARQL</div>
+      <div class="auth">SSO &middot; same user as PoolParty</div>
+    </a>
+    <a class="card" href="https://adf.stroker.semantic-proof.com/ADF/">
+      <div class="title">Advanced Data Fabric (ADF)</div>
+      <div class="desc">Data integration / enrichment platform</div>
+      <div class="auth">SSO &middot; same user as PoolParty</div>
+    </a>
+    <a class="card" href="https://graphviews.stroker.semantic-proof.com/GraphViews/">
+      <div class="title">GraphViews</div>
+      <div class="desc">Visualization on top of PoolParty projects</div>
+      <div class="auth">direct &middot; superadmin / poolparty</div>
+    </a>
+    <a class="card" href="https://unifiedviews.stroker.semantic-proof.com/">
+      <div class="title">UnifiedViews</div>
+      <div class="desc">ETL / pipeline platform (own login system)</div>
+      <div class="auth">default &middot; admin / admin</div>
+    </a>
+  </div>
+</section>
+
+<section>
+  <h2>GraphRAG (AI / RAG)</h2>
+  <div class="grid">
+    <a class="card" href="https://graphrag.stroker.semantic-proof.com/">
+      <div class="title">Chatbot</div>
+      <div class="desc">Web UI for the conversational agent</div>
+      <div class="auth">SSO &middot; graphrag realm (alice / bob)</div>
+    </a>
+    <a class="card" href="https://graphrag.stroker.semantic-proof.com/conversations/">
+      <div class="title">Conversation API</div>
+      <div class="desc">Spring backend for chatbot &middot; OIDC bearer required</div>
+      <div class="auth">service-to-service OIDC</div>
+    </a>
+    <a class="card" href="https://graphrag.stroker.semantic-proof.com/graphrag/workflows/">
+      <div class="title">Workflows (n8n)</div>
+      <div class="desc">Pipeline editor; first visitor sets the owner account</div>
+      <div class="auth">n8n own login &middot; configured on first boot</div>
+    </a>
+  </div>
+</section>
+
+<section>
+  <h2>Data Stores (Basic Auth: demo / rdf#rocks)</h2>
+  <div class="grid">
+    <a class="card" href="https://graphdb.stroker.semantic-proof.com/">
+      <div class="title">GraphDB &mdash; embedded</div>
+      <div class="desc">PoolParty's backing store. <strong>Do not load your own data here.</strong></div>
+      <div class="auth">basic &middot; demo / rdf#rocks</div>
+    </a>
+    <a class="card" href="https://graphdb-projects.stroker.semantic-proof.com/">
+      <div class="title">GraphDB &mdash; projects</div>
+      <div class="desc">Your data. Load repositories, run SPARQL here.</div>
+      <div class="auth">basic &middot; demo / rdf#rocks</div>
+    </a>
+    <a class="card" href="https://rdf4j.stroker.semantic-proof.com/rdf4j-workbench/">
+      <div class="title">RDF4J Workbench</div>
+      <div class="desc">Standalone RDF workbench; also backs UnifiedViews internally.</div>
+      <div class="auth">basic &middot; demo / rdf#rocks</div>
+    </a>
+  </div>
+</section>
+
+<section>
+  <h2>Useful config endpoints</h2>
+  <div class="grid">
+    <a class="card" href="https://auth.stroker.semantic-proof.com/realms/master/.well-known/openid-configuration">
+      <div class="title">OIDC &middot; master realm</div>
+      <div class="desc">Keycloak discovery for the admin realm</div>
+    </a>
+    <a class="card" href="https://auth.stroker.semantic-proof.com/realms/poolparty/.well-known/openid-configuration">
+      <div class="title">OIDC &middot; poolparty realm</div>
+      <div class="desc">Consumed by PoolParty / ADF / Semantic Workbench</div>
+    </a>
+    <a class="card" href="https://auth.stroker.semantic-proof.com/realms/graphrag/.well-known/openid-configuration">
+      <div class="title">OIDC &middot; graphrag realm</div>
+      <div class="desc">Consumed by GraphRAG chatbot / conversation</div>
+    </a>
+    <a class="card" href="https://graphdb.stroker.semantic-proof.com/rest/repositories">
+      <div class="title">Embedded GraphDB &middot; repo list</div>
+      <div class="desc">JSON inventory of repositories (basic auth)</div>
+    </a>
+    <a class="card" href="https://graphdb-projects.stroker.semantic-proof.com/rest/repositories">
+      <div class="title">Projects GraphDB &middot; repo list</div>
+      <div class="desc">JSON inventory of repositories (basic auth)</div>
+    </a>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p>Want these as bookmarks in your browser? <a href="/bookmarks.html">Download bookmarks.html</a> and import via
+  Chrome / Edge &rarr; Settings &rarr; Bookmarks &rarr; Import Bookmarks &rarr; Bookmarks HTML File.</p>
+  <p>For architecture / troubleshooting, see <code>CLAUDE.md</code> and <code>CHEATSHEET.md</code> at the repo root.</p>
+</footer>
+
+<script>
+  // Self-adapting links: rewrite the placeholder apex
+  // (stroker.semantic-proof.com) to whatever apex the user actually
+  // reached this page at. Per-app subdomains (poolparty.*, auth.*, etc.)
+  // come along for free because the placeholder appears as the suffix
+  // of every hostname.
+  document.addEventListener('DOMContentLoaded', function () {
+    var host = window.location.hostname;
+    if (!host) return;
+    var placeholder = 'stroker.semantic-proof.com';
+    document.querySelectorAll('a[href]').forEach(function (a) {
+      a.href = a.href.split(placeholder).join(host);
+    });
+    var hostEl = document.getElementById('host');
+    if (hostEl) hostEl.textContent = host;
+  });
+</script>
+
+</body>
+</html>

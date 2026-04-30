@@ -1,0 +1,62 @@
+# Deployment-agnostic overlay for the vendored GraphRAG chart, applied
+# alongside the per-subdomain overlay emitted by scripts/render-values.sh.
+#
+# Why this file exists separately from values.yaml:
+#   The vendor's values.yaml ships defaults pinned to 127.0.0.1.nip.io
+#   and lacks the existingProperties wiring our deployment uses (we
+#   feed credentials in via the Secrets that charts/graphwise-stack
+#   creates in the graphrag namespace). Rather than fork the vendor
+#   chart, we layer this file on top via `helm install -f`.
+#
+# Constants only -- nothing here depends on global.subdomain. The
+# per-subdomain bits (chatbot.configuration.externalUrl, the JWT
+# issuer-uri pointing at https://auth.<sub>.<base>/realms/graphrag,
+# the ingress hosts) come from scripts/render-values.sh.
+
+conversation:
+  configuration:
+    properties:
+      cors.disable: true
+      n8n.base.url: http://graphrag-workflows:5678
+      n8n.chat.webhook.url: http://graphrag-workflows:5678/webhook/n8n/chat?questionId={questionId}&conversationId={conversationId}&userId={userId}&question={question}
+      spring.security.oauth2.resourceserver.jwt.jwk-set-uri: http://graphwise-keycloak-service.keycloak:8080/realms/graphrag/protocol/openid-connect/certs
+      keycloak.health.url: http://graphwise-keycloak-service.keycloak:9000/health
+      springdoc.api-docs.server-url: /graphrag/conversations
+      springdoc.swagger-ui.config-url: /graphrag/conversations/v3/api-docs/swagger-config
+      springdoc.swagger-ui.url: /graphrag/conversations/v3/api-docs
+    existingProperties:
+      - secretRef:
+          name: graphrag-conversation-database-credentials
+      - secretRef:
+          name: graphrag-conversation-keycloak-client
+
+components:
+  configuration:
+    properties:
+      EMBEDDING_PROVIDER: aws
+      EMBEDDING_MODEL_ID: "cohere.embed-english-v3"
+      INCLUDE_VECTOR_DATA: false
+    existingProperties:
+      - configMapRef:
+          name: graphrag-components-vector-database
+      - secretRef:
+          name: graphrag-components-aws-credentials
+
+workflows:
+  ingress:
+    enabled: true
+    path: /graphrag/workflows(/|$)(.*)
+    pathType: ImplementationSpecific
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+  configuration:
+    encryption:
+      existingSecret: graphrag-n8n-encryption
+    license:
+      existingSecret: graphrag-n8n-license
+      tenantId: 1
+    postgresdb:
+      host: graphrag-postgres-n8n-rw
+      database: n8n
+      credentials:
+        existingSecret: graphrag-n8n-database-credentials

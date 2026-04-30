@@ -1,0 +1,28 @@
+apiVersion: v2
+name: keycloak-realms
+description: |
+  Imports the two Keycloak realms used by the Graphwise stack into the
+  operator-managed Keycloak instance:
+
+    - graphrag  : OIDC for the GraphRAG chatbot + conversation API
+                  (chatbot-app-client + conversation-api-client). The
+                  realm spec is templated inline in templates/.
+    - poolparty : OIDC for PoolParty + ADF + Semantic Workbench
+                  (ppt + admin-cli). The realm spec is loaded from
+                  files/poolparty-realm.json, which the operator
+                  extracts ONCE from ontotext/poolparty-keycloak (see
+                  scripts/extract-poolparty-realm.sh).
+
+  Both realms install as KeycloakRealmImport CRs in the keycloak
+  namespace and reference the keycloak/graphwise-keycloak Keycloak
+  instance.
+
+  Hostnames in redirectUris / webOrigins are templated from the
+  per-deployment subdomain so each teammate's realm points at their
+  own URLs.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws

@@ -1,0 +1,62 @@
+MIT License
+
+Copyright (c) 2026 Kent Stroker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+
+Scope of this license
+
+This MIT license applies to the files authored as part of this repository:
+the compose files (base.yaml, addons.yaml, graphdb.yaml, le-bootstrap.yaml),
+the nginx configuration under files/nginx/, the Console landing page under
+files/console/, the helper scripts under scripts/, the Terraform module under
+infra/terraform/, and the Markdown documentation at the repo root and under
+infra/.
+
+It does NOT grant any license or warranty covering:
+
+- The proprietary Ontotext / Graphwise product binaries and container images
+  that the compose files pull at runtime (PoolParty, GraphDB, GraphDB
+  Enterprise Edition, UnifiedViews, ADF, Semantic Workbench, GraphViews).
+  Those are governed by separate commercial license agreements between the
+  user and Graphwise. Obtain them from Graphwise directly
+  (https://graphwise.ai/).
+- The third-party open-source images the stack depends on (Keycloak, nginx,
+  Elasticsearch, Eclipse RDF4J, podman, Debian, and others). Each ships
+  under its own upstream license — typically Apache 2.0, BSD, or similar —
+  and those upstream terms apply when those images are pulled and run.
+- Any trademarks or service marks of Graphwise, Ontotext, or any third-party
+  vendor whose software is used by the stack.
+
+The fact that this repository is publicly visible on GitHub does not grant
+any license to the Graphwise product suite or to any vendor image it
+depends on.
+
+================================================================================
+
+No support
+
+This repository is a reference guide published primarily for internal use
+by Graphwise field presales engineers. It is made public for convenience and
+community reference. No support, uptime guarantee, or bug-fix commitment is
+offered. Graphwise presales engineers may or may not respond to issues or
+pull requests, at their discretion. For production deployments or paid
+support, engage Graphwise's professional services organization directly.

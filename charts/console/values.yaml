@@ -1,0 +1,33 @@
+# console — apex landing page.
+
+image:
+  repository: nginx
+  tag: "1.30.0"
+  pullPolicy: IfNotPresent
+
+# Source files for the static page live under files/ inside this chart
+# (charts/console/files/*.html). They were originally in the repo's
+# top-level files/console/ for the compose stack; the chart now owns
+# them. The umbrella chart pre-render step keeps both copies in sync
+# until the compose path is fully retired.
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  # Apex host — the bare <subdomain>.<base_domain>, no app prefix.
+  host: ""
+  clusterIssuer: letsencrypt-prod
+  tlsSecretName: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+replicas: 1

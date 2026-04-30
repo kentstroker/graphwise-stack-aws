@@ -1,0 +1,50 @@
+{{- if .Values.keycloak.enabled }}
+{{/*
+Keycloak's Postgres backing store, managed by the CNPG operator.
+Mirrors graphrag-charts-main/examples/dev/postgres-keycloak.yaml +
+its credential Secrets, but in our keycloak namespace and sized for
+demo (1 instance instead of 3).
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-postgres-superuser
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ .Values.keycloak.postgres.superuserPassword | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-postgres-user
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  username: {{ .Values.keycloak.postgres.appUsername | quote }}
+  password: {{ .Values.keycloak.postgres.appPassword | quote }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.keycloak.postgres.name }}
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.keycloak.postgres.instances }}
+  storage:
+    size: {{ .Values.keycloak.postgres.storage }}
+  superuserSecret:
+    name: keycloak-postgres-superuser
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: {{ .Values.keycloak.postgres.appUsername }}
+      secret:
+        name: keycloak-postgres-user
+{{- end }}

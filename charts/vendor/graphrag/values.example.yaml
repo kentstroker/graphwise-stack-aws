@@ -1,0 +1,39 @@
+########################################################
+# Configurations for the GraphRAG Conversation service #
+########################################################
+
+conversation:
+  configuration:
+    existingProperties:
+      - secretRef:
+          name: graphrag-conversation-database-credentials
+      - secretRef:
+          name: graphrag-conversation-keycloak-client
+
+######################################################
+# Configurations for the GraphRAG Components service #
+######################################################
+
+components:
+  configuration:
+    existingProperties:
+      - configMapRef:
+          name: graphrag-components-vector-database
+      - secretRef:
+          name: graphrag-components-aws-credentials
+
+##########################################################
+# Configurations for the GraphRAG Workflows orchestrator #
+##########################################################
+
+workflows:
+  # Ref https://docs.n8n.io/hosting/configuration/
+  configuration:
+    encryption:
+      existingSecret: graphrag-n8n-encryption
+    license:
+      existingSecret: graphrag-n8n-license
+      tenantId: 1
+    postgresdb:
+      credentials:
+        existingSecret: graphrag-n8n-database-credentials

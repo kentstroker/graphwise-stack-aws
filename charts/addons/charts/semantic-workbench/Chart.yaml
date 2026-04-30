@@ -1,0 +1,6 @@
+apiVersion: v2
+name: semantic-workbench
+description: Semantic Workbench — RDF modelling tool. Mirrors today's addons.yaml semantic-workbench service.
+type: application
+version: 1.0.0
+appVersion: "2.4.2"

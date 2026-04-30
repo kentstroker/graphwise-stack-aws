@@ -1,0 +1,28 @@
+image:
+  repository: eclipse/rdf4j-workbench
+  tag: "5.1.2"
+  pullPolicy: IfNotPresent
+externalUrl: ""
+loggingLevel: "INFO"
+appServer: "tomcat"
+service:
+  port: 8080
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+basicAuth:
+  enabled: true
+  htpasswd: "demo:$apr1$1Ub6kYrD$xxG9zJZXPddeN2WT8E/Ro/"
+resources:
+  requests:
+    cpu: 200m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+persistence:
+  enabled: true
+  dataSize: 10Gi
+  logsSize: 2Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""

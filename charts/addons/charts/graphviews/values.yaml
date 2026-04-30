@@ -1,0 +1,20 @@
+image:
+  repository: ontotext/graphviews
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+externalUrl: ""
+poolparty:
+  internalUrl: "http://poolparty:8081"
+  superadminPassword: "poolparty"
+service:
+  port: 8080
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi

@@ -1,0 +1,24 @@
+{{/*
+ClusterIP Service exposing the ES REST API (9200) and transport (9300)
+to other pods in the namespace. No Ingress — ES has security disabled
+and must never be reachable from outside the cluster.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "poolparty-elasticsearch.fullname" . }}
+  labels:
+    {{- include "poolparty-elasticsearch.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: transport
+      port: {{ .Values.service.transportPort }}
+      targetPort: transport
+      protocol: TCP
+  selector:
+    {{- include "poolparty-elasticsearch.selectorLabels" . | nindent 4 }}

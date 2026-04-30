@@ -1,0 +1,25 @@
+image:
+  repository: ontotext/unifiedviews
+  tag: "10.2.0"
+  pullPolicy: IfNotPresent
+externalUrl: ""
+license:
+  secretName: unifiedviews-license
+  secretKey: uv-license.key
+service:
+  port: 8080
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+resources:
+  requests:
+    cpu: 200m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+persistence:
+  enabled: true
+  size: 10Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""

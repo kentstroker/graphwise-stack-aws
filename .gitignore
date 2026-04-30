@@ -1,0 +1,100 @@
+# Graphwise / PoolParty deployment stack — .gitignore
+# Author: Kent Stroker
+
+# ---------------------------------------------------------------------------
+# Secrets and deployment-specific config
+# ---------------------------------------------------------------------------
+# .env is the LIVE configuration for a particular deployment. It holds real
+# passwords, client secrets, and encryption keys. Never commit it.
+# Users clone this repo, run `cp env-config .env`, then edit .env with their
+# own values.
+.env
+
+# ---------------------------------------------------------------------------
+# Vendor license files
+# ---------------------------------------------------------------------------
+# Graphwise license files (PoolParty, GraphDB EE, UnifiedViews) are the
+# vendor's property and are issued per-deployment. Each user obtains their
+# own per files/licenses/README instructions. Never commit license blobs.
+files/licenses/*.key
+files/licenses/*.license
+
+# ---------------------------------------------------------------------------
+# Extracted Keycloak realm exports
+# ---------------------------------------------------------------------------
+# scripts/extract-poolparty-realm.sh writes a realm JSON containing client
+# secrets and password hashes — vendor-distributed material that should not
+# enter the public repo. Same treatment as license files.
+charts/keycloak-realms/files/*.json
+
+# ---------------------------------------------------------------------------
+# Script / editor backups
+# ---------------------------------------------------------------------------
+# setDomainName.sh and checkVersions.sh write <file>.bak alongside anything
+# they modify. These are ephemeral review copies — the working file is the
+# source of truth.
+*.bak
+
+# Editor swap files (vim, emacs, etc.)
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# IDE and OS metadata
+# ---------------------------------------------------------------------------
+# JetBrains (IntelliJ / PyCharm / WebStorm)
+.idea/
+
+# Visual Studio Code
+.vscode/
+
+# macOS Finder metadata
+.DS_Store
+
+# Linux / generic
+.directory
+
+# Claude Code local session state
+.claude/
+
+# ---------------------------------------------------------------------------
+# Let's Encrypt state — deployment-specific, must never be committed
+# ---------------------------------------------------------------------------
+# certbot writes cert + key material, account info, and logs under
+# files/letsencrypt/. files/certbot/ holds the ACME challenge webroot
+# (empty most of the time; populated briefly during issuance / renewal).
+# Neither is meaningful outside a specific running deployment.
+files/letsencrypt/
+files/certbot/
+
+# ---------------------------------------------------------------------------
+# Terraform — local state + provider cache are per-deployment and can
+# contain sensitive attributes (AWS resource IDs, EIPs, and in some
+# provider versions, cleartext secrets). Never commit.
+# ---------------------------------------------------------------------------
+# Provider plugin cache, regenerable with `terraform init`.
+infra/terraform/.terraform/
+# State files + sensitive plan dumps.
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/terraform.tfstate.*
+infra/terraform/*.tfplan
+# Per-deployment variable values. terraform.tfvars.example (the
+# template) IS committed — the real terraform.tfvars with your AWS
+# key pair name and admin CIDR is NOT.
+infra/terraform/terraform.tfvars
+infra/terraform/*.auto.tfvars
+# NOTE: .terraform.lock.hcl is INTENTIONALLY NOT ignored. It pins the
+# AWS provider version; committing it keeps teammates and CI in sync.
+
+# Git credentials — NEVER commit. If `git config credential.helper store`
+# is used, its output file goes here. The default location is
+# ~/.git-credentials (outside any repo) — that's the safer place. These
+# rules are the belt-and-suspenders guard in case the helper is
+# misconfigured to land inside this directory.
+.git-credentials
+git.credentials
+**/git.credentials
+**/.git-credentials
+*.credentials

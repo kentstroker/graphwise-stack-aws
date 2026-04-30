@@ -1,0 +1,18 @@
+dependencies:
+- name: adf
+  repository: file://./charts/adf
+  version: 1.0.0
+- name: semantic-workbench
+  repository: file://./charts/semantic-workbench
+  version: 1.0.0
+- name: graphviews
+  repository: file://./charts/graphviews
+  version: 1.0.0
+- name: rdf4j
+  repository: file://./charts/rdf4j
+  version: 1.0.0
+- name: unifiedviews
+  repository: file://./charts/unifiedviews
+  version: 1.0.0
+digest: sha256:63852a052d204504cdd89c9e68ec304cf804373fb56c7b4c4a80fec1bc02e4e9
+generated: "2026-04-29T10:30:38.449731-07:00"

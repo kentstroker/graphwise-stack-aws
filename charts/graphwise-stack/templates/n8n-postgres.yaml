@@ -1,0 +1,49 @@
+{{- if .Values.n8nPostgres.enabled }}
+{{/*
+Postgres backing store for n8n (graphrag-workflows). The vendored
+graphrag chart references it by service name graphrag-postgres-n8n-rw
+in the graphrag namespace.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-postgres-superuser
+  namespace: {{ .Values.n8nPostgres.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ .Values.n8nPostgres.superuserPassword | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-postgres-user
+  namespace: {{ .Values.n8nPostgres.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  username: {{ .Values.n8nPostgres.appUsername | quote }}
+  password: {{ .Values.n8nPostgres.appPassword | quote }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.n8nPostgres.name }}
+  namespace: {{ .Values.n8nPostgres.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.n8nPostgres.instances }}
+  storage:
+    size: {{ .Values.n8nPostgres.storage }}
+  superuserSecret:
+    name: n8n-postgres-superuser
+  bootstrap:
+    initdb:
+      database: n8n
+      owner: {{ .Values.n8nPostgres.appUsername }}
+      secret:
+        name: n8n-postgres-user
+{{- end }}

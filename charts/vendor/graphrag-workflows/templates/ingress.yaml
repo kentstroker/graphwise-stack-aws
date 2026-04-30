@@ -1,0 +1,47 @@
+{{- if .Values.ingress.enabled }}
+{{- $ingressAnnotations := mergeOverwrite (deepCopy .Values.annotations) .Values.ingress.annotations -}}
+{{- $external_url := urlParse (include "graphrag-workflows.external-url" .) -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "graphrag-workflows.fullname" . }}
+  namespace: {{ include "graphrag-workflows.namespace" . }}
+  labels:
+    {{- include "graphrag-workflows.labels" . | nindent 4 }}
+    {{- with .Values.ingress.labels }}
+      {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- end }}
+  {{- with $ingressAnnotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if or .Values.ingress.tls.enabled .Values.ingress.extraTLS }}
+  tls:
+    {{- if .Values.ingress.tls.enabled }}
+    - hosts:
+        - {{ include "graphrag-workflows.external-url.host" . }}
+      secretName: {{ required "TLS secret is required!" .Values.ingress.tls.secretName }}
+    {{- end }}
+    {{- with .Values.ingress.extraTLS }}
+      {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ include "graphrag-workflows.external-url.host" . }}
+      http:
+        paths:
+          - path: {{ include "graphrag-workflows.external-url.ingress-path" . }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "graphrag-workflows.fullname" . }}
+                port:
+                  number: {{ .Values.service.ports.http }}
+    {{- with .Values.ingress.extraHosts }}
+      {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- end }}
+{{- end }}

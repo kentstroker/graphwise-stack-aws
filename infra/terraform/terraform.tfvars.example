@@ -1,0 +1,80 @@
+# Graphwise Stack — example Terraform variables.
+#
+# Copy this file to terraform.tfvars and fill in your per-deployment
+# values. terraform.tfvars is gitignored — never commit real values.
+#
+# Every variable is described in variables.tf. Skim that file if you
+# want the full reasoning; copy-paste this, edit the starred lines,
+# and you're ready to apply.
+
+# === REQUIRED ===============================================================
+
+# Pick your subdomain under semantic-proof.com. Email Kent this value +
+# the EIP you'll get back after apply so he can add the A record.
+subdomain = "CHANGEME"                       # e.g. "scott", "acme-corp", or multi-level "demo.stroker"
+
+# An EXISTING key pair in the target region (EC2 → Network & Security →
+# Key Pairs). You must already have the matching .pem file on your
+# laptop — Terraform does not create or download key material.
+key_pair_name = "CHANGEME"                   # name only, no .pem
+
+# Your current public IPv4 + /32. Check with `curl -4 icanhazip.com`.
+# NEVER 0.0.0.0/0 — that opens SSH to the entire internet.
+admin_cidr = "CHANGEME/32"                   # e.g. "203.0.113.42/32"
+
+# AZ to place the instance in. Must match the region above.
+# Pick the AZ that your admin_cidr subnet maps to.
+availability_zone = "CHANGEME"               # e.g. "us-west-2a"
+
+
+# === OPTIONAL (defaults are recommended) ===================================
+
+# Parent domain. The default points at the Graphwise presales domain.
+# Override only if you've forked the project for a different parent.
+# base_domain = "semantic-proof.com"
+
+# AWS region. Default is us-west-2. Pick something close to you for
+# low SSH latency; any region with r6g instances works.
+# region = "us-west-2"
+
+# Instance type. r6g.2xlarge = 8 vCPU / 64 GB Graviton ARM64. Stepping
+# down to r6g.xlarge (4 vCPU / 32 GB) works for lightweight demos but
+# leaves JVM heaps tight.
+# instance_type = "r6g.2xlarge"
+
+# Root EBS volume size. 300 GiB is the shipped recommendation.
+# root_volume_gb = 300
+
+# Linux user to create on the instance. You'll SSH in as this user.
+# Defaults to "graphwise"; override to your own name if you prefer.
+# named_user = "graphwise"
+
+# Repo to clone on first boot. Default is the public upstream.
+# github_repo_url = "https://github.com/kentstroker/graphwise-stack-aws.git"
+
+# Tag prefix. Final Name tag is "<prefix>-<subdomain>".
+# instance_name_prefix = "graphwise-stack"
+
+# Pre-allocated Elastic IP allocation ID. Set this if you've allocated
+# an EIP outside Terraform and want it to persist across destroy/apply
+# cycles — saves you from updating GoDaddy DNS every rebuild.
+#
+# One-time setup (CLI):
+#   aws ec2 allocate-address --domain vpc --region us-west-2
+#   # Note the AllocationId in the output, e.g. eipalloc-0123abc...
+#   # Optionally tag it:
+#   aws ec2 create-tags --region us-west-2 \
+#     --resources eipalloc-0123abc... \
+#     --tags Key=Name,Value=graphwise-stack-<your-subdomain>-eip
+#
+# Or AWS Console: EC2 → Network & Security → Elastic IPs → Allocate.
+# Leave commented to fall back to fresh-EIP-per-apply (you'll update
+# GoDaddy after every apply).
+# existing_eip_allocation_id = "eipalloc-0123456789abcdef0"
+
+# Extra tags to attach to every resource (merged with module defaults).
+# extra_tags = {
+#   Owner      = "scott.example"
+#   Customer   = "acme-corp"
+#   CostCenter = "presales-demos"
+# }

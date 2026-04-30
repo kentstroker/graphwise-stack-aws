@@ -1,0 +1,16 @@
+{{/*
+ConfigMap holding the static HTML. .Files.Glob finds every *.html under
+charts/console/files/ and embeds them as keys in the map. Each key
+becomes a file when mounted into the nginx container.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "console.fullname" . }}
+  labels:
+    {{- include "console.labels" . | nindent 4 }}
+data:
+{{- range $path, $bytes := .Files.Glob "files/*.html" }}
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

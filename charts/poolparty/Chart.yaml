@@ -1,0 +1,25 @@
+apiVersion: v2
+name: poolparty
+description: |
+  PoolParty Semantic Suite — taxonomy authoring + GraphSearch + Extractor.
+  Mirrors today's base.yaml poolparty service: ontotext/poolparty:10.2.0,
+  Keycloak SSO via the operator-managed Keycloak (realm "poolparty"),
+  internal backends GraphDB (graphdb-embedded:7200) and Elasticsearch
+  (poolparty-elasticsearch:9200). Public access via cert-manager+TLS
+  Ingress on poolparty.<sub>.<base>.
+
+  Critical wiring: POOLPARTY_KEYCLOAK_AUTHURL must be the PUBLIC
+  Keycloak URL (https://auth.<sub>.<base>/) — Spring Security's JWT
+  decoder strict-equality matches this against the issuer claim. See
+  CLAUDE.md "OIDC issuer-match rule".
+type: application
+version: 1.0.0
+appVersion: "10.2.0"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws
+keywords:
+  - poolparty
+  - taxonomy
+  - graphwise
+  - semantic

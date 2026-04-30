@@ -1,0 +1,30 @@
+apiVersion: v2
+name: graphdb
+description: |
+  Ontotext GraphDB triple store. Designed to be installed twice in the
+  same namespace under different release names:
+
+    helm install graphdb-embedded ./charts/graphdb -f values-embedded.yaml
+    helm install graphdb-projects ./charts/graphdb -f values-projects.yaml
+
+  - graphdb-embedded backs PoolParty (thesaurus storage, project
+    registry). Reached internally as http://graphdb-embedded:7200.
+  - graphdb-projects is a standalone workbench for user RDF data.
+
+  Both instances pull the same image and reference the same license
+  Secret (graphdb-license). They get separate PVCs, separate Services,
+  and separate Ingresses (different hostnames).
+
+  Ingress is HTTPS-only via cert-manager + Let's Encrypt, gated by
+  HTTP basic auth (matches the existing demo's demo:rdf#rocks pattern).
+type: application
+version: 1.0.0
+appVersion: "11.3.3"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws
+keywords:
+  - graphdb
+  - rdf
+  - sparql
+  - graphwise

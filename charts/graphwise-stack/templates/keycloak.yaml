@@ -1,0 +1,50 @@
+{{- if .Values.keycloak.enabled }}
+{{/*
+Keycloak instance, managed by the operator. Single replica for demo
+(operator default of 2 doubles RAM cost).
+
+hostname.hostname is the public Keycloak URL — used by the operator
+to set Keycloak's own KC_HOSTNAME, which MUST exactly match the
+issuer claim in JWTs (CLAUDE.md "Keycloak hostname rule"). Per Q5
+(subdomains), Keycloak lives on auth.<sub>.<base> with NO context
+path, so issuer URLs come out as https://auth.<sub>.<base>/realms/X.
+
+Both PoolParty and graphrag-conversation must point at this same URL
+or their JwtDecoder beans will fail with "issuer did not match".
+*/}}
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: {{ .Values.keycloak.name }}
+  namespace: {{ .Values.keycloak.namespace }}
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.keycloak.instances }}
+  db:
+    vendor: postgres
+    host: {{ .Values.keycloak.postgres.name }}-rw
+    database: keycloak
+    usernameSecret:
+      name: keycloak-postgres-user
+      key: username
+    passwordSecret:
+      name: keycloak-postgres-user
+      key: password
+  ingress:
+    # Operator-managed Ingress is HTTP-only when http.httpEnabled=true,
+    # and the operator (v26.x) gives us no way to inject a `tls:` block
+    # via the CR. Without `tls:`, cert-manager's ingress-shim never
+    # mints a cert and every https://auth.<apex> request fails the
+    # handshake. We ship our own Ingress in keycloak-ingress.yaml with
+    # the TLS block + cert-manager annotation, matching every other
+    # app in this stack.
+    enabled: false
+  http:
+    httpEnabled: true
+  hostname:
+    hostname: {{ include "graphwise-stack.authHost" . | quote }}
+    strict: true
+  proxy:
+    headers: xforwarded
+{{- end }}

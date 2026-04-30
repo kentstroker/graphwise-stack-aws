@@ -1,0 +1,45 @@
+# keycloak-realms — applies the graphrag and poolparty realm imports.
+
+# Reference to the Keycloak operator instance. Must match the
+# metadata.name of the Keycloak CR.
+keycloakCRName: graphwise-keycloak
+
+# Namespace the Keycloak operator watches. KeycloakRealmImport CRs
+# must live here -- the operator silently ignores CRs in other
+# namespaces. Matches the namespace cluster-bootstrap.sh installs
+# the operator into.
+keycloakNamespace: keycloak
+
+# Per-deployment subdomain + base. The umbrella graphwise-stack chart
+# wires these from .Values.global.subdomain / global.baseDomain.
+# baseUrl is computed: https://<sub>.<base>
+subdomain: ""
+baseDomain: ""
+
+# Confidential client secret for graphrag-conversation-api-client. The
+# graphrag-conversation chart's secret graphrag-conversation-keycloak-client
+# must use the same value.
+graphragConversationClientSecret: "change-me-please"
+
+# graphrag realm — imported inline (no JSON extraction needed).
+graphrag:
+  enabled: true
+  realm: graphrag
+  users:
+    - username: alice
+      password: alice123
+      firstName: Alice
+      lastName: Anderson
+      email: alice@example.com
+    - username: bob
+      password: bob123
+      firstName: Bob
+      lastName: Brown
+      email: bob@example.com
+
+# poolparty realm — imported from files/poolparty-realm.json.
+# Extract once with scripts/extract-poolparty-realm.sh.
+# If the file is absent, this realm is skipped (the chart still
+# installs successfully, but PoolParty will have no realm to bind to).
+poolparty:
+  enabled: true

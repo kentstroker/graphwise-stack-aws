@@ -1,0 +1,67 @@
+apiVersion: v2
+name: graphwise-stack
+description: |
+  Top-level umbrella for the entire Graphwise + GraphRAG demo. Pulls
+  together every sub-chart (Keycloak realms, Elasticsearch, two
+  GraphDB instances, PoolParty, console, add-ons, vendored GraphRAG)
+  and provisions the supporting infrastructure (Keycloak operator CR,
+  two CNPG Postgres clusters, the Secrets/ConfigMap that the GraphRAG
+  charts expect).
+
+  Single source of truth for per-deployment values — `global.subdomain`
+  and `global.baseDomain` cascade to every sub-chart.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws
+
+dependencies:
+  - name: keycloak-realms
+    version: 1.0.0
+    repository: file://../keycloak-realms
+    condition: keycloak-realms.enabled
+
+  - name: poolparty-elasticsearch
+    version: 1.0.0
+    repository: file://../poolparty-elasticsearch
+    condition: poolparty-elasticsearch.enabled
+
+  # graphdb is installed twice — once as the embedded instance backing
+  # PoolParty, once as a standalone projects workbench. Same chart,
+  # different aliases, different values.
+  - name: graphdb
+    alias: graphdb-embedded
+    version: 1.0.0
+    repository: file://../graphdb
+    condition: graphdb-embedded.enabled
+
+  - name: graphdb
+    alias: graphdb-projects
+    version: 1.0.0
+    repository: file://../graphdb
+    condition: graphdb-projects.enabled
+
+  - name: poolparty
+    version: 1.0.0
+    repository: file://../poolparty
+    condition: poolparty.enabled
+
+  - name: console
+    version: 1.0.0
+    repository: file://../console
+    condition: console.enabled
+
+  - name: addons
+    version: 1.0.0
+    repository: file://../addons
+    condition: addons.enabled
+
+# Note: graphrag (chatbot/conversation/components/workflows) is NOT a
+# dependency of this umbrella. The vendored chart's templates default
+# resource namespaces to the release namespace, but the GraphRAG pods
+# need to live in their own `graphrag` namespace so they can mount
+# the supporting Secrets / connect to graphrag-postgres-n8n by bare
+# service name. We install it as a separate Helm release in the
+# graphrag namespace via scripts/reset-helm.sh.

@@ -1,0 +1,204 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "graphrag-workflows.fullname" . }}
+  namespace: {{ include "graphrag-workflows.namespace" . }}
+  labels:
+    {{- include "graphrag-workflows.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy: {{ .Values.updateStrategy | toYaml | nindent 4 }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "graphrag-workflows.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "graphrag-workflows.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+          {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ .Values.configuration.environment | toString | sha256sum }}
+        checksum/configmap: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+          {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      serviceAccountName: {{ include "graphrag-workflows.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+      {{- if .Values.schedulerName }}
+      schedulerName: {{ .Values.schedulerName }}
+      {{- end }}
+      {{- with .Values.dnsConfig }}
+      dnsConfig: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.dnsPolicy }}
+      dnsPolicy: {{ .Values.dnsPolicy }}
+      {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+      volumes:
+        {{- if .Values.persistence.existingVolumeClaim }}
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ tpl .Values.persistence.existingVolumeClaim $ }}
+        {{- else if .Values.persistence.enabled }}
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ include "graphrag-workflows.fullname" . }}
+        {{- else }}
+        - name: storage
+          emptyDir:
+            {{- .Values.persistence.emptyDir | toYaml | nindent 12 }}
+        {{- end }}
+        {{- if .Values.tempVolume.enabled }}
+        - name: temp-dir
+          emptyDir:
+            {{- .Values.tempVolume.emptyDir | toYaml | nindent 12 }}
+        {{- end }}
+      {{- with .Values.extraVolumes }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.affinity .Values.podAntiAffinity.enabled }}
+      affinity:
+        {{- if .Values.affinity  }}
+          {{- tpl (toYaml .Values.affinity) $ | nindent 8 }}
+        {{- end }}
+        {{- if and .Values.podAntiAffinity.enabled (not .Values.affinity.podAntiAffinity) }}
+        podAntiAffinity:
+          {{- if eq .Values.podAntiAffinity.preset "soft" }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 1
+              podAffinityTerm:
+                topologyKey: {{ .Values.podAntiAffinity.topology }}
+                labelSelector:
+                  matchLabels:
+                    {{- include "graphrag-workflows.selectorLabels" . | nindent 20 }}
+          {{- else if eq .Values.podAntiAffinity.preset "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: {{ .Values.podAntiAffinity.topology }}
+              labelSelector:
+                matchLabels:
+                  {{- include "graphrag-workflows.selectorLabels" . | nindent 18 }}
+          {{- else }}
+            {{- fail (printf "Unknown podAntiAffinity preset '%s'" .Values.podAntiAffinity.preset) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.global.imagePullSecrets .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- include "graphrag-workflows.combinedImagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.extraInitContainers }}
+      initContainers:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "graphrag-workflows.name" . }}
+          image: {{ include "graphrag-workflows.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPorts.http }}
+            {{- with .Values.extraContainerPorts }}
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "graphrag-workflows.fullname" . }}
+          {{- with .Values.extraEnvFrom }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          {{- if or
+            .Values.configuration.encryption.existingSecret
+            .Values.configuration.license.existingSecret
+            .Values.configuration.postgresdb.credentials.existingSecret
+            .Values.extraEnv
+          }}
+          env:
+            {{- if .Values.configuration.encryption.existingSecret }}
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.configuration.encryption.existingSecret $ }}
+                  key: {{ .Values.configuration.encryption.secretKey }}
+            {{- end }}
+            {{- if .Values.configuration.license.existingSecret }}
+            - name: N8N_LICENSE_ACTIVATION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.configuration.license.existingSecret $ }}
+                  key: {{ .Values.configuration.license.secretKey }}
+            {{- end }}
+            {{- if .Values.configuration.postgresdb.credentials.existingSecret }}
+            - name: DB_POSTGRESDB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.configuration.postgresdb.credentials.existingSecret $ }}
+                  key: {{ .Values.configuration.postgresdb.credentials.usernameKey }}
+            {{- end }}
+            {{- if .Values.configuration.postgresdb.credentials.existingSecret }}
+            - name: DB_POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.configuration.postgresdb.credentials.existingSecret $ }}
+                  key: {{ .Values.configuration.postgresdb.credentials.passwordKey }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+              {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: storage
+              mountPath: {{ tpl .Values.persistence.path $ }}
+            {{- if .Values.tempVolume.enabled }}
+            - name: temp-dir
+              mountPath: /tmp
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+              {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe: {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- with .Values.extraContainers }}
+          {{ tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}

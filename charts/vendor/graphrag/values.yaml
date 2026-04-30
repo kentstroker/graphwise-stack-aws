@@ -1,0 +1,134 @@
+####################################################################################################
+# Main configuration file for the GraphRAG system                                                  #
+# This is an umbrella chart that includes and configures the necessary sub-charts to work together #
+#                                                                                                  #
+# To override a single property use --set                                                          #
+# To override multiple, provide another values.yaml file with the -f flag                          #
+# See https://helm.sh/docs/chart_template_guide/values_files/                                      #
+####################################################################################################
+
+# A few important notes about this configuration file:
+#
+# 1) The services are with fixed names, so they can be easily referenced in across the default configurations.
+#    You can override this by providing a different values.yaml file, but you must take care of service references.
+
+#################################################################
+#       Global configurations visible in all Helm charts        #
+# Note: This depend on how the different charts are implemented #
+#################################################################
+
+global:
+  imagePullSecrets:
+    - name: graphwise
+
+###########################################################
+# Configurations for the GraphRAG Chatbot web application #
+###########################################################
+
+chatbot:
+  enabled: true
+
+  fullnameOverride: graphrag-chatbot
+
+  replicas: 1
+
+  configuration:
+    externalUrl: https://127.0.0.1.nip.io/graphrag/
+
+    conversationProxy:
+      enabled: true
+      url: http://graphrag-conversation:8080/
+
+    properties:
+      GRAPHRAG_BACKEND_URL: https://127.0.0.1.nip.io/graphrag/conversations
+      GRAPHRAG_KEYCLOAK_URL: https://auth.127.0.0.1.nip.io/
+      GRAPHRAG_KEYCLOAK_REALM: graphrag
+      GRAPHRAG_KEYCLOAK_CLIENT_ID: chatbot-app-client
+
+########################################################
+# Configurations for the GraphRAG Conversation service #
+########################################################
+
+conversation:
+  enabled: true
+
+  fullnameOverride: graphrag-conversation
+
+  # Currently, this service does not support multiple replicas due to the usage of an embedded database.
+  replicas: 1
+
+  configuration:
+    properties:
+      cors.disable: true
+      n8n.base.url: http://graphrag-workflows:5678
+      n8n.chat.webhook.url: http://graphrag-workflows:5678/webhook/n8n/chat?questionId={questionId}&conversationId={conversationId}&userId={userId}&question={question}
+      spring.security.oauth2.resourceserver.jwt.jwk-set-uri: http://graphrag-keycloak-service.keycloak:8080/realms/graphrag/protocol/openid-connect/certs
+      spring.security.oauth2.resourceserver.jwt.issuer-uri: https://auth.127.0.0.1.nip.io/realms/graphrag
+      keycloak.health.url: http://graphrag-keycloak-service.keycloak:9000/health
+      springdoc.api-docs.server-url: /graphrag/conversations
+      springdoc.swagger-ui.config-url: /graphrag/conversations/v3/api-docs/swagger-config
+      springdoc.swagger-ui.url: /graphrag/conversations/v3/api-docs
+
+    existingProperties: []
+    # Example usage:
+    #  - secretRef:
+    #      name: graphrag-conversation-database-credentials
+    #  - secretRef:
+    #      name: graphrag-conversation-keycloak-client
+
+######################################################
+# Configurations for the GraphRAG Components service #
+######################################################
+
+components:
+  enabled: true
+
+  fullnameOverride: graphrag-components
+
+  replicas: 1
+
+  configuration:
+    properties:
+      EMBEDDING_PROVIDER: aws
+      EMBEDDING_MODEL_ID: "cohere.embed-english-v3"
+      INCLUDE_VECTOR_DATA: false
+
+    existingProperties: []
+    # Example usage:
+    #  - configMapRef:
+    #      name: graphrag-components-vector-database
+    #  - secretRef:
+    #      name: graphrag-components-aws-credentials
+
+##########################################################
+# Configurations for the GraphRAG Workflows orchestrator #
+##########################################################
+
+workflows:
+  enabled: true
+
+  fullnameOverride: graphrag-workflows
+
+  ingress:
+    enabled: true
+    path: /graphrag/workflows(/|$)(.*)
+    pathType: ImplementationSpecific
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+
+  # Ref https://docs.n8n.io/hosting/configuration/
+  configuration:
+    externalUrl: https://127.0.0.1.nip.io/graphrag/workflows/
+
+    encryption:
+      existingSecret: graphrag-n8n-encryption
+
+    license:
+      existingSecret: graphrag-n8n-license
+      tenantId: 1
+
+    postgresdb:
+      host: graphrag-postgres-n8n-rw
+      database: n8n
+      credentials:
+        existingSecret: graphrag-n8n-database-credentials
