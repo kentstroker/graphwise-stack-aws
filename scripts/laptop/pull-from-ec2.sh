@@ -27,26 +27,43 @@
 #       --key ~/.ssh/graphwise-stack.pem --host 54.149.12.34
 #
 # Pass `--dest <dir>` to override the default backup location.
+#
+# Environment variable defaults:
+#   GRAPHWISE_KEY    same as --key  (e.g. ~/.ssh/graphwise-stack.pem)
+#   GRAPHWISE_HOST   same as --host (e.g. 54.149.12.34 or
+#                    stroker.semantic-proof.com)
+#   GRAPHWISE_USER   same as --user (default: graphwise)
+# Set these once in your shell rc and you can drop --key/--host
+# from every invocation. CLI flags override env vars.
 
 set -euo pipefail
 
-KEY=""
-HOST=""
-USER_NAME="graphwise"
+KEY="${GRAPHWISE_KEY:-}"
+HOST="${GRAPHWISE_HOST:-}"
+USER_NAME="${GRAPHWISE_USER:-graphwise}"
 DEST=""
 
 usage() {
     cat <<EOF
-Usage: $0 --key <key.pem> --host <ec2-host> [options]
+Usage: $0 [--key <key.pem>] [--host <ec2-host>] [options]
 
-Required:
+Required (CLI flag OR environment variable):
   --key <path.pem>     SSH private key
+                       env: GRAPHWISE_KEY
   --host <eip-or-fqdn> EC2 host (Elastic IP or DNS)
+                       env: GRAPHWISE_HOST
 
 Optional:
   --user <name>        SSH user (default: graphwise)
+                       env: GRAPHWISE_USER
   --dest <dir>         Backup destination directory (default:
                        ~/graphwise-backup-<host>-<UTC-timestamp>)
+
+Tip: export GRAPHWISE_KEY and GRAPHWISE_HOST in your shell rc so you
+can run this without --key/--host every time. Example:
+
+  export GRAPHWISE_KEY=~/.ssh/graphwise-stack.pem
+  export GRAPHWISE_HOST=stroker.semantic-proof.com
 EOF
 }
 
@@ -62,7 +79,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$KEY" || -z "$HOST" ]]; then
-    echo "ERROR: --key and --host are required." >&2
+    echo "ERROR: --key and --host are required (or set GRAPHWISE_KEY / GRAPHWISE_HOST)." >&2
     usage
     exit 1
 fi

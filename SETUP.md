@@ -640,6 +640,43 @@ The path you note here is what you'll paste into
 `terraform.tfvars` as `key_pair_name` (the name only, not the
 path), and into the `ssh -i <path>` commands later.
 
+### Export the key path so SSH/SCP commands stay short
+
+The deploy walkthrough has a lot of `ssh -i …` and the
+`scripts/laptop/{push,pull}-*.sh` helpers take `--key`. Export
+once in your shell rc so you don't paste the path every time:
+
+**macOS / Linux** (`~/.zshrc` or `~/.bashrc`):
+
+```bash
+export GRAPHWISE_KEY=~/.ssh/graphwise-stack.pem
+# Optional -- once Terraform is applied, set this to your EIP or
+# subdomain so the laptop helpers can drop --host too.
+# export GRAPHWISE_HOST=stroker.semantic-proof.com
+```
+
+**Windows** (PowerShell profile, `$PROFILE`):
+
+```powershell
+$env:GRAPHWISE_KEY = "$HOME\.ssh\graphwise-stack.pem"
+# $env:GRAPHWISE_HOST = "stroker.semantic-proof.com"
+```
+
+After reloading the shell, `scripts/laptop/push-to-ec2.sh` and
+`pull-from-ec2.sh` honor `GRAPHWISE_KEY` and `GRAPHWISE_HOST` as
+defaults, so you can run them with just the operation-specific
+flags. SSH/SCP itself doesn't read these env vars — for those, an
+`~/.ssh/config` entry is the cleaner pattern:
+
+```
+Host graphwise
+    HostName stroker.semantic-proof.com
+    User graphwise
+    IdentityFile ~/.ssh/graphwise-stack.pem
+```
+
+Then `ssh graphwise` and `scp foo graphwise:bar` Just Work.
+
 ---
 
 ## 9. Find your laptop's public IP
