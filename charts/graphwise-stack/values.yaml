@@ -47,9 +47,12 @@ keycloak:
     enabled: true
     username: poolparty_auth_admin
     password: admin
-    # Image with kcadm.sh. Pin to the same version as the operator
-    # in scripts/cluster-bootstrap.sh (KEYCLOAK_OPERATOR_VERSION).
-    image: quay.io/keycloak/keycloak:26.4.2
+    # Small base image; the Job apk-adds bash + curl + jq at startup
+    # and drives the Keycloak admin REST API directly. Switched away
+    # from quay.io/keycloak/keycloak because kcadm.sh in v26 silently
+    # no-ops some operations we depend on (notably adding client
+    # roles to a realm role's composite).
+    image: alpine:3.20
 
 n8nPostgres:
   enabled: true
