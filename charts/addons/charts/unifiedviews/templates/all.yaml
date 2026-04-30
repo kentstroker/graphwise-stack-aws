@@ -41,6 +41,36 @@ spec:
     metadata:
       labels: {{- include "uv.labels" . | nindent 8 }}
     spec:
+      # Mounting the PVC at /unified-views shadows the image's
+      # /unified-views/{run-uv.sh,configs,dependencies,uv-backend}.
+      # On a fresh PVC the main container starts with an empty
+      # /unified-views and the entrypoint immediately fails:
+      #   "/__cacert_entrypoint.sh: line 114:
+      #    /unified-views/run-uv.sh: No such file or directory"
+      #
+      # This initContainer runs the SAME image, copies its
+      # /unified-views/ tree into the PVC (`cp -an` = no-clobber, so
+      # subsequent restarts and image upgrades only ADD new files
+      # without trampling runtime data the app may have written).
+      # By the time the main container starts, the PVC carries the
+      # image's binaries plus room for whatever state the app
+      # persists.
+      initContainers:
+        - name: populate-image-content
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Populating PVC from image's /unified-views/..."
+              cp -an /unified-views/. /target/
+              echo "PVC contents now:"
+              ls -la /target/
+          volumeMounts:
+            - name: data
+              mountPath: /target
       containers:
         - name: unifiedviews
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
