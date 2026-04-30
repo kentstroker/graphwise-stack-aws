@@ -164,6 +164,32 @@ mkdir -p files/licenses
 ls files/licenses/
 ```
 
+**Filename matters.** `scripts/install-licenses.sh` looks for these
+exact names — anything else is silently ignored:
+
+| File | Purpose |
+|---|---|
+| `files/licenses/poolparty.key` | PoolParty (also used by Semantic Workbench) |
+| `files/licenses/graphdb.license` | GraphDB EE (used by both GraphDB instances) |
+| `files/licenses/uv-license.key` | UnifiedViews |
+
+Graphwise's email/portal will hand you files with vendor-specific
+names (e.g. `pp-eval-2026.key`) — **rename them on disk** to the
+names above before running `install-licenses.sh`. Example:
+
+```bash
+mv ~/Downloads/pp-eval-2026.key       files/licenses/poolparty.key
+mv ~/Downloads/graphdb-ee-2026.lic    files/licenses/graphdb.license
+mv ~/Downloads/uv-2026.key            files/licenses/uv-license.key
+ls -la files/licenses/
+```
+
+The license **contents** are vendor-issued binary blobs; we don't
+care what's inside, only that the three filenames match. If you
+later get fresh licenses (renewals, different customer engagement),
+overwrite these three files in place and re-run
+`./scripts/install-licenses.sh` followed by a Helm upgrade.
+
 ### 4. Install cluster operators
 
 One-time install of ingress-nginx, cert-manager (+ Let's Encrypt
