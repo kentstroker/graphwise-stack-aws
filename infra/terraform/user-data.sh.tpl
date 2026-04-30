@@ -91,24 +91,48 @@ apt-get install -y \
     iproute2 \
     apache2-utils
 
-# SSH/SFTP hardening: switch sshd from the external
-# /usr/lib/openssh/sftp-server binary to the in-process internal-sftp
-# implementation. Multiple teammates have hit intermittent
-# "ssh fails immediately after scp" failures on AWS EC2 (Debian 13
-# default config) -- the symptom is that scp returns success but the
-# sshd session corrupts somehow and subsequent `ssh` connects fail
-# with no useful error. Switching to internal-sftp avoids the
-# fork-and-exec-external-binary code path entirely. internal-sftp
-# is the upstream-recommended setting for modern OpenSSH; the only
-# reason the external server still ships is for chroot setups,
-# which we don't use.
-if grep -qE '^\s*Subsystem\s+sftp\s+/' /etc/ssh/sshd_config; then
-    sed -i -E 's|^(\s*Subsystem\s+sftp\s+).*|\1internal-sftp|' \
-        /etc/ssh/sshd_config
-    # Debian's service is `ssh`; some other distros use `sshd`.
-    systemctl restart ssh 2>/dev/null || systemctl restart sshd
-    echo "sshd_config: Subsystem sftp switched to internal-sftp"
-fi
+# ---------------------------------------------------------------------------
+# SSH tuning: avoid the "ssh fails immediately after scp, recovers in 2 min"
+# trap that hits multiple teammates on AWS EC2.
+#
+# Symptom:
+#   scp completes; the next `ssh` to the same host is refused immediately.
+#   Exactly 120 seconds later, ssh works again with no other intervention.
+#
+# Root cause(s):
+#   1. sshd's MaxStartups=10:30:100 slot queue + LoginGraceTime=120 default.
+#      Burst scp/ssh activity can leave half-completed unauthenticated
+#      connections occupying slots; new connects are refused until
+#      LoginGraceTime reaps them en masse.
+#   2. The external sftp-server binary forking from sshd has additional
+#      edge cases that don't hit the in-process internal-sftp path.
+#
+# Fixes applied here (drop-in /etc/ssh/sshd_config.d/ takes precedence
+# over the main file and survives openssh-server upgrades):
+#   - Subsystem sftp internal-sftp  (no external fork)
+#   - LoginGraceTime 30             (reap orphan slots in 30s, not 2m)
+#   - MaxStartups 100:30:200        (raise the unauthenticated cap so
+#                                     legitimate burst activity doesn't
+#                                     hit the limit at all)
+# ---------------------------------------------------------------------------
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/10-graphwise.conf <<'SSHDEOF'
+# Managed by graphwise-stack-aws cloud-init. Edits get overwritten on
+# instance rebuild; long-term changes belong in user-data.sh.tpl.
+Subsystem sftp internal-sftp
+LoginGraceTime 30
+MaxStartups 100:30:200
+SSHDEOF
+
+# Debian's main sshd_config also has a Subsystem line that wins over
+# any drop-in (sshd takes the FIRST Subsystem definition). Comment it
+# out so the drop-in actually takes effect.
+sed -i -E 's|^(\s*Subsystem\s+sftp\s+/.*)$|# \1   # disabled by graphwise cloud-init|' \
+    /etc/ssh/sshd_config
+
+# Debian's service is `ssh`; some other distros use `sshd`.
+systemctl restart ssh 2>/dev/null || systemctl restart sshd
+echo "sshd: internal-sftp + LoginGraceTime=30s + MaxStartups=100:30:200"
 
 # Debian's podman ships without a default image registry. Without this,
 # any unqualified image name fails with "short-name did not resolve to
