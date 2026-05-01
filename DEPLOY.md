@@ -212,17 +212,71 @@ invoke `cluster-bootstrap.sh` from a non-login context, set it
 explicitly: `GRAPHWISE_APEX=<sub>.<base> ./scripts/cluster-bootstrap.sh`.
 
 Takes ~5–6 minutes the first time (image pulls + helm waits + LE
-HTTP-01 cert issuance for the three observability hosts). After
-the script completes the dashboard token is one command away:
+HTTP-01 cert issuance for the three observability hosts).
+
+Idempotent — safe to re-run.
+
+#### 4a. Verify the observability tier
+
+After the script completes, the three observability UIs become
+reachable at:
+
+- `https://dashboard.<sub>.<base>/` — Kubernetes Dashboard (cluster
+  introspection)
+- `https://prometheus.<sub>.<base>/` — Prometheus UI (raw metrics +
+  PromQL)
+- `https://grafana.<sub>.<base>/` — Grafana with ~30 pre-built K8s
+  dashboards
+
+All three are gated by the same `demo:rdf#rocks` basic-auth pattern
+as GraphDB / RDF4J. Cert-manager issues per-host LE certs ~30–60s
+after the Ingress lands; if the browser shows a cert error, give
+it another minute and refresh.
+
+##### Kubernetes Dashboard sign-in flow
+
+The Dashboard login screen offers two options: **Bearer Token**
+or **Kubeconfig**. Choose **Bearer Token** — that's what our
+`dashboard-admin` ServiceAccount + `cluster-admin` ClusterRoleBinding
+provisioned in `cluster-bootstrap.sh` is set up for. (Kubeconfig
+works too but requires uploading the cluster's kubeconfig from
+your laptop, which is more setup for the same result.)
+
+To get a token:
 
 ```bash
 kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
 ```
 
-Paste that token into the Dashboard's bearer-token login at
-`https://dashboard.<sub>.<base>/` (after the basic-auth prompt).
+Copy the entire string that prints (no `Bearer ` prefix needed).
+Paste it into the Dashboard's "Enter token" field, click **Sign In**,
+land on the cluster overview showing all namespaces.
 
-Idempotent — safe to re-run.
+The token is valid for 24 hours by default. Re-run the same command
+for a fresh one. To pin a different lifetime, change `--duration` —
+e.g. `--duration=8h`. The Dashboard never sees the token after
+sign-in (the browser stores it in session storage), so closing the
+tab logs you out.
+
+##### Grafana sign-in flow
+
+Two layers:
+
+1. Browser hits the basic-auth prompt — `demo` / `rdf#rocks`.
+2. Grafana's own login page — `admin` / `demo-graphwise-2026`.
+
+The Grafana admin password is set in
+`charts/observability/kube-prometheus-stack-values.yaml` →
+`grafana.adminPassword`. Rotate there + re-run `cluster-bootstrap.sh`
+to roll it.
+
+##### Prometheus
+
+Prometheus has no application-level auth — the basic-auth at the
+ingress is the only protection. After signing in, "Status → Targets"
+should show kube-state-metrics, node-exporter, kubelet,
+prometheus-operator, and the kube-prometheus-stack components all
+`UP`. PromQL queries via the "Graph" tab.
 
 ### 5. Install the realm-import JSON for PoolParty
 
