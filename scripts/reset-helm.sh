@@ -236,6 +236,42 @@ echo "Updating chart dependencies..."
 helm dependency update "$GRAPHRAG_CHART_DIR"
 helm dependency update "$UMBRELLA_CHART_DIR"
 
+# ---------------------------------------------------------------------
+# 4a. Image-pull secret for maven.ontotext.com (graphrag pods)
+# ---------------------------------------------------------------------
+# The graphrag release pulls private images from maven.ontotext.com.
+# It needs a `graphwise` Secret of type kubernetes.io/dockerconfigjson
+# in the graphrag namespace. We also create it in the graphwise
+# namespace because the umbrella's global.imagePullSecrets
+# references it (most umbrella images are public on Docker Hub so
+# the secret existing is a no-op for them, but it keeps the
+# imagePullSecrets reference from being an orphan).
+#
+# Moved here from cluster-bootstrap.sh -- this is the script that
+# actually installs the chart that consumes it. If maven creds aren't
+# on disk, we WARN and continue: the umbrella installs fine without
+# them; only the graphrag release's pods will ImagePullBackOff.
+if [[ -f "$HOME/.ontotext/maven-user" && -f "$HOME/.ontotext/maven-pass" ]]; then
+    MAVEN_USER=$(tr -d '[:space:]' < "$HOME/.ontotext/maven-user")
+    MAVEN_PASS=$(tr -d '[:space:]' < "$HOME/.ontotext/maven-pass")
+    for ns in "$UMBRELLA_NAMESPACE" "$GRAPHRAG_NAMESPACE"; do
+        kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
+        kubectl -n "$ns" delete secret graphwise --ignore-not-found
+        kubectl -n "$ns" create secret docker-registry graphwise \
+            --docker-server=maven.ontotext.com \
+            --docker-username="$MAVEN_USER" \
+            --docker-password="$MAVEN_PASS"
+    done
+    echo "Created 'graphwise' image-pull secret in: $UMBRELLA_NAMESPACE, $GRAPHRAG_NAMESPACE"
+else
+    echo "WARNING: ~/.ontotext/maven-user and/or maven-pass not found."
+    echo "         Skipping image-pull secret. The umbrella release will"
+    echo "         install fine, but graphrag pods (chatbot, conversation,"
+    echo "         components, workflows) will ImagePullBackOff until you"
+    echo "         drop the maven creds and re-run this script (or run:"
+    echo "         kubectl -n $GRAPHRAG_NAMESPACE create secret docker-registry graphwise ...)"
+fi
+
 # Build the -f flag list. Auto-include the secrets overlay only if it
 # exists (Terraform's cloud-init writes it; manual installs may not
 # have one). Built as a bash array so values with spaces survive,

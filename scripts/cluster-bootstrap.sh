@@ -188,29 +188,13 @@ helm upgrade --install metrics-server metrics-server/metrics-server \
     --set 'args[0]=--kubelet-insecure-tls' \
     --wait --timeout 5m
 
-# ---------------------------------------------------------------------------
-# Image pull secret -- maven.ontotext.com (Graphwise private registry)
-# ---------------------------------------------------------------------------
-# The same `graphwise` secret name is referenced by the GraphRAG
-# umbrella chart (global.imagePullSecrets) and by every chart we'll
-# write that pulls from maven.ontotext.com. Created in both
-# graphrag and graphwise namespaces.
-if [[ -f "$HOME/.ontotext/maven-user" && -f "$HOME/.ontotext/maven-pass" ]]; then
-    MAVEN_USER=$(tr -d '[:space:]' < "$HOME/.ontotext/maven-user")
-    MAVEN_PASS=$(tr -d '[:space:]' < "$HOME/.ontotext/maven-pass")
-    for ns in graphrag graphwise; do
-        kubectl -n "$ns" delete secret graphwise --ignore-not-found
-        kubectl -n "$ns" create secret docker-registry graphwise \
-            --docker-server=maven.ontotext.com \
-            --docker-username="$MAVEN_USER" \
-            --docker-password="$MAVEN_PASS"
-    done
-    echo "Created 'graphwise' image-pull secret in namespaces: graphrag, graphwise"
-else
-    echo "WARNING: ~/.ontotext/maven-user and/or maven-pass not found."
-    echo "         Skipping image-pull secret. Charts that need it will"
-    echo "         fail at install time with ImagePullBackOff."
-fi
+# Note: the graphwise image-pull Secret (for maven.ontotext.com) used
+# to be created here, but it's only consumed by the GraphRAG release
+# pods at install time -- not by anything cluster-bootstrap.sh
+# installs. Moved to scripts/reset-helm.sh where it actually matters,
+# so this script no longer warns about missing ~/.ontotext/maven-*
+# files when you're just running cluster-bootstrap to test
+# observability.
 
 # ---------------------------------------------------------------------------
 # Kubernetes Dashboard (v2.7.0 -- raw YAML install per kubernetes.io docs)
