@@ -11,6 +11,23 @@
 # GraphRAG pods need to live in `graphrag` to mount the supporting
 # Secrets the umbrella creates there).
 #
+# ============================================================
+#  YOU USUALLY DO NOT RUN THIS SCRIPT MANUALLY.
+# ============================================================
+# scripts/reset-helm.sh auto-invokes this script twice (once with
+# --umbrella, once with --graphrag) before each `helm upgrade --install`,
+# writing the rendered overlays to /tmp/values-<sub>.yaml and
+# /tmp/values-<sub>-graphrag.yaml. The standard deploy flow is just
+# `./scripts/reset-helm.sh --yes <subdomain>` -- no need to call this
+# script first.
+#
+# Run it manually only when you want to:
+#   - Inspect the rendered overlay before applying.
+#   - Feed it into a non-destructive `helm upgrade` (without the
+#     PVC-deleting reset that reset-helm.sh performs).
+#   - Pipe the rendered overlay somewhere else (--umbrella / --graphrag
+#     write to stdout).
+#
 # Usage:
 #   ./scripts/render-values.sh stroker
 #     -> /tmp/values-stroker.yaml          (umbrella overlay)

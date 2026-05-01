@@ -1,4 +1,4 @@
-# Graphwise Stack — Cheat Sheet
+# Graphwise Stack — Console Guide
 
 **Maintainer:** Kent Stroker
 
@@ -280,7 +280,7 @@ Common issues:
 
 - Bedrock `AccessDeniedException` → `graphrag-bedrock` IAM user
   policy missing the model. See
-  [SETUP.md §Create the Bedrock IAM user](SETUP.md#6-create-the-bedrock-iam-user-and-verify-access).
+  [SETUP.md §4b Create the Bedrock IAM user](SETUP.md#4b-create-the-bedrock-iam-user).
 - Empty embeddings response → wrong region in the AWS credentials
   Secret.
 
@@ -375,21 +375,81 @@ Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster comp
 
 ---
 
-## Credentials reference (quick lookup)
+## Credentials reference
+
+The complete list of every credential in the deployed stack, grouped
+by purpose. Defaults are demo-grade — rotate everything before exposing
+to anyone who shouldn't have admin.
+
+### A. User-facing logins
+
+What you'll actually type into a UI or sign-in dialog.
 
 | Where | User | Password | Source |
 |---|---|---|---|
-| Keycloak master realm (admin console) | `poolparty_auth_admin` | `admin` | `charts/graphwise-stack/values.yaml` → `keycloak.bootstrapAdmin` |
-| Keycloak `poolparty` realm (PoolParty / ADF / SW SSO) | `superadmin` | `poolparty` | `charts/keycloak-realms/files/poolparty-realm.json` |
+| Keycloak master realm (admin console) | `poolparty_auth_admin` | `admin` | `charts/graphwise-stack/values.yaml` → `keycloak.bootstrapAdmin.{username,password}` |
+| Keycloak `poolparty` realm (PoolParty / ADF / SW SSO) | `superadmin` | `poolparty` | `charts/keycloak-realms/files/poolparty-realm.json` (baked into Ontotext image) |
 | Keycloak `graphrag` realm (chatbot SSO) | `alice` | `alice123` | `charts/keycloak-realms/values.yaml` → `graphrag.users` |
 | Keycloak `graphrag` realm | `bob` | `bob123` | same |
 | GraphViews (direct, no SSO) | `superadmin` | `poolparty` | uses PoolParty API creds |
-| GraphDB / GraphDB-projects / RDF4J ingress | `demo` | `rdf#rocks` | `charts/graphdb/values.yaml` + `charts/addons/charts/rdf4j/values.yaml` |
+| GraphDB embedded / GraphDB projects / RDF4J ingress | `demo` | `rdf#rocks` | `scripts/cluster-bootstrap.sh` (htpasswd) |
 | Prometheus ingress (basic auth) | `demo` | `rdf#rocks` | `scripts/cluster-bootstrap.sh` (`GRAPHWISE_BASIC_AUTH_HTPASSWD`) |
-| Kubernetes Dashboard (after basic auth) | bearer token | permanent | `kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' \| base64 -d ; echo` |
-| Grafana app login (after basic auth) | `admin` | `demo-graphwise-2026` | `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` |
-| UnifiedViews (app-local) | `admin` | `admin` | UnifiedViews default |
+| Grafana app login | `admin` | `demo-graphwise-2026` | `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` |
+| Kubernetes Dashboard | bearer token / kubeconfig | permanent | `~/dashboard-kubeconfig.yaml` on the EC2; `kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' \| base64 -d ; echo` |
+| UnifiedViews (app-local) | `admin` | `admin` | UnifiedViews image default |
 | n8n owner | (set on first visit) | (set on first visit) | n8n's own DB |
+
+### B. Internal service-to-service secrets
+
+Pod-to-pod authentication. You don't type these into anything; they
+live in Kubernetes Secrets that pods mount. Listed so you can confirm
+what's deployed and rotate cleanly. **All defaults below are
+`rdf#rocks` for demo-grade simplicity.**
+
+| Secret | Default | Source |
+|---|---|---|
+| Keycloak CNPG Postgres — superuser password | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `keycloak.postgres.superuserPassword` |
+| Keycloak CNPG Postgres — app user (`keycloak`) | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `keycloak.postgres.appPassword` |
+| n8n CNPG Postgres — superuser password | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `n8nPostgres.superuserPassword` |
+| n8n CNPG Postgres — app user (`n8n`) | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `n8nPostgres.appPassword` |
+| GraphRAG conversation Postgres app password (`graphrag_conversation`) | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `graphrag-secrets.conversation.dbPassword` |
+| GraphRAG n8n DB credential (consumed by graphrag-workflows) | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `graphrag-secrets.n8nDatabase.password` |
+| Conversation API → Keycloak `conversation-api-client` clientSecret | `rdf#rocks` | `charts/graphwise-stack/values.yaml` → `graphrag-secrets.conversationKeycloak.clientSecret` AND `keycloak-realms.graphragConversationClientSecret` (must match) |
+| n8n encryption key (DB-stored credential symmetric key) | auto-generated | Terraform `random_id.n8n_encryption_key` → `~/graphwise-secrets.yaml` overlay; never edit `values.yaml` for this |
+
+The n8n encryption key MUST stay constant after first n8n boot — n8n
+encrypts every saved connection with it; rotating breaks every stored
+credential. Terraform's empty `keepers = {}` block ensures the value is
+stable across re-applies (regenerates only on `terraform destroy` +
+re-apply, which also wipes the n8n DB so the new key is fine).
+
+### C. User-supplied secrets (you provide these)
+
+Placeholders shipped in the chart; deployment is broken until you
+fill them in. Edited on the **EC2 host**, never on your laptop (the
+file lives in git with placeholders).
+
+| Secret | Placeholder | What you provide | Source |
+|---|---|---|---|
+| AWS Bedrock access key ID | `""` (empty) | Access Key ID for the `graphrag-bedrock` IAM user from SETUP §4b | `charts/graphwise-stack/values.yaml` → `graphrag-secrets.awsCredentials.accessKeyId` |
+| AWS Bedrock secret access key | `""` (empty) | matching secret | same → `secretAccessKey` |
+| AWS Bedrock region | `us-west-2` | a region with `cohere.embed-english-v3` | same → `region` |
+| n8n Enterprise activation key | `REPLACE_WITH_REAL_N8N_LICENSE_KEY` | from your Graphwise n8n license email | `charts/graphwise-stack/values.yaml` → `graphrag-secrets.n8nLicense.activationKey` |
+| Maven registry username | (none — file absent by default) | from Graphwise registry email | EC2: `~/.ontotext/maven-user` |
+| Maven registry password | same | same | EC2: `~/.ontotext/maven-pass` |
+| PoolParty license key | (none) | vendor binary | EC2: `files/licenses/poolparty.key` |
+| GraphDB license file | (none) | vendor binary | EC2: `files/licenses/graphdb.license` |
+| UnifiedViews license key | (none) | vendor binary | EC2: `files/licenses/uv-license.key` |
+
+### D. Where the rendered console pulls from
+
+The apex landing page (`https://<sub>.<base>/`) shows a subset of the
+above for quick reference. Defaults live in
+`charts/console/values.yaml` → `credentials:` and are re-rendered on
+every `helm upgrade` (so changing a default in `values.yaml` →
+running `reset-helm.sh` updates the page automatically). Internal
+secrets (group B) are not displayed on the page; consult this guide
+for the full list.
 
 > **Demo grade.** Every password ships as a default. Rotate before
 > exposing the deployment to anyone who shouldn't have admin.
@@ -398,32 +458,22 @@ Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster comp
 
 ## Connecting to the EC2
 
-Two paths, both supported simultaneously:
-
 ```bash
-# SSH (default; fast terminal + scp)
+# Plain SSH (default)
 ssh -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST
 
-# AWS Systems Manager Session Manager (no SSH at all; HTTPS to AWS)
-# Useful when corporate EDR breaks SSH after scp -- see SETUP §10
-aws ssm start-session --target <i-xxxxxxxxxxxxxxxxx> --region us-west-2
-sudo su - ec2-user                    # SSM lands you as ssm-user
+# AWS CLI EC2 Instance Connect -- AWS pushes a temp key, then SSH from
+# your laptop (no SG change needed). Requires the inline IAM policy
+# from SETUP §9 Method 1.
+aws ec2-instance-connect ssh --instance-id <i-xxxxxxxxxxxxxxxxx> --private-key-file $GRAPHWISE_KEY
 ```
 
-`<i-xxxxxxxxxxxxxxxxx>` is the EC2 instance ID — printed in the
-Terraform `ssm_session` output, or look it up:
-
-```bash
-aws ssm describe-instance-information --query 'InstanceInformationList[*].[InstanceId,PingStatus]' --output table
-```
-
-For file transfer when SSM is your shell path (no scp), route
-through S3:
-
-```bash
-aws s3 cp <local-file> s3://<your-bucket>/transfer/   # from laptop
-aws s3 cp s3://<your-bucket>/transfer/<file> ~/      # from EC2 SSM shell
-```
+The Console "Connect" tab (browser-based Instance Connect) does
+**not** work against the default SG — the connection comes from
+AWS's `EC2_INSTANCE_CONNECT` service IP range, not your laptop. See
+[SETUP §9](SETUP.md#9-optional-ec2-instance-connect) for both
+methods (CLI + browser) and the manual SG rule the browser path
+needs.
 
 ---
 
@@ -477,10 +527,13 @@ helm upgrade graphrag ./charts/vendor/graphrag -n graphrag -f charts/vendor/grap
 
 0. **SSH to EC2 fails immediately after `scp` and won't reconnect**
    → corporate endpoint security (Elastic Defend, CrowdStrike, etc.)
-   on the laptop is inspecting outbound port-22 and tearing down
-   the stream. Use **AWS Session Manager** instead:
-   `aws ssm start-session --target <i-xxx>` (no SSH, HTTPS to AWS
-   only). Setup in [SETUP.md §10](SETUP.md#10-optional-recommended-on-managed-corporate-macs-aws-ssm-session-manager).
+   on the laptop is inspecting outbound port-22 and tearing down the
+   stream. Workarounds in order of preference: try from a personal
+   laptop / phone hotspot to confirm; ask IT to whitelist the EIP;
+   investigate `mosh` (UDP, not subject to the same TCP inspection);
+   or add the manual EC2 Instance Connect SG rule (one-time Console
+   step) and use the Console "Connect" tab — see
+   [SETUP.md §9](SETUP.md#9-optional-ec2-instance-connect--manual-sg-rule).
 
 1. **`kubectl` returns `connection refused 127.0.0.1:6443` after a
    reboot** → KIND node containers stopped.

@@ -19,6 +19,15 @@
 #   - all PVCs in namespaces graphwise, keycloak, graphrag (data loss)
 #   - any leftover Secrets/ConfigMaps from the umbrella's templates/
 #
+# Side-effect: re-renders the apex landing page ConfigMap
+# (charts/console/templates/configmap.yaml) through Helm `tpl`, so the
+# console at https://<sub>.<base>/ always reflects the credentials and
+# hostnames in values.yaml after this script completes. If you change a
+# default in charts/graphwise-stack/values.yaml or
+# charts/console/values.yaml, re-running this script (or a plain
+# helm upgrade) updates the page automatically. CONSOLE-GUIDE.md is
+# the authoritative reference for every credential in the stack.
+#
 # Usage:
 #   ./scripts/reset-helm.sh <subdomain> [base_domain]
 #   ./scripts/reset-helm.sh --yes <subdomain> [base_domain]

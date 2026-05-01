@@ -34,7 +34,7 @@ Each app gets its own subdomain — `poolparty.<sub>.<base>`,
 console at the apex `<sub>.<base>`. Every Ingress gets its own LE cert
 issued by cert-manager.
 
-See [CHEATSHEET.md](CHEATSHEET.md) for the full URL + credentials table.
+See [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) for the full URL + credentials table.
 
 ---
 
@@ -43,13 +43,21 @@ See [CHEATSHEET.md](CHEATSHEET.md) for the full URL + credentials table.
 Detailed, OS-specific walk-through is in **[SETUP.md](SETUP.md)** —
 laptop-zero through ready-for-`terraform-apply`. At a glance:
 
-- AWS account + IAM user with `AmazonEC2FullAccess` (don't use root).
+- AWS account + **two IAM users** (don't use root for daily work):
+  - **Terraform user** (e.g. `terraform-demo`) with
+    `AmazonEC2FullAccess`.
+  - **Bedrock user** (e.g. `graphrag-bedrock`) with a narrow inline
+    policy granting `bedrock:InvokeModel` on
+    `cohere.embed-english-v3`. SETUP §4b walks the full setup.
+  - **Note on actor:** all IAM user/policy creation is performed by
+    the **root account user** or an existing **IAM admin user**, NOT
+    by `terraform-demo` (which lacks IAM permissions). SETUP §4
+    opens with an actor table — read it before clicking through any
+    IAM Console step.
 - AWS Bedrock available in your region (no per-model approval needed
   — AWS grants foundation-model access by default; the
   `cohere.embed-english-v3` model the components pod uses is
-  reachable as long as Bedrock is offered there). A least-privilege
-  IAM user (`graphrag-bedrock`) carries the runtime
-  `bedrock:InvokeModel` permission.
+  reachable as long as Bedrock is offered there).
 - Terraform 1.5+ and AWS CLI v2 installed and authenticated.
 - EC2 key pair downloaded and `chmod 400`'d.
 - A subdomain plan (`<sub>.<base>` apex + `*.<sub>.<base>` wildcard
@@ -63,13 +71,51 @@ The EC2 instance side (Amazon Linux 2023 ARM64, Docker, KIND,
 kubectl, helm) is handled by the Terraform module's cloud-init;
 nothing to install there.
 
+> **Where each command runs.** This walkthrough hops between your
+> laptop and the EC2 instance. Each code block is prefaced with a
+> `# On laptop` or `# On EC2` comment. Quick map:
+>
+> | Step | Where |
+> |---|---|
+> | §1 Provision the EC2 instance (`terraform apply`) | Laptop |
+> | §1.5 Lock the AMI (`terraform output ...`) | Laptop |
+> | §2 Verify DNS (`dig ...`) | Laptop |
+> | §3 Connect (`ssh ...`, `scp ...`) — the SSH lands you on EC2 | Laptop → EC2 |
+> | §4 Install operators (`./scripts/cluster-bootstrap.sh`) | EC2 |
+> | §4a Verify observability (browser) | Either |
+> | §5 Extract realm (`./scripts/extract-poolparty-realm.sh`) | EC2 |
+> | §6 Install licenses (`./scripts/install-licenses.sh`) | EC2 |
+> | §7 Edit `values.yaml` | EC2 |
+> | §8 Deploy (`./scripts/reset-helm.sh ...`) | EC2 |
+> | §9 Verify URLs (curl + browser) | Either |
+>
+> **Terraform never runs on the EC2 instance.** The state file lives
+> on your laptop; the EC2 is the workload, not the provisioner.
+
 ---
 
 ## Deploy from zero
 
 ### 1. Provision the EC2 instance
 
+> **Fast path prereqs (recommended).** SETUP §6 had you pre-allocate
+> an Elastic IP and create the two DNS A records pointing at it.
+> If you did that, set `existing_eip_allocation_id` in
+> `terraform.tfvars` to your `eipalloc-...` ID, and the EIP +
+> DNS are already set-and-forget. **Slow path:** if you skipped
+> SETUP §6, leave `existing_eip_allocation_id` empty and Terraform
+> allocates a fresh EIP each apply — you'll do DNS in §2 below
+> after the apply finishes.
+
+> **⚠️ This is the ONLY time `terraform apply` is safe to run
+> unscoped.** After this initial provision, every subsequent apply
+> can force-replace the EC2 instance (and destroy all data on it)
+> due to the `most_recent = true` AMI lookup. For any post-provision
+> edits, see [infra/README.md → Safety: never unscoped apply after
+> first provision](infra/README.md#safety-never-unscoped-terraform-apply-after-first-provision).
+
 ```bash
+# On laptop
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars       # see the field-by-field table below
@@ -102,14 +148,15 @@ you'd touch them:
 | `root_volume_gb` | `300` | You're pruning the stack; 300 GB gives headroom for the KIND image cache + every PVC + log growth. Can grow later, can't shrink. |
 | `github_repo_url` | upstream | You've forked the repo and want cloud-init to clone your fork. |
 | `instance_name_prefix` | `graphwise-stack` | You want a different prefix for cost-allocation tags. Final Name tag is `<prefix>-<subdomain>`. |
-| `existing_eip_allocation_id` | `""` (allocate fresh) | Set this **after** allocating an EIP outside Terraform (Console or `aws ec2 allocate-address`) to make the EIP survive `terraform destroy`/`apply` cycles. Otherwise every rebuild gets a new EIP and you have to update DNS again. Allocation ID format: `eipalloc-0123456789abcdef0`. |
+| `existing_eip_allocation_id` | `""` (allocate fresh — slow path) | **Strongly recommended:** set to the `eipalloc-...` ID you captured in [SETUP §6 → Pre-allocate the Elastic IP](SETUP.md#pre-allocate-the-elastic-ip-strongly-recommended). Makes the EIP survive `terraform destroy`/`apply` cycles so DNS stays valid forever. Leaving empty falls back to fresh-EIP-per-apply, which means re-doing DNS after every rebuild. |
 | `extra_tags` | `{}` | Your org needs Owner / Customer / CostCenter tags on AWS resources. Merged with the module's own `Name` / `Subdomain` / `ManagedBy` tags. |
 
 After saving `terraform.tfvars`:
 
 ```bash
+# On laptop
 terraform init       # one-time; downloads the AWS provider plugin
-terraform plan       # dry-run; you should see 3 resources to add: SG, EC2, EIP
+terraform plan       # dry-run; review the plan (~5 resources)
 terraform apply
 ```
 
@@ -119,6 +166,7 @@ cloud-init script takes 2–3 minutes after `apply` returns; tail it
 with:
 
 ```bash
+# On laptop
 ssh -i <key.pem> ec2-user@<eip> 'sudo tail -f /var/log/bootstrap.log'
 ```
 
@@ -128,17 +176,72 @@ already up at that point — `kind get clusters` shows `graphwise`.
 See [infra/README.md](infra/README.md) for the full Terraform module
 reference, including the post-apply runbook and teardown.
 
-### 2. Email Kent for the DNS records
+### 1.5 Lock the AMI (one-time, immediately after first apply)
 
-Two records, both pointing at the EIP:
+Capture the AMI the instance was launched with and write it into
+`terraform.tfvars` as `ami_override`. This protects the deployment
+from being force-replaced the next time AWS publishes a refreshed
+AL2023 AMI:
 
-> - **A record:** `<sub>.semantic-proof.com` → EIP, TTL 5 min
-> - **A record:** `*.<sub>.semantic-proof.com` → EIP, TTL 5 min
+```bash
+# On laptop (Terraform never runs on the EC2)
+cd infra/terraform
+terraform output -raw ami_id              # prints e.g. ami-0123456789abcdef0
+$EDITOR terraform.tfvars                  # set: ami_override = "ami-0123456789abcdef0"
+terraform plan                            # MUST show "No changes"
+```
+
+If `terraform plan` shows anything other than "No changes. Your
+infrastructure matches the configuration", **stop and investigate**
+before doing anything else — the override value or the captured AMI
+ID is wrong.
+
+> **Two layers of protection.** `aws_instance.stack` already has
+> `lifecycle.ignore_changes = [ami]` so an unset `ami_override` is
+> still safe post-provision. The override variable adds an explicit,
+> human-readable pin (so plan output is clean and so AMI upgrades are
+> intentional, not accidental). Both belt and braces.
+
+To upgrade the AMI later (e.g. for a security patch):
+
+```bash
+# On laptop
+aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-*-arm64" --query 'sort_by(Images,&CreationDate)[-1].[ImageId,Name,CreationDate]' --output text
+# Pick the resulting ami-... ID, snapshot the EBS volume in the AWS
+# Console first if you care about the data, then:
+$EDITOR terraform.tfvars                  # bump ami_override
+terraform plan                            # WILL show aws_instance.stack force-replace
+terraform apply                           # destroys + recreates the instance
+```
+
+### 2. Verify DNS (or add records, slow path)
+
+**Fast path (you followed SETUP §6):** the two A records already
+exist and were created with the pre-allocated EIP. Just confirm
+propagation:
+
+```bash
+# On laptop
+dig +short <sub>.<base> poolparty.<sub>.<base>
+```
+
+Both should return your EIP. If they do, skip ahead to §3.
+
+**Slow path (no pre-allocation):** Terraform allocated a fresh EIP
+during §1; the `godaddy_dns_records` output prints the exact host /
+value pairs to add. Two records, both pointing at the freshly
+allocated EIP:
+
+> - **A record:** `<sub>.<base>` → EIP, TTL 5 min
+> - **A record:** `*.<sub>.<base>` → EIP, TTL 5 min
+
+Graphwise field SEs: email Kent the values from the output and he
+adds them in GoDaddy. Self-managed: add them yourself.
 
 Wait for propagation — usually under 5 minutes:
 
 ```bash
-dig +short <sub>.semantic-proof.com poolparty.<sub>.semantic-proof.com
+dig +short <sub>.<base> poolparty.<sub>.<base>
 ```
 
 Both should return your EIP. Without the wildcard, every per-app
@@ -147,26 +250,26 @@ nothing works.
 
 ### 3. Connect and prepare creds
 
-Two connection paths supported:
-
-**SSH (default, fast terminal + scp):**
-
 ```bash
+# On laptop -- the ssh command lands you on the EC2 as ec2-user
 ssh -i <key.pem> ec2-user@<eip>
 ```
 
-**AWS Session Manager** (no port 22; useful when corporate EDR
-blocks SSH after scp — see [SETUP.md §10](SETUP.md#10-optional-recommended-on-managed-corporate-macs-aws-ssm-session-manager)):
+Or, if you prefer AWS-injected per-session keys (and have the small
+inline IAM policy from [SETUP §9 Method 1](SETUP.md#method-1-recommended-aws-cli--aws-ec2-instance-connect-ssh)):
 
 ```bash
-aws ssm start-session --target <i-xxxxxxxxxxxxxxxxx> --region us-west-2
-sudo su - ec2-user
+# On laptop -- alternative login via AWS CLI EC2 Instance Connect
+aws ec2-instance-connect ssh --instance-id $(terraform -chdir=infra/terraform output -raw instance_id) --private-key-file <key.pem>
 ```
 
-The instance ID + region come from the Terraform `ssm_session`
-output. Either path lands you in a shell as `ec2-user`.
+Both land you as `ec2-user`. (EC2 Instance Connect from the AWS Console
+does **not** work against this stack's strict `admin_cidr` — see
+[SETUP §9](SETUP.md#9-optional-ec2-instance-connect)
+for why.)
 
 ```bash
+# On EC2 (from the SSH session above)
 cd ~/graphwise-stack-aws
 
 # Maven registry creds for the GraphRAG images
@@ -175,10 +278,12 @@ echo '<maven-username>' > ~/.ontotext/maven-user
 echo '<maven-password>' > ~/.ontotext/maven-pass
 chmod 600 ~/.ontotext/*
 
-# Drop Graphwise license files (scp from your laptop, or via S3 if
-# using SSM and SCP isn't available -- see SETUP §10)
+# Drop Graphwise license files via scp from your laptop:
 mkdir -p files/licenses
-# scp: poolparty.key, graphdb.license, uv-license.key
+# (back on your laptop, in another terminal)
+#   scp -i <key.pem> ~/path/to/poolparty.key ec2-user@<eip>:~/graphwise-stack-aws/files/licenses/poolparty.key
+#   scp -i <key.pem> ~/path/to/graphdb.license ec2-user@<eip>:~/graphwise-stack-aws/files/licenses/graphdb.license
+#   scp -i <key.pem> ~/path/to/uv-license.key ec2-user@<eip>:~/graphwise-stack-aws/files/licenses/uv-license.key
 ls files/licenses/
 ```
 
@@ -220,6 +325,7 @@ three observability UIs gated by the same demo basic-auth pattern as
 GraphDB / RDF4J.
 
 ```bash
+# On EC2
 export LE_EMAIL=you@example.com
 ./scripts/cluster-bootstrap.sh
 ```
@@ -336,6 +442,7 @@ prometheus-operator, and the kube-prometheus-stack components all
 ### 5. Install the realm-import JSON for PoolParty
 
 ```bash
+# On EC2
 ./scripts/extract-poolparty-realm.sh
 ```
 
@@ -346,6 +453,7 @@ image tag.
 ### 6. Install the license Secrets
 
 ```bash
+# On EC2
 ./scripts/install-licenses.sh
 ```
 
@@ -361,6 +469,7 @@ laptop — that copy is in git, and your real credentials should never
 be committed):
 
 ```bash
+# On EC2 -- never edit this file on your laptop (it lives in git with placeholder values)
 $EDITOR charts/graphwise-stack/values.yaml
 ```
 
@@ -372,7 +481,7 @@ graphrag-secrets:
 
   # AWS Bedrock credentials for the graphrag-components pod.
   # Use the access key from the graphrag-bedrock IAM user you
-  # created in SETUP.md §6. The region must match the region the
+  # created in SETUP.md §4b. The region must match the region the
   # IAM policy ARN was scoped to.
   awsCredentials:
     region: "us-west-2"
@@ -420,6 +529,7 @@ place last time.
 ### 8. Deploy the stack
 
 ```bash
+# On EC2
 ./scripts/reset-helm.sh --yes <your-subdomain>
 ```
 
@@ -440,12 +550,14 @@ imports, Spring init, Lucene index warmup, LE cert issuance). Watch
 progress in another shell:
 
 ```bash
+# On EC2 (in another SSH session)
 kubectl get pods -A -w
 ```
 
 ### 9. Verify
 
 ```bash
+# Either laptop or EC2 -- this is just an HTTPS reachability test
 APEX=<your-subdomain>.semantic-proof.com
 for h in $APEX poolparty.$APEX auth.$APEX graphdb.$APEX graphrag.$APEX; do
   printf '%-50s ' "$h"
@@ -589,7 +701,7 @@ fine to leave at defaults for a demo.
 
 ## Troubleshooting
 
-See [CHEATSHEET.md §If something breaks](CHEATSHEET.md#if-something-breaks-helm-path)
+See [CONSOLE-GUIDE.md §If something breaks](CONSOLE-GUIDE.md#if-something-breaks-helm-path)
 for the runbook. Common starting points:
 
 ```bash
@@ -619,18 +731,22 @@ curl -s https://auth.<sub>.<base>/realms/master/.well-known/openid-configuration
 │   ├── terraform/                   # AWS module (EC2, SG, EIP, cloud-init)
 │   └── README.md                    # Terraform module reference
 ├── scripts/
-│   ├── cluster-bootstrap.sh         # One-time install of cluster operators
+│   ├── cluster-bootstrap.sh         # One-time install of cluster operators + observability
 │   ├── cluster-resume.sh            # Restart KIND nodes after EC2 stop/start
+│   ├── cluster-stop.sh              # Quiesce app workloads before EC2 stop
 │   ├── render-values.sh             # Generate per-subdomain values overlays
 │   ├── reset-helm.sh                # Wipe + reinstall both Helm releases
 │   ├── install-licenses.sh          # Load license files as K8s Secrets
-│   └── extract-poolparty-realm.sh   # Pull realm JSON from poolparty-keycloak image
+│   ├── extract-poolparty-realm.sh   # Pull realm JSON from poolparty-keycloak image
+│   └── laptop/                      # Laptop-side helpers
+│       ├── push-to-ec2.sh           # rsync local edits to the EC2 host
+│       └── pull-from-ec2.sh         # rsync EC2-side edits back to laptop
 ├── files/licenses/                  # Vendor license files (gitignored)
 ├── README.md                        # One-page summary + zero-to-deployed checklist
 ├── DEPLOY.md                        # This file (full walkthrough)
 ├── SETUP.md                         # Laptop-zero prerequisites (macOS + Windows)
 ├── CLAUDE.md                        # Background, invariants, debugging story
-└── CHEATSHEET.md                    # URLs, credentials, runbooks
+└── CONSOLE-GUIDE.md                    # URLs, credentials, runbooks
 ```
 
 ---
@@ -645,7 +761,7 @@ curl -s https://auth.<sub>.<base>/realms/master/.well-known/openid-configuration
 - [CLAUDE.md](CLAUDE.md) — architecture deep dive, Keycloak hostname
   rule, OIDC issuer-match invariant, two-release model rationale,
   open issues.
-- [CHEATSHEET.md](CHEATSHEET.md) — every URL, credential, lifecycle
+- [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) — every URL, credential, lifecycle
   command, and troubleshooting flow.
 - [infra/README.md](infra/README.md) — Terraform module: variables,
   outputs, post-apply runbook, teardown.
