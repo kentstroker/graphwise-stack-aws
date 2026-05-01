@@ -228,19 +228,31 @@ reachable at:
 - `https://grafana.<sub>.<base>/` — Grafana with ~30 pre-built K8s
   dashboards
 
-All three are gated by the same `demo:rdf#rocks` basic-auth pattern
-as GraphDB / RDF4J. Cert-manager issues per-host LE certs ~30–60s
-after the Ingress lands; if the browser shows a cert error, give
-it another minute and refresh.
+Auth pattern per app:
+
+- **Dashboard** — bearer token only (no basic auth in front; the
+  Dashboard's own bearer-token requirement is sufficient and
+  basic-auth re-prompted on every tab switch).
+- **Grafana** — Grafana's own login only (`admin` /
+  `demo-graphwise-2026`); session cookies survive tab switches
+  cleanly.
+- **Prometheus** — basic auth `demo` / `rdf#rocks` (Prometheus
+  has no auth of its own; basic auth is the only gate).
+
+Cert-manager issues per-host LE certs ~30–60s after the Ingress
+lands; if the browser shows a cert error, give it another minute
+and refresh.
 
 ##### Kubernetes Dashboard sign-in flow
 
 The Dashboard login screen offers two options: **Bearer Token**
-or **Kubeconfig**. Choose **Bearer Token** — that's what our
-`dashboard-admin` ServiceAccount + `cluster-admin` ClusterRoleBinding
-provisioned in `cluster-bootstrap.sh` is set up for. (Kubeconfig
-works too but requires uploading the cluster's kubeconfig from
-your laptop, which is more setup for the same result.)
+or **Kubeconfig**. The `dashboard-admin` ServiceAccount +
+`cluster-admin` ClusterRoleBinding from `cluster-bootstrap.sh`
+work with either, but the **Kubeconfig upload is the recommended
+path** — the Token field's paste handler is broken in Chrome and
+Safari (silently rejects pasted input). `cluster-bootstrap.sh`
+auto-generates the kubeconfig at `~/dashboard-kubeconfig.yaml`
+on EC2 with the token embedded.
 
 To get the token:
 
@@ -286,10 +298,8 @@ cluster-admin RBAC.
 
 ##### Grafana sign-in flow
 
-Two layers:
-
-1. Browser hits the basic-auth prompt — `demo` / `rdf#rocks`.
-2. Grafana's own login page — `admin` / `demo-graphwise-2026`.
+Single layer: Grafana's own login page — `admin` /
+`demo-graphwise-2026`. Session cookies survive tab switches.
 
 The Grafana admin password is set in
 `charts/observability/kube-prometheus-stack-values.yaml` →

@@ -185,12 +185,12 @@ footer code {
 </section>
 
 <section>
-  <h2>Observability (Basic Auth: demo / rdf#rocks)</h2>
+  <h2>Observability</h2>
   <div class="grid">
     <a class="card" href="https://dashboard.stroker.semantic-proof.com/">
       <div class="title">Kubernetes Dashboard</div>
-      <div class="desc">Cluster + workload introspection. Bearer token after basic auth.</div>
-      <div class="auth">basic + bearer &middot; <code>kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h</code></div>
+      <div class="desc">Cluster + workload introspection. Upload <code>~/dashboard-kubeconfig.yaml</code> at the login screen.</div>
+      <div class="auth">bearer token (kubeconfig)</div>
     </a>
     <a class="card" href="https://prometheus.stroker.semantic-proof.com/">
       <div class="title">Prometheus</div>
@@ -200,7 +200,7 @@ footer code {
     <a class="card" href="https://grafana.stroker.semantic-proof.com/">
       <div class="title">Grafana</div>
       <div class="desc">Pre-built K8s dashboards (~30 ship with the chart). Build your own here.</div>
-      <div class="auth">basic + Grafana &middot; admin / demo-graphwise-2026</div>
+      <div class="auth">admin / demo-graphwise-2026</div>
     </a>
   </div>
 </section>

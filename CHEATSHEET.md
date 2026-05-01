@@ -331,15 +331,23 @@ chart is still the placeholder `REPLACE_WITH_REAL_N8N_LICENSE_KEY`.
 ## Kubernetes Dashboard
 
 **URL:** `https://dashboard.<sub>.<base>/`
-**Login:** Two layers — first basic auth (`demo` / `rdf#rocks`), then a bearer token.
+**Login:** Bearer token (no basic auth — the bearer-token requirement is the auth).
 
-**Get the token (permanent — never expires):**
+**Recommended path — kubeconfig upload (paste-handler-bug-proof):**
+
+`cluster-bootstrap.sh` auto-generates `~/dashboard-kubeconfig.yaml` on EC2 with the long-lived token embedded. Pull it down once:
+
+```bash
+scp -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
+```
+
+On the Dashboard login screen → switch radio to **Kubeconfig** → "Choose kubeconfig file" → select `~/Downloads/dashboard-kubeconfig.yaml` → Sign In. Same kubeconfig works forever (until you revoke the underlying token).
+
+**Or paste the raw token** (Chrome and Safari sometimes silently swallow paste — use the kubeconfig path if so):
 
 ```bash
 kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d ; echo
 ```
-
-Paste into the Dashboard's "Bearer token" login screen. Same string every time — save once in your password manager and reuse.
 
 The `dashboard-admin` ServiceAccount is bound to `cluster-admin` (sees everything). The token is materialized into a long-lived `dashboard-admin-token` Secret of type `kubernetes.io/service-account-token` by `cluster-bootstrap.sh`. To revoke: `kubectl -n kubernetes-dashboard delete secret dashboard-admin-token`. To rotate periodically instead, the ephemeral form `kubectl -n kubernetes-dashboard create token dashboard-admin --duration=8760h` works too (max 1 year per kube-apiserver default).
 
@@ -357,7 +365,7 @@ Raw Prometheus UI: PromQL query, targets list, alerts. Useful for ad-hoc queries
 ## Grafana
 
 **URL:** `https://grafana.<sub>.<base>/`
-**Login:** Two layers — first basic auth (`demo` / `rdf#rocks`), then Grafana's own login (`admin` / `demo-graphwise-2026`).
+**Login:** Grafana's own session-cookie auth — `admin` / `demo-graphwise-2026`. No basic auth in front (the session cookie covers tab switches; basic auth on top kept re-prompting).
 
 Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster compute resources, namespace overview, pod resource consumption, kubelet metrics, etcd, API server. Browse via Dashboards → Browse → "default" folder.
 
@@ -377,7 +385,7 @@ Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster comp
 | Keycloak `graphrag` realm | `bob` | `bob123` | same |
 | GraphViews (direct, no SSO) | `superadmin` | `poolparty` | uses PoolParty API creds |
 | GraphDB / GraphDB-projects / RDF4J ingress | `demo` | `rdf#rocks` | `charts/graphdb/values.yaml` + `charts/addons/charts/rdf4j/values.yaml` |
-| Dashboard / Prometheus / Grafana ingress (basic auth) | `demo` | `rdf#rocks` | `scripts/cluster-bootstrap.sh` (`GRAPHWISE_BASIC_AUTH_HTPASSWD`) |
+| Prometheus ingress (basic auth) | `demo` | `rdf#rocks` | `scripts/cluster-bootstrap.sh` (`GRAPHWISE_BASIC_AUTH_HTPASSWD`) |
 | Kubernetes Dashboard (after basic auth) | bearer token | permanent | `kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' \| base64 -d ; echo` |
 | Grafana app login (after basic auth) | `admin` | `demo-graphwise-2026` | `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` |
 | UnifiedViews (app-local) | `admin` | `admin` | UnifiedViews default |

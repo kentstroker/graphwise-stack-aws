@@ -311,15 +311,16 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
     --wait --timeout 10m
 
 # ---------------------------------------------------------------------------
-# Basic-auth secrets for observability ingresses
+# Basic-auth secret for the Prometheus ingress
 # ---------------------------------------------------------------------------
-# Same demo creds (demo / rdf#rocks) as graphdb / rdf4j. ingress-nginx
-# requires the secret to live in the same namespace as the Ingress.
-for ns in kubernetes-dashboard monitoring; do
-    kubectl -n "$ns" create secret generic graphwise-basic-auth \
-        --from-literal=auth="$GRAPHWISE_BASIC_AUTH_HTPASSWD" \
-        --dry-run=client -o yaml | kubectl apply -f -
-done
+# Only Prometheus needs this -- the Dashboard's bearer-token and
+# Grafana's session-cookie auth are sufficient for those, and
+# layering basic auth on top forced re-prompts across tab switches
+# (browsers don't reliably cache basic-auth credentials).
+# Same demo creds (demo / rdf#rocks) as graphdb / rdf4j.
+kubectl -n monitoring create secret generic graphwise-basic-auth \
+    --from-literal=auth="$GRAPHWISE_BASIC_AUTH_HTPASSWD" \
+    --dry-run=client -o yaml | kubectl apply -f -
 
 # ---------------------------------------------------------------------------
 # Observability Ingresses (dashboard / prometheus / grafana)
@@ -334,6 +335,14 @@ done
 # is self-healing.
 
 # --- Kubernetes Dashboard
+# No basic-auth annotations: the Dashboard requires a bearer token
+# of its own (the kubeconfig file we provision in
+# ~/dashboard-kubeconfig.yaml contains it). Layering basic auth on
+# top gave us nothing security-wise and re-prompted on every tab
+# switch because browsers don't reliably cache basic-auth credentials
+# across tabs. The public URL now serves the Dashboard's "Token /
+# Kubeconfig" login screen directly; the cluster is still locked
+# down by the bearer-token requirement.
 kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -342,9 +351,6 @@ metadata:
   namespace: kubernetes-dashboard
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/auth-type: basic
-    nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
-    nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
     nginx.ingress.kubernetes.io/proxy-body-size: 100m
 spec:
@@ -396,6 +402,11 @@ spec:
 EOF
 
 # --- Grafana
+# No basic-auth annotations: Grafana has its own login
+# (admin / demo-graphwise-2026 from kube-prometheus-stack-values.yaml)
+# and a session-cookie-based auth that survives tab switches.
+# Layering basic auth on top forced a re-prompt on every tab
+# switch because browsers don't reliably cache basic-auth state.
 kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -404,9 +415,6 @@ metadata:
   namespace: monitoring
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/auth-type: basic
-    nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
-    nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
 spec:
   ingressClassName: nginx
   tls:
