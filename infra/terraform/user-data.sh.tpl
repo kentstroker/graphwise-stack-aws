@@ -267,11 +267,14 @@ What's still manual, in order:
     export LE_EMAIL=you@example.com
     ./scripts/cluster-bootstrap.sh
 
-    # 3a. (Observability) Get the permanent Dashboard login token
-    #     for https://dashboard.$HOSTNAME_FQDN/ (paste into the
-    #     Dashboard's bearer-token login screen). Same value every
-    #     time -- save once in your password manager.
-    kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d ; echo
+    # 3a. (Observability) cluster-bootstrap.sh auto-generated a
+    #     ready-to-upload kubeconfig at ~/dashboard-kubeconfig.yaml.
+    #     scp it to your laptop and upload via the Dashboard's
+    #     Kubeconfig login option (the token-field paste handler is
+    #     broken in Chrome/Safari):
+    #       scp -i <key.pem> ec2-user@<eip>:~/dashboard-kubeconfig.yaml ~/Downloads/
+    #     Then https://dashboard.$HOSTNAME_FQDN/ -> Kubeconfig radio
+    #     -> Choose file -> Sign In.
 
     # 4. Drop your Graphwise license files under files/licenses/:
     #    PoolParty (poolparty.key), GraphDB (graphdb.license),

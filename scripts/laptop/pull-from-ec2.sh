@@ -122,6 +122,9 @@ echo "Helm values + secrets overlay:"
 scp_from "graphwise-secrets.yaml"         "graphwise-secrets.yaml"                              "$DEST/values/graphwise-secrets.yaml"
 scp_from "values.yaml (edited)"           "graphwise-stack-aws/charts/graphwise-stack/values.yaml" "$DEST/values/graphwise-stack-values.yaml"
 
+echo "Kubernetes Dashboard kubeconfig:"
+scp_from "dashboard-kubeconfig.yaml"      "dashboard-kubeconfig.yaml"                           "$DEST/dashboard-kubeconfig.yaml"
+
 # Drop macOS Finder droppings that sneak into the backup dir.
 find "$DEST" -name '.DS_Store' -delete 2>/dev/null || true
 
