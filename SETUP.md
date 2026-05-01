@@ -701,7 +701,135 @@ Caveats:
 
 ---
 
-## 10. Optional — local Podman
+## 10. (Optional, recommended on managed corporate Macs) AWS SSM Session Manager
+
+If your work laptop runs corporate endpoint security (CrowdStrike,
+Elastic Defend, Sophos, Cisco Umbrella, etc.) you may hit a
+maddening symptom: SSH to the EC2 works initially, then breaks
+immediately after a `scp` transfer, then refuses to reconnect for
+60+ seconds. The agent is inspecting outbound port-22 traffic and
+RST'ing the stream when it matches a heuristic. Confirmed cases on
+managed Macs to date — the symptom doesn't happen from
+non-managed devices on the same network.
+
+**AWS Systems Manager Session Manager bypasses this entirely.** It
+opens a shell on the EC2 over **HTTPS to AWS API endpoints**, not
+port 22 to the EC2 directly. Corporate firewalls / EDR almost
+universally allow `*.amazonaws.com:443` (you're already using AWS
+Console + AWS CLI through the same path), so SSM rides on the
+allow rules you already have. No SSH session, no SCP — file
+transfers go through S3.
+
+The Terraform module attaches the required `AmazonSSMManagedInstanceCore`
+IAM role to the EC2 automatically; no extra apply step. AL2023 ships
+with the SSM Agent pre-installed and enabled, so the EC2 side is
+ready out of the box.
+
+### Laptop-side setup
+
+**1. Install the Session Manager plugin** for the AWS CLI:
+
+```bash
+brew install --cask session-manager-plugin
+```
+
+Or per the AWS docs:
+https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
+
+Verify:
+
+```bash
+session-manager-plugin --version
+```
+
+**2. Add SSM permissions to the IAM user** running your AWS CLI
+(the same user you set up in §4 with `AmazonEC2FullAccess` —
+that policy doesn't include SSM session permissions). Either:
+
+- AWS Console → IAM → Users → your user → Add permissions →
+  attach `AmazonSSMReadOnlyAccess` (broad but easy), OR
+- Inline policy with just what's needed:
+
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "ssm:StartSession",
+          "ssm:DescribeInstanceInformation",
+          "ssm:DescribeSessions",
+          "ssm:GetConnectionStatus",
+          "ssm:TerminateSession",
+          "ssm:ResumeSession"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }
+  ```
+
+**3. Verify the EC2 is reachable via SSM:**
+
+```bash
+aws ssm describe-instance-information --query 'InstanceInformationList[*].[InstanceId,PingStatus,PlatformName]' --output table
+```
+
+You should see your instance with `PingStatus=Online`. If empty,
+the SSM Agent may not have registered yet — wait 60 seconds and
+retry. If `Could not connect`, your corporate proxy blocks the SSM
+endpoint (rare); contact IT.
+
+### Connecting
+
+The Terraform `ssm_session` output prints the exact command:
+
+```bash
+aws ssm start-session --target i-0123456789abcdef0 --region us-west-2
+```
+
+Lands you in a shell as `ssm-user`. Switch to ec2-user for the
+deployment workflow:
+
+```bash
+sudo su - ec2-user
+```
+
+Quit with `exit` (twice — once for ec2-user, once for ssm-user → ends session).
+
+### File transfer when SSM is your shell path (no SCP)
+
+For dropping license files / Maven creds / kubeconfig retrieval
+when SSH/SCP is broken, route through S3:
+
+```bash
+# Laptop -> S3:
+aws s3 cp ~/path/to/poolparty.key s3://<your-bucket>/transfer/poolparty.key
+
+# Inside the SSM shell on EC2 (as ec2-user):
+aws s3 cp s3://<your-bucket>/transfer/poolparty.key ~/graphwise-stack-aws/files/licenses/
+```
+
+You can create a throwaway S3 bucket (`aws s3 mb
+s3://my-graphwise-transfer-<random>`) for this. Lifecycle policy
+to auto-delete after 1 day keeps the bucket clean.
+
+### When to use SSH vs SSM
+
+| Situation | Use |
+|---|---|
+| Personal Mac (or any non-EDR-managed laptop) | SSH (faster terminal experience, scp works) |
+| Corporate Mac with EDR / network filter that breaks SSH | SSM (~~works around the EDR; HTTPS-only path) |
+| First-boot / before SSM Agent registers (~60s after instance starts) | SSH (SSM may not be ready yet) |
+| Need terminal that survives network disruptions | mosh (UDP, separate from SSH/SSM) |
+
+Both paths can coexist on the same EC2 — having SSM available
+doesn't disable SSH.
+
+---
+
+## 11. Optional — local Podman
 
 You **don't** need Podman on your laptop. The EC2 instance does the
 container work. Install it only if you want to:
@@ -746,7 +874,7 @@ Skip unless you have a specific reason — `ssh ec2-user@<eip>
 
 ---
 
-## 11. Graphwise registry credentials and license files
+## 12. Graphwise registry credentials and license files
 
 The GraphRAG container images live behind `maven.ontotext.com`
 (private). License files for PoolParty, GraphDB, and UnifiedViews
@@ -835,7 +963,7 @@ on your laptop for now in a folder you remember.
 
 ---
 
-## 12. You're done — what's next
+## 13. You're done — what's next
 
 At this point you have:
 

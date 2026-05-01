@@ -396,6 +396,37 @@ Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster comp
 
 ---
 
+## Connecting to the EC2
+
+Two paths, both supported simultaneously:
+
+```bash
+# SSH (default; fast terminal + scp)
+ssh -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST
+
+# AWS Systems Manager Session Manager (no SSH at all; HTTPS to AWS)
+# Useful when corporate EDR breaks SSH after scp -- see SETUP §10
+aws ssm start-session --target <i-xxxxxxxxxxxxxxxxx> --region us-west-2
+sudo su - ec2-user                    # SSM lands you as ssm-user
+```
+
+`<i-xxxxxxxxxxxxxxxxx>` is the EC2 instance ID — printed in the
+Terraform `ssm_session` output, or look it up:
+
+```bash
+aws ssm describe-instance-information --query 'InstanceInformationList[*].[InstanceId,PingStatus]' --output table
+```
+
+For file transfer when SSM is your shell path (no scp), route
+through S3:
+
+```bash
+aws s3 cp <local-file> s3://<your-bucket>/transfer/   # from laptop
+aws s3 cp s3://<your-bucket>/transfer/<file> ~/      # from EC2 SSM shell
+```
+
+---
+
 ## Lifecycle commands
 
 Two Helm releases (`graphwise-stack` in `graphwise` ns;
@@ -443,6 +474,13 @@ helm upgrade graphrag ./charts/vendor/graphrag -n graphrag -f charts/vendor/grap
 ---
 
 ## If something breaks (top-level runbook)
+
+0. **SSH to EC2 fails immediately after `scp` and won't reconnect**
+   → corporate endpoint security (Elastic Defend, CrowdStrike, etc.)
+   on the laptop is inspecting outbound port-22 and tearing down
+   the stream. Use **AWS Session Manager** instead:
+   `aws ssm start-session --target <i-xxx>` (no SSH, HTTPS to AWS
+   only). Setup in [SETUP.md §10](SETUP.md#10-optional-recommended-on-managed-corporate-macs-aws-ssm-session-manager).
 
 1. **`kubectl` returns `connection refused 127.0.0.1:6443` after a
    reboot** → KIND node containers stopped.

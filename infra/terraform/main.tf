@@ -192,6 +192,42 @@ resource "aws_security_group" "stack" {
 }
 
 # ---------------------------------------------------------------------------
+# IAM role for AWS Systems Manager Session Manager
+# ---------------------------------------------------------------------------
+# Attaching this role lets the SSM Agent (preinstalled + running on
+# Amazon Linux 2023) register with AWS Systems Manager. Operators can
+# then connect to the instance via `aws ssm start-session
+# --target <instance-id>` instead of SSH -- useful when corporate EDR
+# (e.g. Elastic Endpoint) inspects/blocks port 22 traffic, since SSM
+# uses outbound HTTPS to *.amazonaws.com that's almost always allowed.
+#
+# Costs nothing extra (SSM is free for managed nodes); always-on so
+# you have the alternative path available without a separate apply.
+resource "aws_iam_role" "ssm" {
+  name = "${local.instance_name}-ssm"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_managed_instance_core" {
+  role       = aws_iam_role.ssm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ssm" {
+  name = "${local.instance_name}-ssm"
+  role = aws_iam_role.ssm.name
+  tags = local.tags
+}
+
+# ---------------------------------------------------------------------------
 # EC2 instance
 # ---------------------------------------------------------------------------
 
@@ -201,6 +237,7 @@ resource "aws_instance" "stack" {
   key_name               = var.key_pair_name
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.stack.id]
+  iam_instance_profile   = aws_iam_instance_profile.ssm.name
   user_data_base64       = data.cloudinit_config.bootstrap.rendered
   tags = merge(local.tags, {
     Name = local.instance_name

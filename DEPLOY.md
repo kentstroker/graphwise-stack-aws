@@ -145,10 +145,28 @@ Both should return your EIP. Without the wildcard, every per-app
 subdomain (poolparty, auth, graphrag, …) returns NXDOMAIN and
 nothing works.
 
-### 3. SSH in and prepare creds
+### 3. Connect and prepare creds
+
+Two connection paths supported:
+
+**SSH (default, fast terminal + scp):**
 
 ```bash
 ssh -i <key.pem> ec2-user@<eip>
+```
+
+**AWS Session Manager** (no port 22; useful when corporate EDR
+blocks SSH after scp — see [SETUP.md §10](SETUP.md#10-optional-recommended-on-managed-corporate-macs-aws-ssm-session-manager)):
+
+```bash
+aws ssm start-session --target <i-xxxxxxxxxxxxxxxxx> --region us-west-2
+sudo su - ec2-user
+```
+
+The instance ID + region come from the Terraform `ssm_session`
+output. Either path lands you in a shell as `ec2-user`.
+
+```bash
 cd ~/graphwise-stack-aws
 
 # Maven registry creds for the GraphRAG images
@@ -157,7 +175,8 @@ echo '<maven-username>' > ~/.ontotext/maven-user
 echo '<maven-password>' > ~/.ontotext/maven-pass
 chmod 600 ~/.ontotext/*
 
-# Drop Graphwise license files (scp from your laptop)
+# Drop Graphwise license files (scp from your laptop, or via S3 if
+# using SSM and SCP isn't available -- see SETUP §10)
 mkdir -p files/licenses
 # scp: poolparty.key, graphdb.license, uv-license.key
 ls files/licenses/

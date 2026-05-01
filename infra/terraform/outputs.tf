@@ -47,6 +47,11 @@ output "ssh" {
   value       = "ssh -i <path-to-your-keypair.pem> ec2-user@${local.public_ip}"
 }
 
+output "ssm_session" {
+  description = "AWS Systems Manager Session Manager command -- alternative to SSH when corporate EDR (e.g. Elastic Endpoint) blocks outbound :22. Uses HTTPS to AWS API endpoints, which corporate proxies typically allow. Requires `session-manager-plugin` installed on your laptop and your IAM user holding ssm:StartSession permission. Lands you in a shell as `ssm-user`; `sudo su - ec2-user` to switch."
+  value       = "aws ssm start-session --target ${aws_instance.stack.id} --region ${var.region}"
+}
+
 output "expected_urls" {
   description = "Where each app lands once DNS + LE certs are in place. The GraphRAG chatbot is the headline endpoint; the observability triplet (dashboard / prometheus / grafana) is provisioned by scripts/cluster-bootstrap.sh."
   value = {
