@@ -264,15 +264,8 @@ resource "aws_instance" "stack" {
   # user-data changes require tainting + re-apply, which means a full
   # instance rebuild. Treat user-data as fire-once: any runtime config
   # changes happen on-instance, not via Terraform.
-  #
-  # `ami` is also ignored here -- the data source uses
-  # `most_recent = true`, which means AWS publishing a fresher AL2023
-  # AMI would otherwise force-replace the instance on the very next
-  # `terraform apply` (silent data loss; AMI is a force-new attribute).
-  # If you genuinely want to roll the AMI you have to taint
-  # explicitly: `terraform taint aws_instance.stack` + `apply`.
   lifecycle {
-    ignore_changes = [user_data_base64, ami]
+    ignore_changes = [user_data_base64]
   }
 }
 
