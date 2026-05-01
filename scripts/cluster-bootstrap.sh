@@ -235,7 +235,32 @@ subjects:
   - kind: ServiceAccount
     name: dashboard-admin
     namespace: kubernetes-dashboard
+---
+# Long-lived ServiceAccount token Secret. The controller populates
+# .data.token within a few seconds. Doesn't expire (lives until
+# someone deletes this Secret). Demo-grade convenience -- avoids
+# regenerating tokens every 24h. Same cluster-admin RBAC as the
+# ephemeral `kubectl create token` path.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dashboard-admin-token
+  namespace: kubernetes-dashboard
+  annotations:
+    kubernetes.io/service-account.name: dashboard-admin
+type: kubernetes.io/service-account-token
 EOF
+
+# Wait for the controller to populate the Secret's .data.token
+# (typically <5s; loop a few seconds in case of API server slowness).
+for i in $(seq 1 20); do
+    if [ -n "$(kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' 2>/dev/null)" ]; then
+        echo "dashboard-admin-token Secret populated."
+        break
+    fi
+    [ "$i" = "20" ] && echo "WARN: dashboard-admin-token still empty after 20 attempts -- retrieve manually." >&2
+    sleep 1
+done
 
 # ---------------------------------------------------------------------------
 # kube-prometheus-stack (Prometheus + Grafana + AlertManager +
@@ -374,7 +399,7 @@ echo "  Dashboard:  https://dashboard.${GRAPHWISE_APEX}/"
 echo "  Prometheus: https://prometheus.${GRAPHWISE_APEX}/"
 echo "  Grafana:    https://grafana.${GRAPHWISE_APEX}/        (admin / demo-graphwise-2026)"
 echo
-echo "Get a Dashboard login token (paste into the Dashboard's login screen):"
-echo "  kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h"
+echo "Get the Dashboard login token (permanent -- regenerate only if revoked):"
+echo "  kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d ; echo"
 echo
 echo "Next: install the Graphwise stack umbrella Helm chart (Phase C+)."

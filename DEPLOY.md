@@ -242,21 +242,38 @@ provisioned in `cluster-bootstrap.sh` is set up for. (Kubeconfig
 works too but requires uploading the cluster's kubeconfig from
 your laptop, which is more setup for the same result.)
 
-To get a token:
+To get the token:
 
 ```bash
-kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
+kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d ; echo
 ```
 
 Copy the entire string that prints (no `Bearer ` prefix needed).
 Paste it into the Dashboard's "Enter token" field, click **Sign In**,
 land on the cluster overview showing all namespaces.
 
-The token is valid for 24 hours by default. Re-run the same command
-for a fresh one. To pin a different lifetime, change `--duration` —
-e.g. `--duration=8h`. The Dashboard never sees the token after
-sign-in (the browser stores it in session storage), so closing the
-tab logs you out.
+`cluster-bootstrap.sh` provisions a long-lived `dashboard-admin-token`
+Secret of type `kubernetes.io/service-account-token` — same value
+every time, never expires, lives until you delete the Secret. Save
+it once in your password manager and reuse for the life of the
+deployment. To revoke (e.g. team member leaves):
+
+```bash
+kubectl -n kubernetes-dashboard delete secret dashboard-admin-token
+```
+
+The `kubectl create token` ephemeral form (capped at ~1 year by the
+API server's `--service-account-max-token-expiration`) is also
+supported if you'd rather rotate periodically — same SA, same
+cluster-admin RBAC.
+
+> **Pasting trouble in the Dashboard token field?** Some browsers
+> silently block paste handlers on this Dashboard version. Click
+> *into* the token field first, then Cmd+V (or Ctrl+V). If still
+> nothing, switch browsers (Safari has the most quirks here);
+> Chrome/Firefox/Edge usually work. As a last resort, use the
+> "Kubeconfig" login option instead — generate a kubeconfig with
+> the token embedded and upload it.
 
 ##### Grafana sign-in flow
 

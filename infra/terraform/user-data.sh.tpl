@@ -267,10 +267,11 @@ What's still manual, in order:
     export LE_EMAIL=you@example.com
     ./scripts/cluster-bootstrap.sh
 
-    # 3a. (Observability) Get a 24-hour login token for the
-    #     Kubernetes Dashboard at https://dashboard.$HOSTNAME_FQDN/
-    #     (paste into the Dashboard's bearer-token login screen):
-    kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
+    # 3a. (Observability) Get the permanent Dashboard login token
+    #     for https://dashboard.$HOSTNAME_FQDN/ (paste into the
+    #     Dashboard's bearer-token login screen). Same value every
+    #     time -- save once in your password manager.
+    kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d ; echo
 
     # 4. Drop your Graphwise license files under files/licenses/:
     #    PoolParty (poolparty.key), GraphDB (graphdb.license),

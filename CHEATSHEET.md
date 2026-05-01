@@ -333,15 +333,15 @@ chart is still the placeholder `REPLACE_WITH_REAL_N8N_LICENSE_KEY`.
 **URL:** `https://dashboard.<sub>.<base>/`
 **Login:** Two layers — first basic auth (`demo` / `rdf#rocks`), then a bearer token.
 
-**Get a token (24-hour validity):**
+**Get the token (permanent — never expires):**
 
 ```bash
-kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
+kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d ; echo
 ```
 
-Paste the token into the Dashboard's "Bearer token" login screen.
+Paste into the Dashboard's "Bearer token" login screen. Same string every time — save once in your password manager and reuse.
 
-The `dashboard-admin` ServiceAccount is bound to `cluster-admin` so the token sees everything in the cluster. Tokens expire on the duration you pass; rerun `create token` for a fresh one.
+The `dashboard-admin` ServiceAccount is bound to `cluster-admin` (sees everything). The token is materialized into a long-lived `dashboard-admin-token` Secret of type `kubernetes.io/service-account-token` by `cluster-bootstrap.sh`. To revoke: `kubectl -n kubernetes-dashboard delete secret dashboard-admin-token`. To rotate periodically instead, the ephemeral form `kubectl -n kubernetes-dashboard create token dashboard-admin --duration=8760h` works too (max 1 year per kube-apiserver default).
 
 **Smoke test:** load the URL, basic-auth prompt → enter `demo / rdf#rocks` → Dashboard's bearer-token screen → paste token → land on the cluster overview showing all namespaces.
 
@@ -378,7 +378,7 @@ Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster comp
 | GraphViews (direct, no SSO) | `superadmin` | `poolparty` | uses PoolParty API creds |
 | GraphDB / GraphDB-projects / RDF4J ingress | `demo` | `rdf#rocks` | `charts/graphdb/values.yaml` + `charts/addons/charts/rdf4j/values.yaml` |
 | Dashboard / Prometheus / Grafana ingress (basic auth) | `demo` | `rdf#rocks` | `scripts/cluster-bootstrap.sh` (`GRAPHWISE_BASIC_AUTH_HTPASSWD`) |
-| Kubernetes Dashboard (after basic auth) | bearer token | (24h) | `kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h` |
+| Kubernetes Dashboard (after basic auth) | bearer token | permanent | `kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' \| base64 -d ; echo` |
 | Grafana app login (after basic auth) | `admin` | `demo-graphwise-2026` | `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` |
 | UnifiedViews (app-local) | `admin` | `admin` | UnifiedViews default |
 | n8n owner | (set on first visit) | (set on first visit) | n8n's own DB |
