@@ -92,38 +92,89 @@ fi
 if [[ -z "$DEST" ]]; then
     DEST="$HOME/graphwise-backup-${HOST}-$(date -u +%Y%m%d-%H%M%S)"
 fi
-mkdir -p "$DEST/licenses" "$DEST/ontotext" "$DEST/values"
+mkdir -p "$DEST"
 
-# scp_from prints "(missing)" instead of failing when the remote
-# file isn't there -- some users may not have all of these.
-scp_from() {
-    local label="$1" src="$2" dst="$3"
-    if scp -i "$KEY" -o StrictHostKeyChecking=accept-new "$USER_NAME@$HOST:$src" "$dst" >/dev/null 2>&1; then
-        printf '  %-30s ok -> %s\n' "$label" "$dst"
-    else
-        printf '  %-30s missing on host -- skipped\n' "$label"
-        rm -f "$dst"
-    fi
-}
+# Manifest: each entry is "label|remote-relative-path|tar-relative-path".
+# Remote paths are relative to the SSH user's $HOME on the EC2.
+# Tar paths are relative to the staging dir, mirroring the layout this
+# script has always produced under $DEST.
+FILES=(
+    "files/licenses/poolparty.key|graphwise-stack-aws/files/licenses/poolparty.key|licenses/poolparty.key"
+    "files/licenses/graphdb.license|graphwise-stack-aws/files/licenses/graphdb.license|licenses/graphdb.license"
+    "files/licenses/uv-license.key|graphwise-stack-aws/files/licenses/uv-license.key|licenses/uv-license.key"
+    ".ontotext/maven-user|.ontotext/maven-user|ontotext/maven-user"
+    ".ontotext/maven-pass|.ontotext/maven-pass|ontotext/maven-pass"
+    "graphwise-secrets.yaml|graphwise-secrets.yaml|values/graphwise-secrets.yaml"
+    "values.yaml (edited)|graphwise-stack-aws/charts/graphwise-stack/values.yaml|values/graphwise-stack-values.yaml"
+    "dashboard-kubeconfig.yaml|dashboard-kubeconfig.yaml|dashboard-kubeconfig.yaml"
+)
 
 echo "Backing up to: $DEST"
 echo
+echo "Building backup archive on $HOST (one ssh, one scp)..."
 
-echo "Licenses:"
-scp_from "files/licenses/poolparty.key"   "graphwise-stack-aws/files/licenses/poolparty.key"   "$DEST/licenses/poolparty.key"
-scp_from "files/licenses/graphdb.license" "graphwise-stack-aws/files/licenses/graphdb.license" "$DEST/licenses/graphdb.license"
-scp_from "files/licenses/uv-license.key"  "graphwise-stack-aws/files/licenses/uv-license.key"  "$DEST/licenses/uv-license.key"
+# Build the remote shell snippet. For each manifest entry we either
+# stage the file under a unique temp dir and print "OK:<label>", or
+# print "MISSING:<label>". After staging we tar+gzip the whole tree.
+REMOTE_SCRIPT='set -euo pipefail
+STAGE=$(mktemp -d /tmp/graphwise-pull.XXXXXX)
+trap '\''rm -rf "$STAGE"'\'' EXIT
+'
+for entry in "${FILES[@]}"; do
+    IFS='|' read -r label remote rel <<<"$entry"
+    # shell-escape for the remote heredoc -- the values are
+    # repo-controlled (no untrusted input) but quoting is still safer.
+    REMOTE_SCRIPT+="
+LABEL=$(printf '%q' "$label")
+REMOTE=$(printf '%q' "$remote")
+REL=$(printf '%q' "$rel")
+if [ -f \"\$HOME/\$REMOTE\" ]; then
+    mkdir -p \"\$STAGE/\$(dirname \"\$REL\")\"
+    cp -p \"\$HOME/\$REMOTE\" \"\$STAGE/\$REL\"
+    echo \"OK:\$LABEL\" >&2
+else
+    echo \"MISSING:\$LABEL\" >&2
+fi
+"
+done
+REMOTE_SCRIPT+='
+# Emit the tarball to stdout. Stderr already carries OK/MISSING lines.
+( cd "$STAGE" && tar -czf - . )
+'
 
-echo "Maven creds:"
-scp_from ".ontotext/maven-user"           ".ontotext/maven-user"                                "$DEST/ontotext/maven-user"
-scp_from ".ontotext/maven-pass"           ".ontotext/maven-pass"                                "$DEST/ontotext/maven-pass"
+# Run the snippet over SSH. Stdout = tar bytes -> local file.
+# Stderr = OK/MISSING inventory -> we capture and replay locally.
+TARBALL="$DEST/.graphwise-backup.tar.gz"
+INVENTORY=$(mktemp -t graphwise-pull-inv.XXXXXX)
+trap 'rm -f "$INVENTORY" "$TARBALL"' EXIT
 
-echo "Helm values + secrets overlay:"
-scp_from "graphwise-secrets.yaml"         "graphwise-secrets.yaml"                              "$DEST/values/graphwise-secrets.yaml"
-scp_from "values.yaml (edited)"           "graphwise-stack-aws/charts/graphwise-stack/values.yaml" "$DEST/values/graphwise-stack-values.yaml"
+if ! ssh -i "$KEY" -o StrictHostKeyChecking=accept-new \
+        "$USER_NAME@$HOST" "bash -s" \
+        > "$TARBALL" \
+        2> "$INVENTORY" \
+        <<<"$REMOTE_SCRIPT"; then
+    echo "ERROR: remote tar pipeline failed. Inventory so far:" >&2
+    cat "$INVENTORY" >&2
+    exit 1
+fi
 
-echo "Kubernetes Dashboard kubeconfig:"
-scp_from "dashboard-kubeconfig.yaml"      "dashboard-kubeconfig.yaml"                           "$DEST/dashboard-kubeconfig.yaml"
+# Replay the per-file inventory with the original formatting.
+echo
+while IFS= read -r line; do
+    case "$line" in
+        OK:*)      printf '  %-30s ok\n'                       "${line#OK:}" ;;
+        MISSING:*) printf '  %-30s missing on host -- skipped\n' "${line#MISSING:}" ;;
+        *)         printf '  %s\n' "$line" ;;
+    esac
+done < "$INVENTORY"
+
+# Extract the tarball into $DEST. Tar will create licenses/, ontotext/,
+# values/ subdirs as encoded by the rel paths in the manifest.
+if ! tar -xzf "$TARBALL" -C "$DEST"; then
+    echo "ERROR: failed to extract tarball into $DEST" >&2
+    exit 1
+fi
+rm -f "$TARBALL"
 
 # Drop macOS Finder droppings that sneak into the backup dir.
 find "$DEST" -name '.DS_Store' -delete 2>/dev/null || true
