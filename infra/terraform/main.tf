@@ -189,42 +189,21 @@ resource "aws_security_group" "stack" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-}
 
-# ---------------------------------------------------------------------------
-# IAM role for AWS Systems Manager Session Manager
-# ---------------------------------------------------------------------------
-# Attaching this role lets the SSM Agent (preinstalled + running on
-# Amazon Linux 2023) register with AWS Systems Manager. Operators can
-# then connect to the instance via `aws ssm start-session
-# --target <instance-id>` instead of SSH -- useful when corporate EDR
-# (e.g. Elastic Endpoint) inspects/blocks port 22 traffic, since SSM
-# uses outbound HTTPS to *.amazonaws.com that's almost always allowed.
-#
-# Costs nothing extra (SSM is free for managed nodes); always-on so
-# you have the alternative path available without a separate apply.
-resource "aws_iam_role" "ssm" {
-  name = "${local.instance_name}-ssm"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-    }]
-  })
-  tags = local.tags
-}
-
-resource "aws_iam_role_policy_attachment" "ssm_managed_instance_core" {
-  role       = aws_iam_role.ssm.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_instance_profile" "ssm" {
-  name = "${local.instance_name}-ssm"
-  role = aws_iam_role.ssm.name
-  tags = local.tags
+  # Stop managing ingress declaratively after first apply. Operators
+  # routinely add a second port-22 rule manually (via the AWS Console)
+  # to allow EC2 Instance Connect from AWS's service prefix list -- see
+  # SETUP.md §9 for the Console walkthrough. With inline `ingress` blocks
+  # alone, Terraform would treat that manual rule as drift and delete
+  # it on the next apply.
+  #
+  # Trade-off: changes to the SSH/HTTP/HTTPS ingress blocks above also
+  # stop taking effect post-provision. That's fine for this stack --
+  # the Safety section in infra/README.md already steers operators
+  # toward editing SG rules in the Console rather than re-applying.
+  lifecycle {
+    ignore_changes = [ingress]
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -232,12 +211,11 @@ resource "aws_iam_instance_profile" "ssm" {
 # ---------------------------------------------------------------------------
 
 resource "aws_instance" "stack" {
-  ami                    = data.aws_ami.al2023_arm64.id
+  ami                    = var.ami_override != "" ? var.ami_override : data.aws_ami.al2023_arm64.id
   instance_type          = var.instance_type
   key_name               = var.key_pair_name
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.stack.id]
-  iam_instance_profile   = aws_iam_instance_profile.ssm.name
   user_data_base64       = data.cloudinit_config.bootstrap.rendered
   tags = merge(local.tags, {
     Name = local.instance_name
@@ -261,11 +239,24 @@ resource "aws_instance" "stack" {
     })
   }
 
-  # user-data changes require tainting + re-apply, which means a full
-  # instance rebuild. Treat user-data as fire-once: any runtime config
-  # changes happen on-instance, not via Terraform.
+  # Two attributes are intentionally ignored after creation:
+  #
+  # - user_data_base64: changes require tainting + re-apply, which means
+  #   a full instance rebuild. Treat user-data as fire-once: any runtime
+  #   config changes happen on-instance, not via Terraform.
+  #
+  # - ami: data.aws_ami.al2023_arm64 uses most_recent = true. Without
+  #   ignore_changes, every AWS-published AL2023 AMI refresh (which
+  #   happens constantly) would mark the instance for force-replace --
+  #   destroying the root EBS volume and every PVC on it -- on the next
+  #   `terraform apply`, even when the user's intended change was tiny
+  #   (SG, tags, etc.). We've lost a fully-validated demo deployment to
+  #   this exact bug. Belt-and-braces with var.ami_override (which lets
+  #   you also pin the ami at the lookup site so plan output is clean).
+  #   To intentionally upgrade the AMI: bump var.ami_override to the new
+  #   ami-... ID and apply (will plan a controlled replace).
   lifecycle {
-    ignore_changes = [user_data_base64]
+    ignore_changes = [user_data_base64, ami]
   }
 }
 

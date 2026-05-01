@@ -81,6 +81,17 @@ variable "extra_tags" {
   default     = {}
 }
 
+variable "ami_override" {
+  description = "Specific AMI ID to launch the instance with. When empty (default), the module uses data.aws_ami.al2023_arm64 to look up the latest published AL2023 ARM64 AMI -- correct for first apply, but unsafe afterwards because most_recent = true means AWS publishing a refreshed AMI will mark the EC2 for force-replace (destroying all data on the root EBS volume). After the first successful apply, capture `terraform output -raw ami_id` and set this variable to the resulting `ami-...` ID, then re-run `terraform plan` -- you should see no changes. From then on the module ignores AWS AMI publishes entirely. To upgrade later, look up the desired AMI with `aws ec2 describe-images --owners amazon --filters 'Name=name,Values=al2023-ami-*-arm64'` and bump this value (will trigger a controlled replace; snapshot EBS first if you care). Belt-and-braces: aws_instance.stack also ignores ami changes via lifecycle.ignore_changes, so even an unlocked deployment is protected once provisioned."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.ami_override == "" || can(regex("^ami-[a-f0-9]+$", var.ami_override))
+    error_message = "ami_override must be empty or a valid AMI ID (e.g. ami-0123456789abcdef0)."
+  }
+}
+
 variable "existing_eip_allocation_id" {
   description = "Allocation ID (eipalloc-...) of a pre-allocated Elastic IP to attach to this instance. When set, Terraform will NOT create a fresh EIP each apply — it associates the existing one and leaves it untouched on destroy, so the GoDaddy DNS records stay valid across rebuilds. Allocate the EIP once in the AWS Console (EC2 → Elastic IPs → Allocate) or via `aws ec2 allocate-address --domain vpc --region us-west-2`. Leave empty to keep the original behaviour (allocate a fresh EIP each apply)."
   type        = string

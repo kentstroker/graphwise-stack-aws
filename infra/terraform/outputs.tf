@@ -32,6 +32,11 @@ output "godaddy_dns_records" {
   EOT
 }
 
+output "ami_id" {
+  description = "AMI ID the instance was launched from. After first successful apply, copy this value into terraform.tfvars as `ami_override = \"ami-...\"` to lock the deployment against AWS publishing AMI refreshes (which would otherwise force-replace the EC2 and destroy all data). One-shot: `terraform output -raw ami_id` then paste. See infra/README.md → Safety section."
+  value       = aws_instance.stack.ami
+}
+
 output "instance_id" {
   description = "EC2 instance ID, for AWS Console deep links and `aws` CLI commands."
   value       = aws_instance.stack.id
@@ -45,11 +50,6 @@ output "instance_public_dns" {
 output "ssh" {
   description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created."
   value       = "ssh -i <path-to-your-keypair.pem> ec2-user@${local.public_ip}"
-}
-
-output "ssm_session" {
-  description = "AWS Systems Manager Session Manager command -- alternative to SSH when corporate EDR (e.g. Elastic Endpoint) blocks outbound :22. Uses HTTPS to AWS API endpoints, which corporate proxies typically allow. Requires `session-manager-plugin` installed on your laptop and your IAM user holding ssm:StartSession permission. Lands you in a shell as `ssm-user`; `sudo su - ec2-user` to switch."
-  value       = "aws ssm start-session --target ${aws_instance.stack.id} --region ${var.region}"
 }
 
 output "expected_urls" {
