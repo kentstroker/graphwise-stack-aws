@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cluster-resume.sh — restart the KIND cluster after an EC2 stop/start.
 #
-# KIND runs each node as a podman container. podman.service comes back
+# KIND runs each node as a Docker container. docker.service comes back
 # automatically on boot, but containers without a restart policy stay
 # Exited — so kubectl fails with "connection refused on 127.0.0.1:6443"
 # until the node containers are started again.
@@ -13,7 +13,7 @@
 #      a non-event (idempotent — re-running just re-asserts the policy).
 #   4. Waits until the kube API answers, then prints node + pod status.
 #
-# Run as the named user (the same one that created the cluster).
+# Run as ec2-user (the same user that created the cluster).
 # Idempotent: safe to re-run any time. If the cluster is already
 # healthy this script is a no-op aside from re-asserting restart policy.
 #
@@ -28,8 +28,8 @@ set -euo pipefail
 CLUSTER_NAME="${CLUSTER_NAME:-graphwise}"
 API_TIMEOUT="${API_TIMEOUT:-180}"
 
-if ! command -v podman >/dev/null 2>&1; then
-    echo "ERROR: podman not found in PATH." >&2
+if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: docker not found in PATH." >&2
     exit 1
 fi
 if ! command -v kind >/dev/null 2>&1; then
@@ -52,12 +52,12 @@ fi
 # "<cluster>-worker2", etc. Match by the io.x-k8s.kind.cluster label so we
 # don't accidentally pick up unrelated containers that happen to share a
 # prefix.
-mapfile -t NODES < <(podman ps -a \
+mapfile -t NODES < <(docker ps -a \
     --filter "label=io.x-k8s.kind.cluster=$CLUSTER_NAME" \
     --format '{{.Names}}')
 
 if [[ ${#NODES[@]} -eq 0 ]]; then
-    echo "ERROR: no podman containers found for KIND cluster '$CLUSTER_NAME'." >&2
+    echo "ERROR: no docker containers found for KIND cluster '$CLUSTER_NAME'." >&2
     echo "       The cluster may have been removed manually. Re-create with:" >&2
     echo "         kind create cluster --name $CLUSTER_NAME --config infra/kind/kind-config.yaml" >&2
     exit 1
@@ -68,12 +68,12 @@ printf '  %s\n' "${NODES[@]}"
 
 echo "Starting node containers (no-op if already running)..."
 for node in "${NODES[@]}"; do
-    podman start "$node" >/dev/null
+    docker start "$node" >/dev/null
 done
 
 echo "Setting restart=unless-stopped on each node container..."
 for node in "${NODES[@]}"; do
-    podman update --restart=unless-stopped "$node" >/dev/null
+    docker update --restart=unless-stopped "$node" >/dev/null
 done
 
 # Make sure kubectl points at this cluster — kind create writes the
@@ -87,7 +87,7 @@ until kubectl get --raw=/readyz >/dev/null 2>&1; do
     if (( $(date +%s) >= deadline )); then
         echo "ERROR: kube API did not become ready within ${API_TIMEOUT}s." >&2
         echo "       Check container logs:" >&2
-        echo "         podman logs --tail 100 ${NODES[0]}" >&2
+        echo "         docker logs --tail 100 ${NODES[0]}" >&2
         exit 1
     fi
     sleep 3

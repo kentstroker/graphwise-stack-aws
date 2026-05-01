@@ -32,7 +32,7 @@ variable "base_domain" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type. r6g.2xlarge (8 vCPU / 64 GB, Graviton ARM64) is the tested minimum for the KIND-on-podman stack: KIND control plane (~1.5 GB) + ingress-nginx + cert-manager + CNPG + Keycloak operator + Keycloak + 2 Postgres clusters + 2 GraphDB instances + Elasticsearch (8 GB heap) + PoolParty (8 GB heap) + 5 add-ons + 4 GraphRAG services adds up to ~50–55 GB working set. Down-shift only if you're pruning the stack."
+  description = "EC2 instance type. r6g.2xlarge (8 vCPU / 64 GB, Graviton ARM64) is the tested minimum for the KIND-on-Docker stack: KIND control plane (~1.5 GB) + ingress-nginx + cert-manager + CNPG + Keycloak operator + Keycloak + 2 Postgres clusters + 2 GraphDB instances + Elasticsearch (8 GB heap) + PoolParty (8 GB heap) + 5 add-ons + 4 GraphRAG services adds up to ~50–55 GB working set. Down-shift only if you're pruning the stack."
   type        = string
   default     = "r6g.2xlarge"
 }
@@ -44,7 +44,7 @@ variable "root_volume_gb" {
 }
 
 variable "key_pair_name" {
-  description = "Name of an EXISTING EC2 key pair in the target region (EC2 → Key Pairs). Terraform references it — it does not create it. You keep the matching .pem locally; the instance's admin user will accept logins signed by it."
+  description = "Name of an EXISTING EC2 key pair in the target region (EC2 → Key Pairs). Terraform references it — it does not create it. You keep the matching .pem locally; the instance's ec2-user account will accept logins signed by it."
   type        = string
 }
 
@@ -53,16 +53,10 @@ variable "admin_cidr" {
   type        = string
 }
 
-variable "named_user" {
-  description = "Linux user created on the instance at bootstrap time. You'll SSH in as this user (not admin, which is first-boot-only). Defaults to \"graphwise\"; override with your own name if you prefer."
-  type        = string
-  default     = "graphwise"
-
-  validation {
-    condition     = can(regex("^[a-z_][a-z0-9_-]*$", var.named_user))
-    error_message = "User name must start with a lowercase letter or underscore and contain only lowercase letters, digits, underscores, or hyphens."
-  }
-}
+# Note: there is no `named_user` variable. Amazon Linux 2023 ships with
+# `ec2-user`, AWS pre-injects the SSH key into ~ec2-user/.ssh/authorized_keys,
+# and the wheel group provides sudo. Creating a separate named user added
+# steps with no benefit, so the AL2023 migration dropped it.
 
 variable "github_repo_url" {
   description = "HTTPS URL of the repo to clone onto the instance during bootstrap. Defaults to the public graphwise-stack-aws repo. Override only if you've forked."

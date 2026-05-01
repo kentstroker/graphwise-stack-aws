@@ -10,7 +10,7 @@ warranty.
 
 ## What you get, in one breath
 
-`terraform apply` provisions an EC2 host (Debian 13 / Graviton
+`terraform apply` provisions an EC2 host (Amazon Linux 2023 / Graviton
 ARM64), bootstraps Podman + KIND + kubectl + helm via cloud-init,
 and starts a single-node Kubernetes cluster. Two `helm install`
 runs put PoolParty (Thesaurus + GraphSearch + Extractor), two

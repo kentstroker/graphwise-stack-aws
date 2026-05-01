@@ -4,10 +4,11 @@
 
 This module provisions the AWS infrastructure for a single-node demo
 deployment of the Graphwise Stack: one EC2 instance (r6g.2xlarge,
-Debian 13 ARM64, 300 GB encrypted gp3), one Security Group (22 admin /
-80 world / 443 world), one Elastic IP, and a cloud-init bootstrap
-script that installs podman, creates your Linux user, and clones the
-public stack repo.
+Amazon Linux 2023 ARM64, 300 GB encrypted gp3), one Security Group
+(22 admin / 80 world / 443 world), one Elastic IP, and a cloud-init
+bootstrap script that installs Docker + KIND + kubectl + helm,
+clones the public stack repo, and brings up a single-node KIND
+cluster — all running under the AL2023 default `ec2-user` account.
 
 What this module does **not** do:
 - DNS — you email Kent with your subdomain + EIP, he adds the A record
@@ -82,13 +83,13 @@ When `apply` completes you'll see outputs:
 ```
 Outputs:
 elastic_ip          = "54.149.12.34"
-ssh_named_user      = "ssh -i <path-to-your-keypair.pem> graphwise@54.149.12.34"
+ssh                 = "ssh -i <path-to-your-keypair.pem> ec2-user@54.149.12.34"
 expected_final_url  = "https://scott.semantic-proof.com/"
 ...
 ```
 
 Save these. You need the `elastic_ip` for the DNS email to Kent, and
-the `ssh_named_user` command for the next step.
+the `ssh` command for the next step.
 
 ---
 
@@ -98,30 +99,39 @@ The cloud-init script (`user-data.sh.tpl`) runs as root on first
 boot. It logs to `/var/log/bootstrap.log` on the instance and also
 tags syslog with `bootstrap`. Steps, in order:
 
-1. Waits for AWS's own cloud-init modules to finish populating
-   `/home/admin/.ssh/authorized_keys`.
-2. `apt-get update` + `apt-get upgrade -y`.
-3. Installs base packages (curl, git, jq, podman, podman-compose,
-   slirp4netns, fuse-overlayfs, uidmap, conntrack, ethtool, socat,
-   iproute2, apache2-utils for `htpasswd`).
-4. Enables the system `podman.service` (for remote-podman clients).
-5. Creates the named Linux user (default `graphwise`), adds them to
-   `sudo` with a NOPASSWD sudoers drop-in, and copies the admin's
-   authorized_keys so you can SSH in as that user.
-6. Sets `net.ipv4.ip_unprivileged_port_start=80` so rootless podman
-   can bind to 80 and 443.
-7. Creates the user's runtime directory, enables `loginctl linger`
-   so systemd user timers survive SSH logout, and appends the
-   rootless podman env-var exports to the user's `.bashrc`.
+1. `dnf upgrade -y --refresh`.
+2. Installs base packages (`docker, git, jq, bind-utils,
+   conntrack-tools, ethtool, socat, iproute, httpd-tools` for
+   `htpasswd`, plus `tar gzip ca-certificates` for the helm
+   tarball + cluster-bootstrap script).
+3. Drops a `/etc/ssh/sshd_config.d/10-graphwise.conf` lifting
+   `MaxStartups` and switching SFTP to `internal-sftp` (sshd hardening
+   that survives openssh-server upgrades).
+4. Sysctls: `net.ipv4.ip_forward=1` plus elevated
+   `fs.inotify.max_user_{watches,instances}` for kubelet's file
+   watching.
+5. `systemctl enable --now docker` and adds `ec2-user` to the
+   `docker` group so KIND/kubectl runs without `sudo`.
+6. Installs pinned versions of `kind`, `kubectl`, and `helm` to
+   `/usr/local/bin/`.
+7. Appends `KUBECONFIG` + a couple of kubectl aliases to
+   `~ec2-user/.bashrc`.
 8. Clones this repository into the user's home as
    `~/graphwise-stack-aws`.
-9. Installs pinned versions of `kind`, `kubectl`, and `helm` to
-   `/usr/local/bin/`.
-10. Creates the single-node KIND cluster `graphwise` from
-    [infra/kind/kind-config.yaml](kind/kind-config.yaml). Host
-    ports 80 and 443 are mapped into the control-plane container so
-    ingress-nginx can serve traffic on the EIP.
+9. Creates the single-node KIND cluster `graphwise` from
+   [infra/kind/kind-config.yaml](kind/kind-config.yaml). Host ports
+   80 and 443 are mapped into the control-plane container so
+   ingress-nginx can serve traffic on the EIP.
+10. Writes `~/graphwise-secrets.yaml` containing the
+    Terraform-generated n8n encryption key (consumed automatically
+    by `scripts/reset-helm.sh`).
 11. Drops a `~/NEXT_STEPS.txt` file with the post-apply runbook.
+
+No separate "named user" is created — Amazon Linux 2023 ships with
+`ec2-user` pre-configured with the SSH key (AWS injects it during
+launch) and `wheel`-group sudo. Everything runs as `ec2-user`. The
+host has SELinux enforcing; container-selinux + Docker's mature
+RHEL-family integration handle the labelling without intervention.
 
 The cluster is up at this point but has no operators or app
 workloads yet — that's the post-apply runbook below.
@@ -136,7 +146,7 @@ From `terraform apply` complete to a working HTTPS stack.
 
 ```bash
 # Takes 2-3 minutes after apply. Tail the log to know when it's done.
-ssh -i <path-to-your-keypair.pem> admin@<elastic_ip> 'sudo tail -f /var/log/bootstrap.log'
+ssh -i <path-to-your-keypair.pem> ec2-user@<elastic_ip> 'sudo tail -f /var/log/bootstrap.log'
 ```
 
 Look for `=== Bootstrap complete at <timestamp> ===`. Then Ctrl-C.
@@ -164,14 +174,13 @@ dig +short <sub>.semantic-proof.com poolparty.<sub>.semantic-proof.com
 # Both lines should print your EIP.
 ```
 
-### 3. SSH in as your named user
+### 3. SSH in as ec2-user
 
 ```bash
-ssh -i <path-to-your-keypair.pem> graphwise@<elastic_ip>
+ssh -i <path-to-your-keypair.pem> ec2-user@<elastic_ip>
 ```
 
-(Or whatever `named_user` you set in `terraform.tfvars`.) The
-`~/NEXT_STEPS.txt` file mirrors this runbook.
+The `~/NEXT_STEPS.txt` file mirrors this runbook.
 
 ### 4. Finish the stack setup
 
@@ -260,22 +269,22 @@ infra/terraform/
 
 ### `InvalidAMIID.NotFound` during plan or apply
 
-The AMI data source didn't match a current Debian 13 ARM64 image. Usually
-means your region doesn't have official Debian AMIs (rare), or Debian
-renamed their AMI pattern. Check manually:
+The AMI data source didn't match a current Amazon Linux 2023 ARM64
+image. Every standard AWS region carries the official AL2023 ARM64
+AMIs; if this fails you're either in a brand-new region without them
+yet, or AWS renamed the AMI pattern. Check manually:
 
 ```bash
 aws ec2 describe-images \
-    --owners 136693071363 \
-    --filters "Name=name,Values=debian-13-arm64-*" \
+    --owners amazon \
+    --filters "Name=name,Values=al2023-ami-*-arm64" \
     --query 'Images[*].[Name,ImageId]' \
     --output table \
     --region <your-region>
 ```
 
 If the query returns rows, the module should work — try a fresh
-`terraform init`. If it's empty, you're likely in a region without
-Debian's official images; pick a different region.
+`terraform init`. If it's empty, pick a different region.
 
 ### `UnauthorizedOperation` on `RunInstances`
 
@@ -286,23 +295,28 @@ AuthorizeSecurityGroupIngress, etc.).
 
 ### Bootstrap script fails silently
 
-SSH in as `admin`, read `/var/log/bootstrap.log`. The script runs under
-`set -e` so first error is final. Common culprits:
+SSH in as `ec2-user`, read `/var/log/bootstrap.log`. The script runs
+under `set -e` so first error is final. Common culprits:
 
-- Transient apt mirror failures — rerun the failing `apt-get install`
-  and then manually step through the rest of the script from where it
-  stopped. (The script is largely idempotent but was not designed for
-  partial-failure recovery.)
-- Missing `/home/admin/.ssh/authorized_keys` — the 30-second wait in
-  the script should cover propagation, but on very slow boots it may
-  need longer. Add a sleep at the top and taint+apply.
+- Transient dnf mirror failures — rerun the failing `dnf install`
+  and manually step through the rest of the script from where it
+  stopped. (The script is largely idempotent but wasn't designed
+  for partial-failure recovery.)
+- KIND cluster create fails because the docker-group membership
+  for ec2-user wasn't picked up by the bootstrap heredoc. The
+  heredoc uses a login shell (`sudo -u ec2-user -i bash <<INNER`)
+  to force a fresh group lookup; if that ever drifts, the symptom
+  is `Got permission denied while trying to connect to the Docker
+  daemon socket`. Re-run the kind step manually as ec2-user after
+  the bootstrap, and patch user-data.
 
-### `terraform apply` says it wants to rebuild the instance just because I bumped `named_user`
+### `terraform apply` wants to rebuild the instance after I edit user-data
 
-That's expected — changing `named_user` changes user-data, and
-`ignore_changes = [user_data_base64]` prevents drift redeploys but
-also means existing user-data changes don't propagate. If you really
-need a different named user on an existing instance, either SSH in
+That's expected — changing user-data changes `user_data_base64`
+on the resource, and `ignore_changes = [user_data_base64]`
+prevents drift redeploys, but also means user-data changes don't
+take effect on an existing instance. If you really need to update
+user-data on an existing instance, either SSH in
 and make the change manually, or `terraform taint aws_instance.stack`
 + `terraform apply` (which destroys and re-creates the instance, so
 all data is lost).

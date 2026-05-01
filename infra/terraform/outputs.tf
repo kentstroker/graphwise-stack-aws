@@ -42,14 +42,9 @@ output "instance_public_dns" {
   value       = aws_instance.stack.public_dns
 }
 
-output "ssh_admin" {
-  description = "SSH command for the FIRST login as the default admin user (before the bootstrap script has finished creating your named user). Use this only to watch bootstrap progress or troubleshoot if the script fails."
-  value       = "ssh -i <path-to-your-keypair.pem> admin@${local.public_ip}"
-}
-
-output "ssh_named_user" {
-  description = "SSH command for ongoing use once the bootstrap script completes (~2-3 minutes after apply). Your authorized_keys is copied over to this user."
-  value       = "ssh -i <path-to-your-keypair.pem> ${var.named_user}@${local.public_ip}"
+output "ssh" {
+  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created."
+  value       = "ssh -i <path-to-your-keypair.pem> ec2-user@${local.public_ip}"
 }
 
 output "expected_urls" {
@@ -66,5 +61,5 @@ output "expected_urls" {
 
 output "bootstrap_log_hint" {
   description = "Path on the instance where the cloud-init bootstrap script writes its log. The KIND cluster bring-up runs in this script and adds ~3-5 minutes to the usual provisioning time. Tail this on first SSH to confirm the install finished cleanly."
-  value       = "ssh -i <path-to-your-keypair.pem> admin@${local.public_ip} 'sudo tail -f /var/log/bootstrap.log'"
+  value       = "ssh -i <path-to-your-keypair.pem> ec2-user@${local.public_ip} 'sudo tail -f /var/log/bootstrap.log'"
 }

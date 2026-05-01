@@ -31,7 +31,7 @@
 #   GRAPHWISE_KEY    same as --key  (e.g. ~/.ssh/graphwise-stack.pem)
 #   GRAPHWISE_HOST   same as --host (e.g. 54.149.12.34 or
 #                    stroker.semantic-proof.com)
-#   GRAPHWISE_USER   same as --user (default: graphwise)
+#   GRAPHWISE_USER   same as --user (default: ec2-user)
 # Set these once in your shell rc and you can drop --key/--host
 # from every invocation. CLI flags override env vars.
 
@@ -39,7 +39,7 @@ set -euo pipefail
 
 KEY="${GRAPHWISE_KEY:-}"
 HOST="${GRAPHWISE_HOST:-}"
-USER_NAME="${GRAPHWISE_USER:-graphwise}"
+USER_NAME="${GRAPHWISE_USER:-ec2-user}"
 PP=""
 GDB=""
 UV=""
@@ -57,7 +57,7 @@ Required (CLI flag OR environment variable):
                              env: GRAPHWISE_HOST
 
 Optional (skip whichever you don't need):
-  --user <name>              SSH user (default: graphwise)
+  --user <name>              SSH user (default: ec2-user)
                              env: GRAPHWISE_USER
   --poolparty <path>         Local PoolParty license file
   --graphdb <path>           Local GraphDB license file

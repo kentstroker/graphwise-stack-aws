@@ -395,7 +395,7 @@ aws configure
 ```
 
 Paste the Access Key ID + Secret Access Key from the previous step.
-For region, pick one with current Debian 13 ARM64 AMIs (most major
+For region, pick one with current Amazon Linux 2023 ARM64 AMIs (every major
 ones — `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`,
 `eu-central-1` all work). Output format: `json`.
 
@@ -737,11 +737,11 @@ run on a remote host over SSH. Useful for browsing the EC2 instance's
 containers without SSHing in interactively. Sketch:
 
 ```bash
-podman system connection add graphwise-ec2 --identity ~/.ssh/graphwise-stack.pem ssh://graphwise@<eip>
+podman system connection add graphwise-ec2 --identity ~/.ssh/graphwise-stack.pem ssh://ec2-user@<eip>
 podman --connection graphwise-ec2 ps
 ```
 
-Skip unless you have a specific reason — `ssh graphwise@<eip>
+Skip unless you have a specific reason — `ssh ec2-user@<eip>
 'podman ps'` is simpler.
 
 ---

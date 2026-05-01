@@ -2,9 +2,9 @@
 # Graphwise Stack -- EC2 first-boot bootstrap (cloud-init user-data).
 #
 # Runs ONCE as root, the first time the instance boots, before anyone
-# can SSH in. Outcome: a Debian 13 ARM64 host with rootless podman, a
-# named user, kind/kubectl/helm installed, and a single-node KIND
-# Kubernetes cluster running under the named user.
+# can SSH in. Outcome: an Amazon Linux 2023 ARM64 host with Docker, a
+# KIND single-node Kubernetes cluster running under ec2-user, and the
+# repo cloned at /home/ec2-user/graphwise-stack-aws.
 #
 # What this script does NOT do:
 #   - install operators (ingress-nginx, cert-manager, CNPG, Keycloak,
@@ -15,11 +15,20 @@
 #     once Ingress objects exist and DNS resolves.
 #   - install license files -- vendor blobs the teammate scp's in.
 #
-# This file is a template -- Terraform substitutes $${named_user},
-# $${github_repo_url}, and $${hostname_fqdn} at apply time. Any other
-# shell-style dollar-brace expression you want to pass through to the
-# rendered shell script must be escaped with a double dollar sign so
-# Terraform leaves it alone.
+# Migrated from Debian 13 + rootless podman in late 2026. Debian 13
+# had a consistent "ssh fails immediately after scp" failure mode on
+# AWS Nitro that nobody could explain; AL2023 doesn't trigger it. We
+# also moved from rootless podman to root Docker because (a) KIND's
+# primary provider is Docker (podman is still
+# KIND_EXPERIMENTAL_PROVIDER even in v0.30) and (b) on AL2023 the
+# Docker daemon's SELinux integration is mature, while rootless
+# podman would have required disabling SELinux.
+#
+# This file is a template -- Terraform substitutes $${github_repo_url},
+# $${hostname_fqdn}, and $${n8n_encryption_key} at apply time. Any
+# other shell-style dollar-brace expression you want to pass through
+# to the rendered shell script must be escaped with a double dollar
+# sign so Terraform leaves it alone.
 
 set -euo pipefail
 # Log everything to /var/log/bootstrap.log AND to syslog under the
@@ -30,7 +39,7 @@ exec > >(tee /var/log/bootstrap.log | logger -t bootstrap) 2>&1
 
 echo "=== Bootstrap starting at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
-TARGET_USER="${named_user}"
+TARGET_USER="ec2-user"
 REPO_URL="${github_repo_url}"
 HOSTNAME_FQDN="${hostname_fqdn}"
 
@@ -40,80 +49,37 @@ KUBECTL_VERSION="v1.33.4"
 HELM_VERSION="v3.17.0"
 
 # ---------------------------------------------------------------------------
-# Wait for AWS's own cloud-init modules to populate admin's authorized_keys
-# ---------------------------------------------------------------------------
-for i in {1..30}; do
-    if [[ -s /home/admin/.ssh/authorized_keys ]]; then
-        break
-    fi
-    echo "Waiting for /home/admin/.ssh/authorized_keys ($i/30)..."
-    sleep 2
-done
-if [[ ! -s /home/admin/.ssh/authorized_keys ]]; then
-    echo "ERROR: admin authorized_keys never appeared; aborting."
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
 # OS patches + packages
 # ---------------------------------------------------------------------------
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get upgrade -y
-
-# - podman / podman-compose: container runtime + compose shim (used both
-#   by KIND as the cluster provider and by anyone wanting to run an
-#   ad-hoc container outside the cluster).
-# - crun: the OCI runtime podman uses on rootless cgroups v2; explicit
-#   install guards against an apt seed that defaults to runc.
-# - slirp4netns / fuse-overlayfs: required pieces of the rootless podman
-#   stack on Debian.
-# - conntrack / ethtool / socat / iproute2: KIND networking dependencies.
-# - uidmap: ensures /etc/subuid and /etc/subgid get newuidmap/newgidmap
-#   helpers needed for rootless user namespacing.
-# - apache2-utils: provides htpasswd, used to (re)generate the
-#   APR1-MD5 hashes in the basic-auth secrets gating GraphDB / RDF4J.
-apt-get install -y \
-    curl \
+# AL2023 ships a minimal AMI; we add only what KIND + Docker + the
+# helper scripts need.
+#   - docker: container runtime, KIND's primary provider.
+#   - bind-utils: dig (DNS troubleshooting).
+#   - conntrack-tools: kube-proxy needs the conntrack binary.
+#   - ethtool / socat / iproute: KIND networking dependencies.
+#   - httpd-tools: htpasswd (regenerate basic-auth secrets for
+#     GraphDB / RDF4J).
+#   - jq: JSON wrangling for cluster-bootstrap and reset-helm scripts.
+#   - tar / gzip / curl-minimal / git: helm install + repo clone.
+dnf upgrade -y --refresh
+dnf install -y \
+    docker \
     git \
     jq \
-    ca-certificates \
-    dnsutils \
-    podman \
-    podman-compose \
-    crun \
-    slirp4netns \
-    fuse-overlayfs \
-    uidmap \
-    conntrack \
+    bind-utils \
+    conntrack-tools \
     ethtool \
     socat \
-    iproute2 \
-    apache2-utils
+    iproute \
+    httpd-tools \
+    tar \
+    gzip \
+    ca-certificates
 
 # ---------------------------------------------------------------------------
-# SSH tuning: avoid the "ssh fails immediately after scp, recovers in 2 min"
-# trap that hits multiple teammates on AWS EC2.
-#
-# Symptom:
-#   scp completes; the next `ssh` to the same host is refused immediately.
-#   Exactly 120 seconds later, ssh works again with no other intervention.
-#
-# Root cause(s):
-#   1. sshd's MaxStartups=10:30:100 slot queue + LoginGraceTime=120 default.
-#      Burst scp/ssh activity can leave half-completed unauthenticated
-#      connections occupying slots; new connects are refused until
-#      LoginGraceTime reaps them en masse.
-#   2. The external sftp-server binary forking from sshd has additional
-#      edge cases that don't hit the in-process internal-sftp path.
-#
-# Fixes applied here (drop-in /etc/ssh/sshd_config.d/ takes precedence
-# over the main file and survives openssh-server upgrades):
-#   - Subsystem sftp internal-sftp  (no external fork)
-#   - LoginGraceTime 30             (reap orphan slots in 30s, not 2m)
-#   - MaxStartups 100:30:200        (raise the unauthenticated cap so
-#                                     legitimate burst activity doesn't
-#                                     hit the limit at all)
+# SSH tuning -- raise sshd's queue limits + use internal-sftp.
+# Same drop-in we used on Debian; the regex matches AL2023's
+# /usr/libexec/openssh/sftp-server path equally well.
 # ---------------------------------------------------------------------------
 mkdir -p /etc/ssh/sshd_config.d
 cat > /etc/ssh/sshd_config.d/10-graphwise.conf <<'SSHDEOF'
@@ -124,52 +90,30 @@ LoginGraceTime 30
 MaxStartups 100:30:200
 SSHDEOF
 
-# Debian's main sshd_config also has a Subsystem line that wins over
-# any drop-in (sshd takes the FIRST Subsystem definition). Comment it
-# out so the drop-in actually takes effect.
+# Some AL2023 images include a Subsystem line in the main sshd_config;
+# sshd takes the first Subsystem definition so comment it out so the
+# drop-in actually wins.
 sed -i -E 's|^(\s*Subsystem\s+sftp\s+/.*)$|# \1   # disabled by graphwise cloud-init|' \
     /etc/ssh/sshd_config
 
-# Debian's service is `ssh`; some other distros use `sshd`.
-systemctl restart ssh 2>/dev/null || systemctl restart sshd
+systemctl restart sshd
 echo "sshd: internal-sftp + LoginGraceTime=30s + MaxStartups=100:30:200"
 
-# Debian's podman ships without a default image registry. Without this,
-# any unqualified image name fails with "short-name did not resolve to
-# an alias". KIND pulls kindest/node from docker.io.
-echo 'unqualified-search-registries = ["docker.io"]' \
-    > /etc/containers/registries.conf.d/docker.conf
-
-# Force systemd cgroup manager + crun runtime in containers.conf so KIND
-# (which runs as a privileged container under rootless podman) gets the
-# right cgroup hierarchy. Without this, KIND nodes fail to start with
-# "failed to create kubelet" errors.
-mkdir -p /etc/containers
-cat > /etc/containers/containers.conf <<'CONFEOF'
-[engine]
-cgroup_manager = "systemd"
-runtime = "crun"
-CONFEOF
-
-# Enable the system-level podman socket. Not strictly required for
-# rootless KIND, but useful for ad-hoc tooling.
-systemctl enable --now podman
-
 # ---------------------------------------------------------------------------
-# Sysctls -- rootless podman + KIND networking
+# Sysctls -- KIND networking
 # ---------------------------------------------------------------------------
-# - ip_unprivileged_port_start=80: lets ingress-nginx (running inside
-#   the KIND control-plane container, which itself runs as the rootless
-#   named user) bind 80/443 via KIND's hostPort port mappings.
-# - apparmor_restrict_unprivileged_userns=0: Debian 13 restricts
-#   unprivileged user namespaces by default; KIND requires them.
-# - ip_forward=1: container-to-container traffic across podman bridges.
+# - ip_forward=1: container-to-container traffic across Docker bridges.
 # - inotify limits: KIND nodes run a lot of file-watching processes
 #   (kubelet, kube-apiserver). Default fs.inotify.* values run out
 #   well before the cluster is fully populated.
+#
+# Notes (vs Debian path):
+#   - kernel.apparmor_restrict_unprivileged_userns is Debian-specific;
+#     AL2023 doesn't ship AppArmor. SELinux stays at default
+#     (enforcing); container-selinux from dnf handles Docker labelling.
+#   - net.ipv4.ip_unprivileged_port_start=80 is unnecessary because
+#     Docker daemon runs as root and binds host ports directly.
 cat > /etc/sysctl.d/99-kind.conf <<'SYSCTLEOF'
-net.ipv4.ip_unprivileged_port_start = 80
-kernel.apparmor_restrict_unprivileged_userns = 0
 net.ipv4.ip_forward = 1
 fs.inotify.max_user_watches = 524288
 fs.inotify.max_user_instances = 512
@@ -177,68 +121,14 @@ SYSCTLEOF
 sysctl --system
 
 # ---------------------------------------------------------------------------
-# Named user -- passwordless sudo + SSH key copied from admin
+# Docker -- enable, start, give ec2-user the docker group
 # ---------------------------------------------------------------------------
-if ! id "$TARGET_USER" >/dev/null 2>&1; then
-    adduser --disabled-password --gecos "" "$TARGET_USER"
-fi
-usermod -aG sudo "$TARGET_USER"
+systemctl enable --now docker
 
-SUDOERS_FILE="/etc/sudoers.d/$TARGET_USER"
-echo "$TARGET_USER ALL=(ALL) NOPASSWD:ALL" > "$SUDOERS_FILE"
-chmod 0440 "$SUDOERS_FILE"
-visudo -cf "$SUDOERS_FILE"
-
-mkdir -p "/home/$TARGET_USER/.ssh"
-cp /home/admin/.ssh/authorized_keys "/home/$TARGET_USER/.ssh/"
-chown -R "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/.ssh"
-chmod 700 "/home/$TARGET_USER/.ssh"
-chmod 600 "/home/$TARGET_USER/.ssh/authorized_keys"
-
-# Confirm /etc/subuid and /etc/subgid have allocations for the user.
-# `adduser` does this on Debian 13, but be defensive.
-if ! grep -q "^$TARGET_USER:" /etc/subuid; then
-    echo "$TARGET_USER:100000:65536" >> /etc/subuid
-fi
-if ! grep -q "^$TARGET_USER:" /etc/subgid; then
-    echo "$TARGET_USER:100000:65536" >> /etc/subgid
-fi
-
-# ---------------------------------------------------------------------------
-# Rootless podman runtime -- runtime dir + DBus + linger
-# ---------------------------------------------------------------------------
-USER_ID=$(id -u "$TARGET_USER")
-RUNTIME_DIR="/run/user/$USER_ID"
-mkdir -p "$RUNTIME_DIR"
-chown "$USER_ID:$USER_ID" "$RUNTIME_DIR"
-chmod 700 "$RUNTIME_DIR"
-
-# Linger = keep the user's systemd instance alive between logins.
-# Without it, the KIND container's user session ends as soon as you SSH
-# out, taking the whole cluster down.
-loginctl enable-linger "$TARGET_USER"
-
-# Persist the XDG/DBus env vars + KIND_EXPERIMENTAL_PROVIDER so a fresh
-# SSH shell can use kind/podman/kubectl without ceremony.
-if ! grep -q "XDG_RUNTIME_DIR" "/home/$TARGET_USER/.bashrc" 2>/dev/null; then
-    cat >> "/home/$TARGET_USER/.bashrc" <<'RCEOF'
-
-# Rootless Podman runtime
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-
-# KIND uses podman as its provider on this host (no Docker installed).
-export KIND_EXPERIMENTAL_PROVIDER=podman
-
-# kubeconfig from the local KIND cluster
-export KUBECONFIG="$HOME/.kube/config"
-
-# Convenience aliases
-alias k=kubectl
-alias kga='kubectl get all --all-namespaces'
-RCEOF
-    chown "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/.bashrc"
-fi
+# Add ec2-user to the docker group so KIND/kubectl can be run without
+# sudo. Member of `docker` group is effectively root on the host -- fine
+# for a demo box, document if you want to revisit for production.
+usermod -aG docker "$TARGET_USER"
 
 # ---------------------------------------------------------------------------
 # Install kind / kubectl / helm (ARM64 binaries, pinned versions)
@@ -260,8 +150,27 @@ chmod +x /usr/local/bin/helm
 rm -rf "/tmp/linux-$ARCH"
 
 # ---------------------------------------------------------------------------
-# Clone the repo and bring up the KIND cluster as the named user
+# Persist KUBECONFIG + convenience aliases for ec2-user shells
 # ---------------------------------------------------------------------------
+if ! grep -q "KUBECONFIG=" "/home/$TARGET_USER/.bashrc" 2>/dev/null; then
+    cat >> "/home/$TARGET_USER/.bashrc" <<'RCEOF'
+
+# kubeconfig from the local KIND cluster
+export KUBECONFIG="$HOME/.kube/config"
+
+# Convenience aliases
+alias k=kubectl
+alias kga='kubectl get all --all-namespaces'
+RCEOF
+    chown "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/.bashrc"
+fi
+
+# ---------------------------------------------------------------------------
+# Clone the repo and bring up the KIND cluster as ec2-user
+# ---------------------------------------------------------------------------
+# Using `sudo -u "$TARGET_USER" -i` (login shell) so the docker-group
+# membership added above is in effect for `kind create cluster`. Without
+# the login shell, the freshly-added group membership isn't visible.
 sudo -u "$TARGET_USER" -i bash <<INNER
 set -euo pipefail
 cd "\$HOME"
@@ -272,12 +181,6 @@ if [[ ! -d "graphwise-stack-aws" ]]; then
 fi
 
 cd graphwise-stack-aws
-
-# Bring up the single-node KIND cluster. KIND_EXPERIMENTAL_PROVIDER=podman
-# is set in .bashrc but a non-login bash heredoc may not source it.
-export KIND_EXPERIMENTAL_PROVIDER=podman
-export XDG_RUNTIME_DIR="/run/user/\$(id -u)"
-export DBUS_SESSION_BUS_ADDRESS="unix:path=\$XDG_RUNTIME_DIR/bus"
 
 # Skip if a cluster named "graphwise" already exists (re-bootstrap path).
 if kind get clusters 2>/dev/null | grep -qx graphwise; then
@@ -300,7 +203,7 @@ INNER
 #
 # AWS Bedrock creds, n8n license activation key, etc. still need manual
 # editing (in charts/graphwise-stack/values.yaml on this host) -- see
-# README "Configure GraphRAG runtime credentials". Those are commercial
+# DEPLOY "Configure GraphRAG runtime credentials". Those are commercial
 # secrets Terraform shouldn't generate.
 # ---------------------------------------------------------------------------
 SECRETS_FILE="/home/$TARGET_USER/graphwise-secrets.yaml"
@@ -351,11 +254,15 @@ What's still manual, in order:
     ./scripts/cluster-bootstrap.sh
 
     # 4. Drop your Graphwise license files under files/licenses/:
-    #    PoolParty, UnifiedViews, GraphDB. They become Kubernetes
-    #    Secrets in step 5.
+    #    PoolParty (poolparty.key), GraphDB (graphdb.license),
+    #    UnifiedViews (uv-license.key). They become Kubernetes
+    #    Secrets in step 6.
 
-    # 5. (Coming in next phase) Install the umbrella Helm chart:
-    #    helm install graphwise-stack ./charts/graphwise-stack ...
+    # 5. Edit charts/graphwise-stack/values.yaml -- fill in your
+    #    AWS Bedrock access key + n8n license activation key.
+
+    # 6. Install the umbrella + graphrag Helm releases:
+    #    ./scripts/reset-helm.sh --yes <your-subdomain>
 
 Endpoints once everything is wired up:
     Chatbot:   https://graphrag.$HOSTNAME_FQDN/

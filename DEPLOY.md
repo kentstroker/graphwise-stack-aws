@@ -59,7 +59,7 @@ laptop-zero through ready-for-`terraform-apply`. At a glance:
 - Graphwise Maven registry credentials and three license files
   (PoolParty, GraphDB, UnifiedViews) — request from Graphwise.
 
-The EC2 instance side (Debian 13 ARM64, rootless podman, KIND,
+The EC2 instance side (Amazon Linux 2023 ARM64, Docker, KIND,
 kubectl, helm) is handled by the Terraform module's cloud-init;
 nothing to install there.
 
@@ -100,7 +100,6 @@ you'd touch them:
 | `base_domain` | `semantic-proof.com` | You've forked this project and own a different parent domain. Graphwise SEs leave the default and email Kent for the A-records. |
 | `instance_type` | `r6g.2xlarge` | You want to save money on a slimmer demo. `r6g.xlarge` (4 vCPU / 32 GB) works if you cut the addons — JVM heaps for PoolParty and Elasticsearch get tight. Don't go below that. |
 | `root_volume_gb` | `300` | You're pruning the stack; 300 GB gives headroom for the KIND image cache + every PVC + log growth. Can grow later, can't shrink. |
-| `named_user` | `graphwise` | You want `ssh kent@<eip>` instead of `ssh graphwise@<eip>`. Cosmetic. |
 | `github_repo_url` | upstream | You've forked the repo and want cloud-init to clone your fork. |
 | `instance_name_prefix` | `graphwise-stack` | You want a different prefix for cost-allocation tags. Final Name tag is `<prefix>-<subdomain>`. |
 | `existing_eip_allocation_id` | `""` (allocate fresh) | Set this **after** allocating an EIP outside Terraform (Console or `aws ec2 allocate-address`) to make the EIP survive `terraform destroy`/`apply` cycles. Otherwise every rebuild gets a new EIP and you have to update DNS again. Allocation ID format: `eipalloc-0123456789abcdef0`. |
@@ -114,13 +113,13 @@ terraform plan       # dry-run; you should see 3 resources to add: SG, EC2, EIP
 terraform apply
 ```
 
-Output includes the EIP, an `ssh_named_user` line, and the
+Output includes the EIP, an `ssh` command line, and the
 `godaddy_dns_records` block (the two A-records to add). The
 cloud-init script takes 2–3 minutes after `apply` returns; tail it
 with:
 
 ```bash
-ssh -i <key.pem> admin@<eip> 'sudo tail -f /var/log/bootstrap.log'
+ssh -i <key.pem> ec2-user@<eip> 'sudo tail -f /var/log/bootstrap.log'
 ```
 
 Wait for `=== Bootstrap complete at <timestamp> ===`. The cluster is
@@ -149,7 +148,7 @@ nothing works.
 ### 3. SSH in and prepare creds
 
 ```bash
-ssh -i <key.pem> graphwise@<eip>
+ssh -i <key.pem> ec2-user@<eip>
 cd ~/graphwise-stack-aws
 
 # Maven registry creds for the GraphRAG images

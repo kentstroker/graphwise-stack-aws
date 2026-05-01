@@ -35,16 +35,22 @@ data "aws_subnets" "default" {
   }
 }
 
-# Latest official Debian 13 ("Trixie") ARM64 AMI. Debian publishes
-# images under AWS account 136693071363 with a predictable naming pattern.
-# most_recent=true gets you whatever they've published most recently.
-data "aws_ami" "debian13_arm64" {
+# Latest official Amazon Linux 2023 ARM64 AMI. AWS publishes these under
+# the "amazon" owner alias with a predictable name pattern. most_recent=true
+# gets you whatever they've published most recently.
+#
+# Migrated from Debian 13 in late 2026 after teammates hit consistent
+# "ssh fails immediately after scp" failures on Debian 13. The same SSH+scp
+# pattern works cleanly on AL2023 -- root cause appears to be a Debian 13
+# kernel/network-stack interaction with AWS Nitro that AL2023 doesn't
+# trigger.
+data "aws_ami" "al2023_arm64" {
   most_recent = true
-  owners      = ["136693071363"]
+  owners      = ["amazon"]
 
   filter {
     name   = "name"
-    values = ["debian-13-arm64-*"]
+    values = ["al2023-ami-*-arm64"]
   }
 
   filter {
@@ -89,7 +95,6 @@ data "cloudinit_config" "bootstrap" {
     content_type = "text/x-shellscript"
     filename     = "bootstrap.sh"
     content = templatefile("${path.module}/user-data.sh.tpl", {
-      named_user         = var.named_user
       github_repo_url    = var.github_repo_url
       hostname_fqdn      = "${var.subdomain}.${var.base_domain}"
       n8n_encryption_key = random_id.n8n_encryption_key.hex
@@ -191,7 +196,7 @@ resource "aws_security_group" "stack" {
 # ---------------------------------------------------------------------------
 
 resource "aws_instance" "stack" {
-  ami                    = data.aws_ami.debian13_arm64.id
+  ami                    = data.aws_ami.al2023_arm64.id
   instance_type          = var.instance_type
   key_name               = var.key_pair_name
   subnet_id              = data.aws_subnets.default.ids[0]

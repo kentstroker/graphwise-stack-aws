@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A **Helm-on-KIND** deployment of the Ontotext / Graphwise **PoolParty** ecosystem plus the **GraphRAG** chatbot suite, on a single **AWS EC2** instance (Debian 13, rootless podman, single-node KIND cluster). All ingress is HTTPS via ingress-nginx + cert-manager + Let's Encrypt. It is explicitly a **demo / evaluation** deployment — not production-ready — see the warning block in [DEPLOY.md](DEPLOY.md) for the full list of what would need to change for production use.
+A **Helm-on-KIND** deployment of the Ontotext / Graphwise **PoolParty** ecosystem plus the **GraphRAG** chatbot suite, on a single **AWS EC2** instance (Amazon Linux 2023, Docker, single-node KIND cluster). All ingress is HTTPS via ingress-nginx + cert-manager + Let's Encrypt. It is explicitly a **demo / evaluation** deployment — not production-ready — see the warning block in [DEPLOY.md](DEPLOY.md) for the full list of what would need to change for production use.
+
+**OS history:** previously deployed on Debian 13 with rootless podman. Migrated to AL2023 + Docker in late 2026 after consistent "ssh fails immediately after scp" failures on Debian 13 + AWS Nitro that nobody could explain; AL2023 doesn't trigger the issue. KIND on Docker is also better-supported (KIND-on-podman is still `KIND_EXPERIMENTAL_PROVIDER`).
 
 
 **Audience and licensing.** This repo is primarily for **internal use by Graphwise field presales engineers**. It is public (MIT-licensed, AS-IS, no warranty, no support — see [LICENSE](LICENSE)) so that customers, partners, and the semantic-web community can reference it when building their own evaluation environments. External users must supply their own Graphwise license files (PoolParty/GraphDB EE/UnifiedViews — obtained by contacting Graphwise), their own AWS account, and their own domain. The repo ships zero license files and no access to Graphwise's shared presales domain `semantic-proof.com`.
@@ -112,7 +114,7 @@ KIND nodes are podman containers. On EC2 stop/start `podman.service` comes back 
 While iterating on the Helm charts, edits land on the developer's Mac and get scp'd to the EC2 host. Git is intentionally not in the loop until the changes settle. After every chart/script edit, sync the affected files before `helm upgrade`:
 
 ```bash
-scp -i <key.pem> <changed-files> graphwise@<eip>:~/graphwise-stack-aws/<paths>/
+scp -i <key.pem> <changed-files> ec2-user@<eip>:~/graphwise-stack-aws/<paths>/
 ```
 
 `helm get manifest graphwise-stack -n graphwise` confirms what was actually applied — useful when an expected change isn't taking effect.

@@ -27,7 +27,7 @@ IMPORT_PATHS=(
 
 found_json=""
 for path in "${IMPORT_PATHS[@]}"; do
-    listing=$(podman run --rm --entrypoint=sh "$IMAGE" -c \
+    listing=$(docker run --rm --entrypoint=sh "$IMAGE" -c \
         "ls -1 $path/*.json 2>/dev/null || true")
     if [[ -n "$listing" ]]; then
         echo "  Found JSON files under $path:"
@@ -50,7 +50,7 @@ fi
 echo
 echo "Extracting $found_json → $DEST"
 mkdir -p "$(dirname "$DEST")"
-podman run --rm --entrypoint=sh "$IMAGE" -c "cat $found_json" > "$DEST"
+docker run --rm --entrypoint=sh "$IMAGE" -c "cat $found_json" > "$DEST"
 
 echo
 echo "Sanity check:"

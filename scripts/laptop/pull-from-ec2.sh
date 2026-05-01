@@ -32,7 +32,7 @@
 #   GRAPHWISE_KEY    same as --key  (e.g. ~/.ssh/graphwise-stack.pem)
 #   GRAPHWISE_HOST   same as --host (e.g. 54.149.12.34 or
 #                    stroker.semantic-proof.com)
-#   GRAPHWISE_USER   same as --user (default: graphwise)
+#   GRAPHWISE_USER   same as --user (default: ec2-user)
 # Set these once in your shell rc and you can drop --key/--host
 # from every invocation. CLI flags override env vars.
 
@@ -40,7 +40,7 @@ set -euo pipefail
 
 KEY="${GRAPHWISE_KEY:-}"
 HOST="${GRAPHWISE_HOST:-}"
-USER_NAME="${GRAPHWISE_USER:-graphwise}"
+USER_NAME="${GRAPHWISE_USER:-ec2-user}"
 DEST=""
 
 usage() {
@@ -54,7 +54,7 @@ Required (CLI flag OR environment variable):
                        env: GRAPHWISE_HOST
 
 Optional:
-  --user <name>        SSH user (default: graphwise)
+  --user <name>        SSH user (default: ec2-user)
                        env: GRAPHWISE_USER
   --dest <dir>         Backup destination directory (default:
                        ~/graphwise-backup-<host>-<UTC-timestamp>)
@@ -121,6 +121,9 @@ scp_from ".ontotext/maven-pass"           ".ontotext/maven-pass"                
 echo "Helm values + secrets overlay:"
 scp_from "graphwise-secrets.yaml"         "graphwise-secrets.yaml"                              "$DEST/values/graphwise-secrets.yaml"
 scp_from "values.yaml (edited)"           "graphwise-stack-aws/charts/graphwise-stack/values.yaml" "$DEST/values/graphwise-stack-values.yaml"
+
+# Drop macOS Finder droppings that sneak into the backup dir.
+find "$DEST" -name '.DS_Store' -delete 2>/dev/null || true
 
 # Lock down perms so back-up files don't widen permissions.
 chmod -R go-rwx "$DEST"

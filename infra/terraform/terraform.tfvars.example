@@ -45,9 +45,10 @@ availability_zone = "CHANGEME"               # e.g. "us-west-2a"
 # Root EBS volume size. 300 GiB is the shipped recommendation.
 # root_volume_gb = 300
 
-# Linux user to create on the instance. You'll SSH in as this user.
-# Defaults to "graphwise"; override to your own name if you prefer.
-# named_user = "graphwise"
+# Note: SSH user is `ec2-user` (Amazon Linux 2023 default). Not
+# configurable -- the named_user knob was dropped during the AL2023
+# migration since AL2023 ships ec2-user pre-configured with the SSH
+# key and wheel-group sudo.
 
 # Repo to clone on first boot. Default is the public upstream.
 # github_repo_url = "https://github.com/kentstroker/graphwise-stack-aws.git"
