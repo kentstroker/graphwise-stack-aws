@@ -1,7 +1,11 @@
 {{/*
-ConfigMap holding the static HTML. .Files.Glob finds every *.html under
-charts/console/files/ and embeds them as keys in the map. Each key
-becomes a file when mounted into the nginx container.
+ConfigMap holding the rendered HTML. .Files.Glob finds every *.html
+under charts/console/files/. Each file is run through `tpl` so it can
+use Helm template variables (.Values.credentials.*, .Values.global.*)
+to surface deployment-specific values like credentials and hostnames.
+
+The umbrella's `helm upgrade` re-renders this ConfigMap on every
+deploy, so the landing page always reflects the current values.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -12,5 +16,5 @@ metadata:
 data:
 {{- range $path, $bytes := .Files.Glob "files/*.html" }}
   {{ base $path }}: |-
-{{ $.Files.Get $path | indent 4 }}
+{{ tpl ($.Files.Get $path) $ | indent 4 }}
 {{- end }}

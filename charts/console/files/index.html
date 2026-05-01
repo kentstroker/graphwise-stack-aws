@@ -4,15 +4,22 @@
   Served by ingress-nginx at https://<sub>.<base>/ (the Console
   Ingress targets the apex hostname).
 
-  Each app lives at its own subdomain (poolparty.<sub>.<base>,
-  auth.<sub>.<base>, graphrag.<sub>.<base>, …). Links in this page
-  use a placeholder apex (stroker.semantic-proof.com); the JS at the
-  bottom rewrites every occurrence to the apex the user actually
-  reached the page at, which means subdomain.<actual-apex> links all
-  resolve correctly without re-rendering this file per deployment.
+  Rendered through Helm `tpl` at install time (see templates/configmap.yaml).
+  Variables come from charts/console/values.yaml — most importantly
+  .Values.credentials.* (every login string shown on cards) and
+  .Values.global.subdomain / .Values.global.baseDomain (apex hostname).
+
+  The JS at the bottom is a safety net: if the user reaches the page
+  via a different apex than what was rendered (proxy, internal LB, etc.),
+  links self-rewrite to whatever hostname window.location.hostname
+  reports.
+
+  Authoritative reference for every credential lives in CONSOLE-GUIDE.md
+  → "Credentials reference".
 
   Author: Kent Stroker
 -->
+{{- $apex := printf "%s.%s" .Values.global.subdomain .Values.global.baseDomain -}}
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -80,7 +87,7 @@ footer code {
 
 <header>
   <h1>Graphwise Stack Console</h1>
-  <p>Server: <code id="host">stroker.semantic-proof.com</code> &middot; Each app lives at its own subdomain. Every link below is HTTPS via ingress-nginx + Let's Encrypt.</p>
+  <p>Server: <code id="host">{{ $apex }}</code> &middot; Each app lives at its own subdomain. Every link below is HTTPS via ingress-nginx + Let's Encrypt.</p>
 </header>
 
 <main>
@@ -88,20 +95,20 @@ footer code {
 <section>
   <h2>Start here</h2>
   <div class="grid">
-    <a class="card primary" href="https://poolparty.stroker.semantic-proof.com/PoolParty/">
+    <a class="card primary" href="https://poolparty.{{ $apex }}/PoolParty/">
       <div class="title">PoolParty Thesaurus</div>
       <div class="desc">Main authoring UI &mdash; taxonomies, concepts, projects</div>
-      <div class="auth">SSO &middot; superadmin / poolparty</div>
+      <div class="auth">SSO &middot; {{ .Values.credentials.poolparty }}</div>
     </a>
-    <a class="card primary" href="https://graphrag.stroker.semantic-proof.com/">
+    <a class="card primary" href="https://graphrag.{{ $apex }}/">
       <div class="title">GraphRAG Chatbot</div>
       <div class="desc">Conversational interface backed by your taxonomy</div>
-      <div class="auth">SSO &middot; alice / alice123 (or bob / bob123)</div>
+      <div class="auth">SSO &middot; {{ .Values.credentials.graphragSso }}</div>
     </a>
-    <a class="card primary" href="https://auth.stroker.semantic-proof.com/admin/">
+    <a class="card primary" href="https://auth.{{ $apex }}/admin/">
       <div class="title">Keycloak Admin Console</div>
       <div class="desc">Manage realms, users, clients, client secrets</div>
-      <div class="auth">poolparty_auth_admin / admin</div>
+      <div class="auth">{{ .Values.credentials.keycloakAdmin }}</div>
     </a>
   </div>
 </section>
@@ -109,35 +116,35 @@ footer code {
 <section>
   <h2>PoolParty Suite</h2>
   <div class="grid">
-    <a class="card" href="https://poolparty.stroker.semantic-proof.com/GraphSearch/">
+    <a class="card" href="https://poolparty.{{ $apex }}/GraphSearch/">
       <div class="title">GraphSearch</div>
       <div class="desc">Search frontend over PoolParty content</div>
       <div class="auth">SSO &middot; same user as PoolParty</div>
     </a>
-    <a class="card" href="https://poolparty.stroker.semantic-proof.com/extractor/">
+    <a class="card" href="https://poolparty.{{ $apex }}/extractor/">
       <div class="title">Extractor (REST)</div>
       <div class="desc">Concept-extraction REST API &mdash; no UI</div>
       <div class="auth">SSO bearer token required</div>
     </a>
-    <a class="card" href="https://semantic-workbench.stroker.semantic-proof.com/SemanticWorkbench/">
+    <a class="card" href="https://semantic-workbench.{{ $apex }}/SemanticWorkbench/">
       <div class="title">Semantic Workbench</div>
       <div class="desc">RDF modeling, ontology editor, SHACL, SPARQL</div>
       <div class="auth">SSO &middot; same user as PoolParty</div>
     </a>
-    <a class="card" href="https://adf.stroker.semantic-proof.com/ADF/">
+    <a class="card" href="https://adf.{{ $apex }}/ADF/">
       <div class="title">Advanced Data Fabric (ADF)</div>
       <div class="desc">Data integration / enrichment platform</div>
       <div class="auth">SSO &middot; same user as PoolParty</div>
     </a>
-    <a class="card" href="https://graphviews.stroker.semantic-proof.com/GraphViews/">
+    <a class="card" href="https://graphviews.{{ $apex }}/GraphViews/">
       <div class="title">GraphViews</div>
       <div class="desc">Visualization on top of PoolParty projects</div>
-      <div class="auth">direct &middot; superadmin / poolparty</div>
+      <div class="auth">direct &middot; {{ .Values.credentials.poolparty }}</div>
     </a>
-    <a class="card" href="https://unifiedviews.stroker.semantic-proof.com/">
+    <a class="card" href="https://unifiedviews.{{ $apex }}/">
       <div class="title">UnifiedViews</div>
       <div class="desc">ETL / pipeline platform (own login system)</div>
-      <div class="auth">default &middot; admin / admin</div>
+      <div class="auth">default &middot; {{ .Values.credentials.unifiedviews }}</div>
     </a>
   </div>
 </section>
@@ -145,41 +152,41 @@ footer code {
 <section>
   <h2>GraphRAG (AI / RAG)</h2>
   <div class="grid">
-    <a class="card" href="https://graphrag.stroker.semantic-proof.com/">
+    <a class="card" href="https://graphrag.{{ $apex }}/">
       <div class="title">Chatbot</div>
       <div class="desc">Web UI for the conversational agent</div>
-      <div class="auth">SSO &middot; graphrag realm (alice / bob)</div>
+      <div class="auth">SSO &middot; {{ .Values.credentials.graphragSso }}</div>
     </a>
-    <a class="card" href="https://graphrag.stroker.semantic-proof.com/conversations/">
+    <a class="card" href="https://graphrag.{{ $apex }}/conversations/">
       <div class="title">Conversation API</div>
       <div class="desc">Spring backend for chatbot &middot; OIDC bearer required</div>
       <div class="auth">service-to-service OIDC</div>
     </a>
-    <a class="card" href="https://graphrag.stroker.semantic-proof.com/graphrag/workflows/">
+    <a class="card" href="https://graphrag.{{ $apex }}/graphrag/workflows/">
       <div class="title">Workflows (n8n)</div>
       <div class="desc">Pipeline editor; first visitor sets the owner account</div>
-      <div class="auth">n8n own login &middot; configured on first boot</div>
+      <div class="auth">{{ .Values.credentials.n8n }}</div>
     </a>
   </div>
 </section>
 
 <section>
-  <h2>Data Stores (Basic Auth: demo / rdf#rocks)</h2>
+  <h2>Data Stores (Basic Auth: {{ .Values.credentials.basicAuth }})</h2>
   <div class="grid">
-    <a class="card" href="https://graphdb.stroker.semantic-proof.com/">
+    <a class="card" href="https://graphdb.{{ $apex }}/">
       <div class="title">GraphDB &mdash; embedded</div>
       <div class="desc">PoolParty's backing store. <strong>Do not load your own data here.</strong></div>
-      <div class="auth">basic &middot; demo / rdf#rocks</div>
+      <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }}</div>
     </a>
-    <a class="card" href="https://graphdb-projects.stroker.semantic-proof.com/">
+    <a class="card" href="https://graphdb-projects.{{ $apex }}/">
       <div class="title">GraphDB &mdash; projects</div>
       <div class="desc">Your data. Load repositories, run SPARQL here.</div>
-      <div class="auth">basic &middot; demo / rdf#rocks</div>
+      <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }}</div>
     </a>
-    <a class="card" href="https://rdf4j.stroker.semantic-proof.com/rdf4j-workbench/">
+    <a class="card" href="https://rdf4j.{{ $apex }}/rdf4j-workbench/">
       <div class="title">RDF4J Workbench</div>
       <div class="desc">Standalone RDF workbench; also backs UnifiedViews internally.</div>
-      <div class="auth">basic &middot; demo / rdf#rocks</div>
+      <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }}</div>
     </a>
   </div>
 </section>
@@ -187,20 +194,20 @@ footer code {
 <section>
   <h2>Observability</h2>
   <div class="grid">
-    <a class="card" href="https://dashboard.stroker.semantic-proof.com/">
+    <a class="card" href="https://dashboard.{{ $apex }}/">
       <div class="title">Kubernetes Dashboard</div>
       <div class="desc">Cluster + workload introspection. Upload <code>~/dashboard-kubeconfig.yaml</code> at the login screen.</div>
-      <div class="auth">bearer token (kubeconfig)</div>
+      <div class="auth">{{ .Values.credentials.dashboard }}</div>
     </a>
-    <a class="card" href="https://prometheus.stroker.semantic-proof.com/">
+    <a class="card" href="https://prometheus.{{ $apex }}/">
       <div class="title">Prometheus</div>
       <div class="desc">Raw metrics + alerts UI. Time series for everything in the cluster.</div>
-      <div class="auth">basic &middot; demo / rdf#rocks</div>
+      <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }}</div>
     </a>
-    <a class="card" href="https://grafana.stroker.semantic-proof.com/">
+    <a class="card" href="https://grafana.{{ $apex }}/">
       <div class="title">Grafana</div>
       <div class="desc">Pre-built K8s dashboards (~30 ship with the chart). Build your own here.</div>
-      <div class="auth">admin / demo-graphwise-2026</div>
+      <div class="auth">{{ .Values.credentials.grafana }}</div>
     </a>
   </div>
 </section>
@@ -208,23 +215,23 @@ footer code {
 <section>
   <h2>Useful config endpoints</h2>
   <div class="grid">
-    <a class="card" href="https://auth.stroker.semantic-proof.com/realms/master/.well-known/openid-configuration">
+    <a class="card" href="https://auth.{{ $apex }}/realms/master/.well-known/openid-configuration">
       <div class="title">OIDC &middot; master realm</div>
       <div class="desc">Keycloak discovery for the admin realm</div>
     </a>
-    <a class="card" href="https://auth.stroker.semantic-proof.com/realms/poolparty/.well-known/openid-configuration">
+    <a class="card" href="https://auth.{{ $apex }}/realms/poolparty/.well-known/openid-configuration">
       <div class="title">OIDC &middot; poolparty realm</div>
       <div class="desc">Consumed by PoolParty / ADF / Semantic Workbench</div>
     </a>
-    <a class="card" href="https://auth.stroker.semantic-proof.com/realms/graphrag/.well-known/openid-configuration">
+    <a class="card" href="https://auth.{{ $apex }}/realms/graphrag/.well-known/openid-configuration">
       <div class="title">OIDC &middot; graphrag realm</div>
       <div class="desc">Consumed by GraphRAG chatbot / conversation</div>
     </a>
-    <a class="card" href="https://graphdb.stroker.semantic-proof.com/rest/repositories">
+    <a class="card" href="https://graphdb.{{ $apex }}/rest/repositories">
       <div class="title">Embedded GraphDB &middot; repo list</div>
       <div class="desc">JSON inventory of repositories (basic auth)</div>
     </a>
-    <a class="card" href="https://graphdb-projects.stroker.semantic-proof.com/rest/repositories">
+    <a class="card" href="https://graphdb-projects.{{ $apex }}/rest/repositories">
       <div class="title">Projects GraphDB &middot; repo list</div>
       <div class="desc">JSON inventory of repositories (basic auth)</div>
     </a>
@@ -236,21 +243,22 @@ footer code {
 <footer>
   <p>Want these as bookmarks in your browser? <a href="/bookmarks.html">Download bookmarks.html</a> and import via
   Chrome / Edge &rarr; Settings &rarr; Bookmarks &rarr; Import Bookmarks &rarr; Bookmarks HTML File.</p>
-  <p>For architecture / troubleshooting, see <code>CLAUDE.md</code> and <code>CHEATSHEET.md</code> at the repo root.</p>
+  <p>Full credentials reference (including internal Postgres / OIDC client secrets) lives in <code>CONSOLE-GUIDE.md</code> at the repo root. Architecture / troubleshooting in <code>CLAUDE.md</code>.</p>
 </footer>
 
 <script>
-  // Self-adapting links: rewrite the placeholder apex
-  // (stroker.semantic-proof.com) to whatever apex the user actually
-  // reached this page at. Per-app subdomains (poolparty.*, auth.*, etc.)
-  // come along for free because the placeholder appears as the suffix
-  // of every hostname.
+  // Self-adapting links: rewrite the rendered apex to whatever apex
+  // the user actually reached this page at. Helm tpl already filled
+  // in the apex at install time, but if the page is reached via a
+  // different hostname (proxy, internal LB rebrand, etc.), this keeps
+  // links working without re-rendering the ConfigMap.
   document.addEventListener('DOMContentLoaded', function () {
     var host = window.location.hostname;
     if (!host) return;
-    var placeholder = 'stroker.semantic-proof.com';
+    var renderedApex = '{{ $apex }}';
+    if (host === renderedApex) return;
     document.querySelectorAll('a[href]').forEach(function (a) {
-      a.href = a.href.split(placeholder).join(host);
+      a.href = a.href.split(renderedApex).join(host);
     });
     var hostEl = document.getElementById('host');
     if (hostEl) hostEl.textContent = host;

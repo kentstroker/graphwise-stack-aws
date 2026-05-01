@@ -9,7 +9,7 @@ global:
   # Per-teammate subdomain. Required. All app hostnames are computed:
   #   poolparty.<subdomain>.<baseDomain>, auth.<subdomain>.<baseDomain>,
   #   graphrag.<subdomain>.<baseDomain>, ...
-  subdomain: ""
+  subdomain: "stroker"
   baseDomain: "semantic-proof.com"
 
   # Image pull secret name for the Graphwise private registry.
@@ -36,9 +36,9 @@ keycloak:
     name: keycloak-postgres
     instances: 1
     storage: 5Gi
-    superuserPassword: "change-me-super"
+    superuserPassword: "rdf#rocks"
     appUsername: keycloak
-    appPassword: "change-me-app"
+    appPassword: "rdf#rocks"
   # Helm post-install/post-upgrade Job that creates the master-realm
   # admin user PoolParty's chart expects (poolparty_auth_admin / admin)
   # so a fresh `reset-helm.sh` run lands working out of the box. See
@@ -60,9 +60,9 @@ n8nPostgres:
   namespace: graphrag
   instances: 1
   storage: 5Gi
-  superuserPassword: "change-me-super"
+  superuserPassword: "rdf#rocks"
   appUsername: n8n
-  appPassword: "change-me-app"
+  appPassword: "rdf#rocks"
 
 graphrag-secrets:
   # Secrets / ConfigMap consumed by the vendored graphrag chart's
@@ -73,14 +73,14 @@ graphrag-secrets:
   # Secret graphrag-conversation-database-credentials
   conversation:
     dbUsername: "graphrag_conversation"
-    dbPassword: "change-me-conv"
+    dbPassword: "rdf#rocks"
 
   # Secret graphrag-conversation-keycloak-client. clientSecret must
   # match the conversation-api-client secret in the graphrag realm
   # (keycloak-realms.graphragConversationClientSecret).
   conversationKeycloak:
     clientId: "conversation-api-client"
-    clientSecret: "change-me-please"
+    clientSecret: "rdf#rocks"
     scope: "openid"
 
   # ConfigMap graphrag-components-vector-database. We reuse
@@ -93,14 +93,14 @@ graphrag-secrets:
 
   # Secret graphrag-components-aws-credentials (Bedrock)
   awsCredentials:
-    region: "us-east-1"
-    accessKeyId: "REPLACE_WITH_REAL_AWS_ACCESS_KEY_ID"
-    secretAccessKey: "REPLACE_WITH_REAL_AWS_SECRET_ACCESS_KEY"
+    region: "us-west-2"
+    accessKeyId: ""
+    secretAccessKey: ""
 
   # Secret graphrag-n8n-database-credentials
   n8nDatabase:
     username: "n8n"
-    password: "change-me-app"
+    password: "rdf#rocks"
 
   # Secret graphrag-n8n-encryption — long random key, MUST stay
   # constant or n8n credentials become unreadable.
@@ -119,7 +119,7 @@ graphrag-secrets:
 keycloak-realms:
   enabled: true
   keycloakCRName: graphwise-keycloak
-  graphragConversationClientSecret: "change-me-please"
+  graphragConversationClientSecret: "rdf#rocks"
 
 # PoolParty's Elasticsearch (also vector store for graphrag-components).
 poolparty-elasticsearch:
