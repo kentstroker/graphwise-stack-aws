@@ -46,6 +46,7 @@ set -euo pipefail
 # "<app>.<sub>.--yes".
 # ---------------------------------------------------------------------
 ASSUME_YES=0
+SKIP_GRAPHRAG=0
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -53,8 +54,26 @@ while [[ $# -gt 0 ]]; do
             ASSUME_YES=1
             shift
             ;;
+        --skip-graphrag)
+            # Install / update only the umbrella release. Useful when
+            # Maven creds for maven.ontotext.com aren't available yet
+            # (graphrag images would otherwise ImagePullBackOff). Also
+            # uninstalls any existing graphrag release to keep state
+            # consistent.
+            SKIP_GRAPHRAG=1
+            shift
+            ;;
         -h|--help)
-            echo "Usage: $0 [--yes] <subdomain> [base_domain]"
+            cat <<EOF
+Usage: $0 [--yes] [--skip-graphrag] <subdomain> [base_domain]
+
+  --yes            Skip the "type 'reset' to proceed" prompt.
+  --skip-graphrag  Install only the umbrella release (PoolParty,
+                   GraphDB, Keycloak, addons, console). Skips the
+                   graphrag release entirely. Use when you don't
+                   yet have Maven creds for maven.ontotext.com.
+                   Any existing graphrag release is uninstalled.
+EOF
             exit 0
             ;;
         --)
@@ -64,7 +83,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -*)
             echo "ERROR: unknown flag '$1'" >&2
-            echo "Usage: $0 [--yes] <subdomain> [base_domain]" >&2
+            echo "Usage: $0 [--yes] [--skip-graphrag] <subdomain> [base_domain]" >&2
             exit 1
             ;;
         *)
@@ -76,7 +95,7 @@ done
 set -- "${POSITIONAL[@]}"
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 [--yes] <subdomain> [base_domain]" >&2
+    echo "Usage: $0 [--yes] [--skip-graphrag] <subdomain> [base_domain]" >&2
     exit 1
 fi
 
@@ -181,9 +200,15 @@ echo "About to reset Helm releases for subdomain '$SUB.$BASE':"
 echo "  - helm uninstall $GRAPHRAG_RELEASE -n $GRAPHRAG_NAMESPACE  (graphrag pods first)"
 echo "  - helm uninstall $UMBRELLA_RELEASE -n $UMBRELLA_NAMESPACE  (umbrella second)"
 echo "  - kubectl delete pvc --all in: graphwise, keycloak, graphrag"
-echo "  - regenerate $UMBRELLA_VALUES + $GRAPHRAG_VALUES"
-echo "  - helm dependency update on both charts"
-echo "  - helm upgrade --install $UMBRELLA_RELEASE first, then $GRAPHRAG_RELEASE"
+if [[ $SKIP_GRAPHRAG -eq 1 ]]; then
+    echo "  - regenerate $UMBRELLA_VALUES (graphrag overlay skipped)"
+    echo "  - helm dependency update on umbrella chart"
+    echo "  - helm upgrade --install $UMBRELLA_RELEASE only (--skip-graphrag)"
+else
+    echo "  - regenerate $UMBRELLA_VALUES + $GRAPHRAG_VALUES"
+    echo "  - helm dependency update on both charts"
+    echo "  - helm upgrade --install $UMBRELLA_RELEASE first, then $GRAPHRAG_RELEASE"
+fi
 echo "  - timeout per release: $HELM_TIMEOUT"
 echo
 echo "DATA LOSS: every PVC in those three namespaces will be deleted."
@@ -249,25 +274,28 @@ while :; do
 done
 
 # ---------------------------------------------------------------------
-# 3. Re-render both values overlays
+# 3. Re-render values overlays
 # ---------------------------------------------------------------------
 echo "Rendering values overlays..."
 "$SCRIPT_DIR/render-values.sh" --umbrella "$SUB" "$BASE" > "$UMBRELLA_VALUES"
-"$SCRIPT_DIR/render-values.sh" --graphrag "$SUB" "$BASE" > "$GRAPHRAG_VALUES"
 echo "  $UMBRELLA_VALUES"
-echo "  $GRAPHRAG_VALUES"
+if [[ $SKIP_GRAPHRAG -eq 0 ]]; then
+    "$SCRIPT_DIR/render-values.sh" --graphrag "$SUB" "$BASE" > "$GRAPHRAG_VALUES"
+    echo "  $GRAPHRAG_VALUES"
+fi
 
 # ---------------------------------------------------------------------
-# 4. Helm dep update on BOTH chart paths
+# 4. Helm dep update
 # ---------------------------------------------------------------------
 # The vendor graphrag chart has its own dependencies (chatbot,
 # conversation, components, workflows) that helm dep update on the
 # umbrella does NOT recurse into. Skipping this is what produced
 # `kubectl get pods -n graphrag` showing only postgres after a
 # previous reset -- the chart packaged into the umbrella tarball had
-# no inner subchart tarballs.
+# no inner subchart tarballs. Skip the graphrag chart entirely under
+# --skip-graphrag.
 echo "Updating chart dependencies..."
-helm dependency update "$GRAPHRAG_CHART_DIR"
+[[ $SKIP_GRAPHRAG -eq 0 ]] && helm dependency update "$GRAPHRAG_CHART_DIR"
 helm dependency update "$UMBRELLA_CHART_DIR"
 
 # ---------------------------------------------------------------------
@@ -327,10 +355,15 @@ echo "Installing umbrella release '$UMBRELLA_RELEASE' (timeout $HELM_TIMEOUT)...
 helm upgrade --install "$UMBRELLA_RELEASE" "$UMBRELLA_CHART_DIR" -n "$UMBRELLA_NAMESPACE" --create-namespace "${UMBRELLA_F_FLAGS[@]}" --timeout "$HELM_TIMEOUT"
 
 # ---------------------------------------------------------------------
-# 6. Install graphrag release in its own namespace
+# 6. Install graphrag release in its own namespace (skipped under --skip-graphrag)
 # ---------------------------------------------------------------------
-echo "Installing graphrag release '$GRAPHRAG_RELEASE' (timeout $HELM_TIMEOUT)..."
-helm upgrade --install "$GRAPHRAG_RELEASE" "$GRAPHRAG_CHART_DIR" -n "$GRAPHRAG_NAMESPACE" --create-namespace "${GRAPHRAG_F_FLAGS[@]}" --timeout "$HELM_TIMEOUT"
+if [[ $SKIP_GRAPHRAG -eq 1 ]]; then
+    echo "Skipping graphrag release install (--skip-graphrag)."
+    echo "When you have Maven creds, re-run without --skip-graphrag to add it."
+else
+    echo "Installing graphrag release '$GRAPHRAG_RELEASE' (timeout $HELM_TIMEOUT)..."
+    helm upgrade --install "$GRAPHRAG_RELEASE" "$GRAPHRAG_CHART_DIR" -n "$GRAPHRAG_NAMESPACE" --create-namespace "${GRAPHRAG_F_FLAGS[@]}" --timeout "$HELM_TIMEOUT"
+fi
 
 echo
 echo "=== Reset complete ==="
