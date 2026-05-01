@@ -33,6 +33,27 @@ nodes:
         nodeRegistration:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
+      # Bind kube-controller-manager / kube-scheduler / etcd metrics
+      # endpoints to 0.0.0.0 (KIND defaults them to 127.0.0.1, which
+      # makes them unreachable from the prometheus pod's network
+      # namespace -- the kube-prometheus-stack ServiceMonitors then
+      # show 0/1 up for these targets).
+      - |
+        kind: ClusterConfiguration
+        controllerManager:
+          extraArgs:
+            bind-address: "0.0.0.0"
+        scheduler:
+          extraArgs:
+            bind-address: "0.0.0.0"
+        etcd:
+          local:
+            extraArgs:
+              listen-metrics-urls: "http://0.0.0.0:2381"
+      # Same for kube-proxy's metrics server (defaults to 127.0.0.1:10249).
+      - |
+        kind: KubeProxyConfiguration
+        metricsBindAddress: "0.0.0.0"
     extraPortMappings:
       - containerPort: 80
         hostPort: 80
