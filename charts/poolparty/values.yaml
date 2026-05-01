@@ -21,8 +21,14 @@ externalUrl: ""
 
 # Internal references — Service DNS names within the same namespace.
 # Do NOT change to public URLs (these calls don't go through OIDC).
+#
+# The graphdb subchart is installed under two umbrella aliases
+# (graphdb-embedded, graphdb-projects). Helm renders the in-cluster
+# Service names as <release>-<alias> (see charts/graphdb/templates/_helpers.tpl
+# → graphdb.fullname). For the umbrella release "graphwise-stack",
+# the embedded instance lives at graphwise-stack-graphdb-embedded:7200.
 graphdb:
-  internalUrl: "http://graphdb-embedded:7200"
+  internalUrl: "http://graphwise-stack-graphdb-embedded:7200"
 
 elasticsearch:
   internalUrl: "http://poolparty-elasticsearch:9200"

@@ -12,14 +12,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-fullname: defaults to the release name verbatim. Different from the
-"prepend chart name if not present" pattern other charts use, because
-we deliberately install this chart under multiple release names
-(graphdb-embedded, graphdb-projects) and want resources to carry the
-release name unchanged so the two instances are easy to tell apart.
+fullname: <release>-<chart> form. In umbrella context, .Chart.Name
+resolves to the subchart alias (graphdb-embedded or graphdb-projects)
+and .Release.Name is the parent release (graphwise-stack), giving
+each instance a distinct, prefixed name:
+  graphwise-stack-graphdb-embedded
+  graphwise-stack-graphdb-projects
+Standalone install (chart name "graphdb") renders as <release>-graphdb.
+
+Was previously `.Release.Name` alone, which assumed the chart would
+only ever be installed as separate Helm releases. In umbrella mode,
+both subchart aliases share the parent release name, so both rendered
+with the same metadata.name and silently collided -- only the second
+alias survived in the rendered manifest, leaving PoolParty unable to
+reach a graphdb-embedded service that didn't exist.
 */}}
 {{- define "graphdb.fullname" -}}
-{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
 {{/*

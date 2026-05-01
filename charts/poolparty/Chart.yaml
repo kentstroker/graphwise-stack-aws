@@ -4,8 +4,10 @@ description: |
   PoolParty Semantic Suite — taxonomy authoring + GraphSearch + Extractor.
   Mirrors today's base.yaml poolparty service: ontotext/poolparty:10.2.0,
   Keycloak SSO via the operator-managed Keycloak (realm "poolparty"),
-  internal backends GraphDB (graphdb-embedded:7200) and Elasticsearch
-  (poolparty-elasticsearch:9200). Public access via cert-manager+TLS
+  internal backends GraphDB (graphwise-stack-graphdb-embedded:7200,
+  rendered from the graphdb subchart's `<release>-<alias>` fullname
+  pattern) and Elasticsearch (poolparty-elasticsearch:9200). Public
+  access via cert-manager+TLS
   Ingress on poolparty.<sub>.<base>.
 
   Critical wiring: POOLPARTY_KEYCLOAK_AUTHURL must be the PUBLIC
