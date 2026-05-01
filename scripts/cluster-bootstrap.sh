@@ -84,9 +84,13 @@ add_repo ingress-nginx        https://kubernetes.github.io/ingress-nginx
 add_repo jetstack             https://charts.jetstack.io
 add_repo cnpg                 https://cloudnative-pg.github.io/charts
 add_repo metrics-server       https://kubernetes-sigs.github.io/metrics-server/
-add_repo kubernetes-dashboard https://kubernetes.github.io/dashboard
 add_repo prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
+
+# Note: Kubernetes Dashboard 7.x is published as an OCI chart, not via
+# a Helm HTTP repo. The old https://kubernetes.github.io/dashboard URL
+# was retired with the v7 release. Helm 3.8+ resolves OCI references
+# directly at install time, so no `helm repo add` needed.
 
 # ---------------------------------------------------------------------------
 # Namespaces
@@ -219,7 +223,11 @@ fi
 # We disable the chart's own Ingress and ship our own (matches every
 # other app in this stack). RBAC: a `dashboard-admin` ServiceAccount
 # bound to cluster-admin so the bearer token actually does something.
-helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
+#
+# Chart is published as OCI (no `helm repo add`); Helm 3.8+ resolves
+# the oci:// reference at install time.
+helm upgrade --install kubernetes-dashboard \
+    oci://registry.k8s.io/dashboard/kubernetes-dashboard \
     --namespace kubernetes-dashboard \
     --version "$KUBERNETES_DASHBOARD_VERSION" \
     --set 'app.ingress.enabled=false' \
