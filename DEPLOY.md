@@ -267,13 +267,45 @@ API server's `--service-account-max-token-expiration`) is also
 supported if you'd rather rotate periodically — same SA, same
 cluster-admin RBAC.
 
-> **Pasting trouble in the Dashboard token field?** Some browsers
-> silently block paste handlers on this Dashboard version. Click
-> *into* the token field first, then Cmd+V (or Ctrl+V). If still
-> nothing, switch browsers (Safari has the most quirks here);
-> Chrome/Firefox/Edge usually work. As a last resort, use the
-> "Kubeconfig" login option instead — generate a kubeconfig with
-> the token embedded and upload it.
+> **Can't paste into the Dashboard token field?** This Dashboard
+> version (v2.7.0) has a buggy paste handler that silently rejects
+> pasted input in Chrome and Safari (and probably others) — no
+> error, the field just stays empty. **Use the Kubeconfig login
+> option instead — same SA token, different upload mechanism.**
+>
+> On EC2, package the token into a kubeconfig:
+>
+> ```bash
+> TOKEN=$(kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d) && cat > /tmp/dashboard-kubeconfig.yaml <<EOF
+> apiVersion: v1
+> kind: Config
+> clusters:
+>   - name: graphwise
+>     cluster:
+>       server: https://kubernetes.default
+>       insecure-skip-tls-verify: true
+> contexts:
+>   - name: graphwise
+>     context: { cluster: graphwise, user: dashboard-admin }
+> current-context: graphwise
+> users:
+>   - name: dashboard-admin
+>     user:
+>       token: \$TOKEN
+> EOF
+> ```
+>
+> From your laptop, pull it down:
+>
+> ```bash
+> scp -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST:/tmp/dashboard-kubeconfig.yaml ~/Downloads/
+> ```
+>
+> On the Dashboard login screen → switch radio to **Kubeconfig** →
+> "Choose kubeconfig file" → select the downloaded file → Sign In.
+> Same cluster-admin privileges, no paste required. Save the
+> kubeconfig anywhere you keep deployment artifacts; reuse it
+> until you rotate the token.
 
 ##### Grafana sign-in flow
 
