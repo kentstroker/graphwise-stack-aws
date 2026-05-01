@@ -69,12 +69,23 @@ kubectl wait --for=condition=Ready nodes --all --timeout=300s
 # ---------------------------------------------------------------------------
 # Helm repos
 # ---------------------------------------------------------------------------
-helm repo add ingress-nginx          https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true
-helm repo add jetstack               https://charts.jetstack.io                >/dev/null 2>&1 || true
-helm repo add cnpg                   https://cloudnative-pg.github.io/charts   >/dev/null 2>&1 || true
-helm repo add metrics-server         https://kubernetes-sigs.github.io/metrics-server/ >/dev/null 2>&1 || true
-helm repo add kubernetes-dashboard   https://kubernetes.github.io/dashboard    >/dev/null 2>&1 || true
-helm repo add prometheus-community   https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+# `helm repo add` is idempotent in modern Helm (it overwrites the
+# existing entry). Don't silence its output; if a repo add fails for
+# real (DNS issue, registry outage), we want to see it surface here
+# rather than later as "Error: repo X not found" mid-install.
+add_repo() {
+    local name="$1" url="$2"
+    if ! helm repo add "$name" "$url" 2>&1; then
+        echo "ERROR: failed to add helm repo '$name' ($url)" >&2
+        exit 1
+    fi
+}
+add_repo ingress-nginx        https://kubernetes.github.io/ingress-nginx
+add_repo jetstack             https://charts.jetstack.io
+add_repo cnpg                 https://cloudnative-pg.github.io/charts
+add_repo metrics-server       https://kubernetes-sigs.github.io/metrics-server/
+add_repo kubernetes-dashboard https://kubernetes.github.io/dashboard
+add_repo prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 
 # ---------------------------------------------------------------------------
