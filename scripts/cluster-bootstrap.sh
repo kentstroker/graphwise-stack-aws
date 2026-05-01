@@ -43,7 +43,7 @@ CERT_MANAGER_VERSION="v1.16.2"
 CNPG_CHART_VERSION="0.22.1"
 KEYCLOAK_OPERATOR_VERSION="26.4.2"
 METRICS_SERVER_CHART_VERSION="3.12.2"
-KUBERNETES_DASHBOARD_VERSION="7.10.0"
+KUBERNETES_DASHBOARD_VERSION="v2.7.0"   # raw-YAML install (see Dashboard block below)
 KUBE_PROMETHEUS_STACK_VERSION="65.5.0"
 
 # Same demo basic-auth credentials as graphdb / rdf4j: demo / rdf#rocks.
@@ -213,25 +213,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Kubernetes Dashboard
+# Kubernetes Dashboard (v2.7.0 -- raw YAML install per kubernetes.io docs)
 # ---------------------------------------------------------------------------
-# 7.x ships with a Kong gateway in front of the dashboard pods --
-# the Service to expose is `kubernetes-dashboard-kong-proxy` on 443
-# (HTTPS internally). ingress-nginx talks to it with
-# backend-protocol=HTTPS.
+# v7.x via Helm is the modern path but the chart's hosting URL has
+# moved enough times that we can't pin it reliably. The single-file
+# kubectl-apply for v2.7.0 has been stable for years and is what the
+# official kubernetes.io Dashboard docs still link to as the
+# baseline install:
+#   https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/
 #
-# We disable the chart's own Ingress and ship our own (matches every
-# other app in this stack). RBAC: a `dashboard-admin` ServiceAccount
-# bound to cluster-admin so the bearer token actually does something.
+# Trade-off: older UI than v7.x. For demo cluster introspection it's
+# fine. To upgrade to v7.x later, install the chart from whatever the
+# project currently publishes and update the Ingress to target
+# `kubernetes-dashboard-kong-proxy:443` instead of
+# `kubernetes-dashboard:443`.
 #
-# Chart is published as OCI (no `helm repo add`); Helm 3.8+ resolves
-# the oci:// reference at install time.
-helm upgrade --install kubernetes-dashboard \
-    oci://registry.k8s.io/dashboard/kubernetes-dashboard \
-    --namespace kubernetes-dashboard \
-    --version "$KUBERNETES_DASHBOARD_VERSION" \
-    --set 'app.ingress.enabled=false' \
-    --wait --timeout 5m
+# RBAC: a `dashboard-admin` ServiceAccount bound to cluster-admin so
+# the bearer token actually does something.
+kubectl apply -f "https://raw.githubusercontent.com/kubernetes/dashboard/${KUBERNETES_DASHBOARD_VERSION}/aio/deploy/recommended.yaml"
 
 kubectl apply -f - <<EOF
 apiVersion: v1
@@ -314,7 +313,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: kubernetes-dashboard-kong-proxy
+                name: kubernetes-dashboard
                 port:
                   number: 443
 EOF
