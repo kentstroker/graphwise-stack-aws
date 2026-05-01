@@ -141,6 +141,40 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------
+# Pre-flight: license Secrets must exist
+# ---------------------------------------------------------------------
+# The umbrella's poolparty / graphdb / unifiedviews charts mount
+# license Secrets via secretKeyRef. If they're missing, the pods come
+# up but immediately fail with "secret not found" -- ~10 minutes
+# wasted on a Helm install that crashloops out the gate. Catch it
+# before we do anything destructive.
+echo "Pre-flight: checking license Secrets in '$UMBRELLA_NAMESPACE' namespace..."
+missing_licenses=0
+for secret in poolparty-license graphdb-license unifiedviews-license; do
+    if ! kubectl -n "$UMBRELLA_NAMESPACE" get secret "$secret" >/dev/null 2>&1; then
+        echo "  ERROR: missing Secret '$secret' in namespace '$UMBRELLA_NAMESPACE'" >&2
+        missing_licenses=1
+    else
+        echo "  OK:    $secret"
+    fi
+done
+if [[ $missing_licenses -ne 0 ]]; then
+    cat >&2 <<'PREFLIGHT'
+
+Drop your Graphwise license files into files/licenses/ and run:
+    ./scripts/install-licenses.sh
+
+Required filenames (rename whatever Graphwise sent to these exactly):
+    files/licenses/poolparty.key
+    files/licenses/graphdb.license
+    files/licenses/uv-license.key
+
+Then re-run this script. Aborting before destructive uninstall.
+PREFLIGHT
+    exit 1
+fi
+
+# ---------------------------------------------------------------------
 # Confirm
 # ---------------------------------------------------------------------
 echo "About to reset Helm releases for subdomain '$SUB.$BASE':"
