@@ -410,6 +410,10 @@ LE_EMAIL=you@example.com ./scripts/cluster-bootstrap.sh
 ./scripts/reset-helm.sh <subdomain>          # interactive — type 'reset' to proceed
 ./scripts/reset-helm.sh --yes <subdomain>    # non-interactive
 
+# Politely shut workloads down before stopping the EC2 (optional;
+# prints the AWS CLI command after quiescing)
+./scripts/cluster-stop.sh
+
 # After EC2 stop/start, restart the cluster
 ./scripts/cluster-resume.sh
 ```

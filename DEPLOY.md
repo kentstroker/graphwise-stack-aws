@@ -435,6 +435,11 @@ In a browser:
 ## Day-2 lifecycle
 
 ```bash
+# Politely quiesce app workloads before stopping the EC2 (optional;
+# Postgres/GraphDB/ES handle hard stop fine via WAL recovery).
+# Prints the AWS CLI command to stop the EC2 itself afterwards.
+./scripts/cluster-stop.sh
+
 # After EC2 stop/start, restart the KIND cluster
 ./scripts/cluster-resume.sh
 
@@ -452,6 +457,32 @@ helm upgrade graphrag ./charts/vendor/graphrag -n graphrag \
 
 `cluster-resume.sh` sets `--restart=unless-stopped` on the KIND node
 containers, so subsequent reboots are a non-event.
+
+### Overnight shutdown to save cost
+
+Stopping the EC2 between work sessions cuts the bill by ~2/3 (compute
+goes from ~$0.34/hr to $0; ~$30/mo for retained EBS + EIP keeps DNS
+and data alive across stops).
+
+```bash
+# Polite path:
+./scripts/cluster-stop.sh                        # quiesces workloads, prints stop command
+aws ec2 stop-instances --instance-ids <id>       # run from your laptop after SSH session closes
+
+# Hard-stop path (fine for this stack -- apps recover via WAL):
+aws ec2 stop-instances --instance-ids <id>       # from your laptop
+```
+
+To bring it back:
+
+```bash
+aws ec2 start-instances --instance-ids <id>      # from your laptop
+ssh ec2-user@<eip>                               # wait ~60s for boot
+./scripts/cluster-resume.sh                      # restart KIND node containers
+# If you scaled workloads to 0 with cluster-stop.sh, re-run the
+# helm upgrade commands above to restore the chart's declared
+# replica counts.
+```
 
 ---
 

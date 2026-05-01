@@ -47,7 +47,8 @@ For each step, the linked doc has the full walkthrough.
 
 Day-2 essentials:
 
-- **EC2 stop/start:** `./scripts/cluster-resume.sh` brings the KIND
+- **EC2 stop:** `./scripts/cluster-stop.sh` quiesces app workloads then prints the `aws ec2 stop-instances` command. Or just stop from the AWS Console — apps tolerate hard stop via WAL recovery.
+- **EC2 start:** `./scripts/cluster-resume.sh` brings the KIND
   cluster back up after a host reboot.
 - **Wipe and reinstall:** `./scripts/reset-helm.sh --yes <sub>`
   (deletes every PVC; data loss).
