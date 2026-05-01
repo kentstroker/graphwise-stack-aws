@@ -326,6 +326,47 @@ chart is still the placeholder `REPLACE_WITH_REAL_N8N_LICENSE_KEY`.
 
 ---
 
+---
+
+## Kubernetes Dashboard
+
+**URL:** `https://dashboard.<sub>.<base>/`
+**Login:** Two layers — first basic auth (`demo` / `rdf#rocks`), then a bearer token.
+
+**Get a token (24-hour validity):**
+
+```bash
+kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
+```
+
+Paste the token into the Dashboard's "Bearer token" login screen.
+
+The `dashboard-admin` ServiceAccount is bound to `cluster-admin` so the token sees everything in the cluster. Tokens expire on the duration you pass; rerun `create token` for a fresh one.
+
+**Smoke test:** load the URL, basic-auth prompt → enter `demo / rdf#rocks` → Dashboard's bearer-token screen → paste token → land on the cluster overview showing all namespaces.
+
+## Prometheus
+
+**URL:** `https://prometheus.<sub>.<base>/`
+**Login:** Basic auth — `demo` / `rdf#rocks` (Prometheus has no auth of its own; the basic-auth gate is the only protection)
+
+Raw Prometheus UI: PromQL query, targets list, alerts. Useful for ad-hoc queries; for dashboards use Grafana.
+
+**Smoke test:** load the URL, log in, click "Status → Targets" — should show kube-state-metrics, node-exporter, kubelet, prometheus-operator, and the kube-prometheus-stack components all `UP`.
+
+## Grafana
+
+**URL:** `https://grafana.<sub>.<base>/`
+**Login:** Two layers — first basic auth (`demo` / `rdf#rocks`), then Grafana's own login (`admin` / `demo-graphwise-2026`).
+
+Ships with ~30 pre-built K8s dashboards from kube-prometheus-stack: cluster compute resources, namespace overview, pod resource consumption, kubelet metrics, etcd, API server. Browse via Dashboards → Browse → "default" folder.
+
+**Smoke test:** log in, Dashboards → Browse → open "Kubernetes / Compute Resources / Cluster" — graphs should populate within ~30s of clicking.
+
+**Rotating the Grafana admin password:** edit `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` and re-run `./scripts/cluster-bootstrap.sh`. Or rotate inside Grafana's user settings (chart re-applies the file's value on the next bootstrap, so do both if you want it durable).
+
+---
+
 ## Credentials reference (quick lookup)
 
 | Where | User | Password | Source |
@@ -336,6 +377,9 @@ chart is still the placeholder `REPLACE_WITH_REAL_N8N_LICENSE_KEY`.
 | Keycloak `graphrag` realm | `bob` | `bob123` | same |
 | GraphViews (direct, no SSO) | `superadmin` | `poolparty` | uses PoolParty API creds |
 | GraphDB / GraphDB-projects / RDF4J ingress | `demo` | `rdf#rocks` | `charts/graphdb/values.yaml` + `charts/addons/charts/rdf4j/values.yaml` |
+| Dashboard / Prometheus / Grafana ingress (basic auth) | `demo` | `rdf#rocks` | `scripts/cluster-bootstrap.sh` (`GRAPHWISE_BASIC_AUTH_HTPASSWD`) |
+| Kubernetes Dashboard (after basic auth) | bearer token | (24h) | `kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h` |
+| Grafana app login (after basic auth) | `admin` | `demo-graphwise-2026` | `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` |
 | UnifiedViews (app-local) | `admin` | `admin` | UnifiedViews default |
 | n8n owner | (set on first visit) | (set on first visit) | n8n's own DB |
 

@@ -185,6 +185,27 @@ footer code {
 </section>
 
 <section>
+  <h2>Observability (Basic Auth: demo / rdf#rocks)</h2>
+  <div class="grid">
+    <a class="card" href="https://dashboard.stroker.semantic-proof.com/">
+      <div class="title">Kubernetes Dashboard</div>
+      <div class="desc">Cluster + workload introspection. Bearer token after basic auth.</div>
+      <div class="auth">basic + bearer &middot; <code>kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h</code></div>
+    </a>
+    <a class="card" href="https://prometheus.stroker.semantic-proof.com/">
+      <div class="title">Prometheus</div>
+      <div class="desc">Raw metrics + alerts UI. Time series for everything in the cluster.</div>
+      <div class="auth">basic &middot; demo / rdf#rocks</div>
+    </a>
+    <a class="card" href="https://grafana.stroker.semantic-proof.com/">
+      <div class="title">Grafana</div>
+      <div class="desc">Pre-built K8s dashboards (~30 ship with the chart). Build your own here.</div>
+      <div class="auth">basic + Grafana &middot; admin / demo-graphwise-2026</div>
+    </a>
+  </div>
+</section>
+
+<section>
   <h2>Useful config endpoints</h2>
   <div class="grid">
     <a class="card" href="https://auth.stroker.semantic-proof.com/realms/master/.well-known/openid-configuration">

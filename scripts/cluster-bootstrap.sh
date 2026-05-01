@@ -14,9 +14,17 @@
 #      at install time with ImagePullBackOff until you add them.)
 #
 # Required env:
-#   LE_EMAIL  -- email address for the Let's Encrypt ACME account.
-#                Used for renewal-reminder mail; LE will reject empty/
-#                malformed values.
+#   LE_EMAIL        -- email address for the Let's Encrypt ACME account.
+#                      Used for renewal-reminder mail; LE will reject
+#                      empty/malformed values.
+#   GRAPHWISE_APEX  -- the apex hostname for the deployment, e.g.
+#                      "stroker.semantic-proof.com". Cloud-init writes
+#                      this to /etc/profile.d/graphwise.sh so login
+#                      shells inherit it; only set manually if invoking
+#                      from a non-login context. Used to build the
+#                      observability ingress hostnames
+#                      (dashboard.<apex>, prometheus.<apex>,
+#                      grafana.<apex>).
 #
 # Idempotent: safe to re-run. helm upgrade --install handles
 # repeat installs; kubectl create namespace tolerates AlreadyExists.
@@ -24,6 +32,10 @@
 set -euo pipefail
 
 : "${LE_EMAIL:?LE_EMAIL must be set, e.g. LE_EMAIL=you@example.com $0}"
+: "${GRAPHWISE_APEX:?GRAPHWISE_APEX must be set, e.g. GRAPHWISE_APEX=stroker.semantic-proof.com $0}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Pinned versions. Bump deliberately and re-test.
 INGRESS_NGINX_CHART_VERSION="4.11.3"
@@ -31,6 +43,13 @@ CERT_MANAGER_VERSION="v1.16.2"
 CNPG_CHART_VERSION="0.22.1"
 KEYCLOAK_OPERATOR_VERSION="26.4.2"
 METRICS_SERVER_CHART_VERSION="3.12.2"
+KUBERNETES_DASHBOARD_VERSION="7.10.0"
+KUBE_PROMETHEUS_STACK_VERSION="65.5.0"
+
+# Same demo basic-auth credentials as graphdb / rdf4j: demo / rdf#rocks.
+# APR-MD5 hash, regenerable with `htpasswd -nb demo 'rdf#rocks'`.
+# Documented in CHEATSHEET.md and SETUP.md.
+GRAPHWISE_BASIC_AUTH_HTPASSWD='demo:$apr1$1Ub6kYrD$xxG9zJZXPddeN2WT8E/Ro/'
 
 echo "=== Cluster bootstrap starting at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
@@ -50,10 +69,12 @@ kubectl wait --for=condition=Ready nodes --all --timeout=300s
 # ---------------------------------------------------------------------------
 # Helm repos
 # ---------------------------------------------------------------------------
-helm repo add ingress-nginx  https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true
-helm repo add jetstack       https://charts.jetstack.io                >/dev/null 2>&1 || true
-helm repo add cnpg           https://cloudnative-pg.github.io/charts   >/dev/null 2>&1 || true
-helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null 2>&1 || true
+helm repo add ingress-nginx          https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true
+helm repo add jetstack               https://charts.jetstack.io                >/dev/null 2>&1 || true
+helm repo add cnpg                   https://cloudnative-pg.github.io/charts   >/dev/null 2>&1 || true
+helm repo add metrics-server         https://kubernetes-sigs.github.io/metrics-server/ >/dev/null 2>&1 || true
+helm repo add kubernetes-dashboard   https://kubernetes.github.io/dashboard    >/dev/null 2>&1 || true
+helm repo add prometheus-community   https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update
 
 # ---------------------------------------------------------------------------
@@ -65,7 +86,7 @@ helm repo update
 # - keycloak:      Keycloak operator + Keycloak instance + its Postgres
 # - graphwise:     PoolParty, GraphDB, ES, add-ons
 # - graphrag:      GraphRAG chatbot/conversation/components/workflows + n8n Postgres
-for ns in ingress-nginx cert-manager cnpg-system keycloak graphwise graphrag; do
+for ns in ingress-nginx cert-manager cnpg-system keycloak graphwise graphrag kubernetes-dashboard monitoring; do
     kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
 done
 
@@ -176,10 +197,182 @@ else
     echo "         fail at install time with ImagePullBackOff."
 fi
 
+# ---------------------------------------------------------------------------
+# Kubernetes Dashboard
+# ---------------------------------------------------------------------------
+# 7.x ships with a Kong gateway in front of the dashboard pods --
+# the Service to expose is `kubernetes-dashboard-kong-proxy` on 443
+# (HTTPS internally). ingress-nginx talks to it with
+# backend-protocol=HTTPS.
+#
+# We disable the chart's own Ingress and ship our own (matches every
+# other app in this stack). RBAC: a `dashboard-admin` ServiceAccount
+# bound to cluster-admin so the bearer token actually does something.
+helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
+    --namespace kubernetes-dashboard \
+    --version "$KUBERNETES_DASHBOARD_VERSION" \
+    --set 'app.ingress.enabled=false' \
+    --wait --timeout 5m
+
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dashboard-admin
+  namespace: kubernetes-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dashboard-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: dashboard-admin
+    namespace: kubernetes-dashboard
+EOF
+
+# ---------------------------------------------------------------------------
+# kube-prometheus-stack (Prometheus + Grafana + AlertManager +
+# node-exporter + kube-state-metrics + 30 default dashboards)
+# ---------------------------------------------------------------------------
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+    --namespace monitoring \
+    --version "$KUBE_PROMETHEUS_STACK_VERSION" \
+    -f "$REPO_ROOT/charts/observability/kube-prometheus-stack-values.yaml" \
+    --wait --timeout 10m
+
+# ---------------------------------------------------------------------------
+# Basic-auth secrets for observability ingresses
+# ---------------------------------------------------------------------------
+# Same demo creds (demo / rdf#rocks) as graphdb / rdf4j. ingress-nginx
+# requires the secret to live in the same namespace as the Ingress.
+for ns in kubernetes-dashboard monitoring; do
+    kubectl -n "$ns" create secret generic graphwise-basic-auth \
+        --from-literal=auth="$GRAPHWISE_BASIC_AUTH_HTPASSWD" \
+        --dry-run=client -o yaml | kubectl apply -f -
+done
+
+# ---------------------------------------------------------------------------
+# Observability Ingresses (dashboard / prometheus / grafana)
+# ---------------------------------------------------------------------------
+# Each Ingress: cert-manager-issued LE cert per host, basic-auth at
+# the proxy, backend service in its own namespace. No app-side
+# authentication beyond that for now (Prometheus has none of its own;
+# Grafana has its own login but we add basic auth as a coarse outer
+# gate; Dashboard requires a bearer token after basic auth).
+#
+# cluster-bootstrap.sh re-applies these on every run so config drift
+# is self-healing.
+
+# --- Kubernetes Dashboard
+kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubernetes-dashboard
+  namespace: kubernetes-dashboard
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["dashboard.${GRAPHWISE_APEX}"]
+      secretName: dashboard-tls
+  rules:
+    - host: "dashboard.${GRAPHWISE_APEX}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubernetes-dashboard-kong-proxy
+                port:
+                  number: 443
+EOF
+
+# --- Prometheus
+kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus
+  namespace: monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["prometheus.${GRAPHWISE_APEX}"]
+      secretName: prometheus-tls
+  rules:
+    - host: "prometheus.${GRAPHWISE_APEX}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-stack-prometheus
+                port:
+                  number: 9090
+EOF
+
+# --- Grafana
+kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["grafana.${GRAPHWISE_APEX}"]
+      secretName: grafana-tls
+  rules:
+    - host: "grafana.${GRAPHWISE_APEX}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-stack-grafana
+                port:
+                  number: 80
+EOF
+
 echo "=== Cluster bootstrap complete at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 echo
 echo "Verify:"
 echo "  kubectl get pods -A"
 echo "  kubectl get clusterissuer letsencrypt-prod"
+echo "  kubectl get ingress -A"
+echo
+echo "Observability URLs (after cert-manager issues certs ~30-60s):"
+echo "  Dashboard:  https://dashboard.${GRAPHWISE_APEX}/"
+echo "  Prometheus: https://prometheus.${GRAPHWISE_APEX}/"
+echo "  Grafana:    https://grafana.${GRAPHWISE_APEX}/        (admin / demo-graphwise-2026)"
+echo
+echo "Get a Dashboard login token (paste into the Dashboard's login screen):"
+echo "  kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h"
 echo
 echo "Next: install the Graphwise stack umbrella Helm chart (Phase C+)."

@@ -48,7 +48,7 @@ output "ssh" {
 }
 
 output "expected_urls" {
-  description = "Where each app lands once DNS + LE certs are in place. The GraphRAG chatbot is the headline endpoint."
+  description = "Where each app lands once DNS + LE certs are in place. The GraphRAG chatbot is the headline endpoint; the observability triplet (dashboard / prometheus / grafana) is provisioned by scripts/cluster-bootstrap.sh."
   value = {
     chatbot          = "https://graphrag.${var.subdomain}.${var.base_domain}/"
     poolparty        = "https://poolparty.${var.subdomain}.${var.base_domain}/PoolParty/"
@@ -56,6 +56,9 @@ output "expected_urls" {
     graphdb          = "https://graphdb.${var.subdomain}.${var.base_domain}/"
     graphdb_projects = "https://graphdb-projects.${var.subdomain}.${var.base_domain}/"
     n8n_workflows    = "https://graphrag.${var.subdomain}.${var.base_domain}/workflows/"
+    dashboard        = "https://dashboard.${var.subdomain}.${var.base_domain}/"
+    prometheus       = "https://prometheus.${var.subdomain}.${var.base_domain}/"
+    grafana          = "https://grafana.${var.subdomain}.${var.base_domain}/"
   }
 }
 

@@ -192,14 +192,35 @@ overwrite these three files in place and re-run
 ### 4. Install cluster operators
 
 One-time install of ingress-nginx, cert-manager (+ Let's Encrypt
-ClusterIssuer), CloudNativePG, Keycloak operator, metrics-server.
+ClusterIssuer), CloudNativePG, Keycloak operator, metrics-server,
+**Kubernetes Dashboard**, and **kube-prometheus-stack** (Prometheus
++ Grafana + AlertManager + node-exporter + kube-state-metrics).
 Also creates the `graphwise` image-pull secret in the `graphwise` and
-`graphrag` namespaces.
+`graphrag` namespaces, and provisions per-host Ingresses for the
+three observability UIs gated by the same demo basic-auth pattern as
+GraphDB / RDF4J.
 
 ```bash
 export LE_EMAIL=you@example.com
 ./scripts/cluster-bootstrap.sh
 ```
+
+`GRAPHWISE_APEX` (the apex hostname for your deployment) is
+exported automatically via `/etc/profile.d/graphwise.sh` from
+cloud-init, so a fresh login shell already has it. If you ever
+invoke `cluster-bootstrap.sh` from a non-login context, set it
+explicitly: `GRAPHWISE_APEX=<sub>.<base> ./scripts/cluster-bootstrap.sh`.
+
+Takes ~5–6 minutes the first time (image pulls + helm waits + LE
+HTTP-01 cert issuance for the three observability hosts). After
+the script completes the dashboard token is one command away:
+
+```bash
+kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
+```
+
+Paste that token into the Dashboard's bearer-token login at
+`https://dashboard.<sub>.<base>/` (after the basic-auth prompt).
 
 Idempotent — safe to re-run.
 

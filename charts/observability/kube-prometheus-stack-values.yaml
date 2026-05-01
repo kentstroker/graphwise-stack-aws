@@ -1,0 +1,94 @@
+# Overrides for the upstream prometheus-community/kube-prometheus-stack
+# chart, applied by scripts/cluster-bootstrap.sh.
+#
+# Goal: small but real K8s-side observability (Prometheus + Grafana +
+# AlertManager + node-exporter + kube-state-metrics) co-existing on
+# the same EC2 host as the rest of the stack. Per-app dashboards
+# (PoolParty / GraphDB / etc.) come from the Grafana defaults the
+# chart ships with -- ~30 K8s-focused dashboards out of the box.
+#
+# We disable the chart's bundled Ingresses; cluster-bootstrap.sh
+# applies our own that wire up cert-manager + nginx basic-auth.
+
+# ---------------------------------------------------------------------------
+# Prometheus
+# ---------------------------------------------------------------------------
+prometheus:
+  ingress:
+    enabled: false   # we ship our own with cert-manager + basic-auth
+  prometheusSpec:
+    retention: 10d
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        memory: 2Gi
+    # Persist time series across pod restarts. Single-node KIND uses
+    # the local-path-provisioner default StorageClass.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+# ---------------------------------------------------------------------------
+# AlertManager (no public Ingress -- internal only for now)
+# ---------------------------------------------------------------------------
+alertmanager:
+  ingress:
+    enabled: false
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 100Mi
+      limits:
+        memory: 200Mi
+
+# ---------------------------------------------------------------------------
+# Grafana
+# ---------------------------------------------------------------------------
+grafana:
+  ingress:
+    enabled: false
+  # Default chart admin password is "prom-operator" -- well-known.
+  # Rotate before any non-demo use. SETUP/CHEATSHEET document this.
+  adminPassword: "demo-graphwise-2026"
+  defaultDashboardsTimezone: browser
+  resources:
+    requests:
+      cpu: 100m
+      memory: 200Mi
+    limits:
+      memory: 400Mi
+  persistence:
+    enabled: true
+    size: 5Gi
+  # Tell Grafana to expect the X-Forwarded-* headers from ingress-nginx
+  # so links it generates use the public hostname.
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/"
+      serve_from_sub_path: false
+
+# ---------------------------------------------------------------------------
+# Cluster scrapers (lightweight)
+# ---------------------------------------------------------------------------
+nodeExporter:
+  enabled: true
+kubeStateMetrics:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Operator (lean defaults)
+# ---------------------------------------------------------------------------
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 200Mi
+    limits:
+      memory: 400Mi

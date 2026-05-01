@@ -150,6 +150,18 @@ chmod +x /usr/local/bin/helm
 rm -rf "/tmp/linux-$ARCH"
 
 # ---------------------------------------------------------------------------
+# System-wide GRAPHWISE_APEX so login shells (and scripts/cluster-bootstrap.sh)
+# inherit the deployment apex hostname without anyone having to set it.
+# ---------------------------------------------------------------------------
+cat > /etc/profile.d/graphwise.sh <<EOF
+# Managed by graphwise-stack-aws cloud-init. Apex hostname for this
+# deployment, consumed by scripts/cluster-bootstrap.sh when it builds
+# observability ingress hostnames (dashboard.<apex>, etc.).
+export GRAPHWISE_APEX="${hostname_fqdn}"
+EOF
+chmod 644 /etc/profile.d/graphwise.sh
+
+# ---------------------------------------------------------------------------
 # Persist KUBECONFIG + convenience aliases for ec2-user shells
 # ---------------------------------------------------------------------------
 if ! grep -q "KUBECONFIG=" "/home/$TARGET_USER/.bashrc" 2>/dev/null; then
@@ -248,10 +260,17 @@ What's still manual, in order:
     #    chmod 600 ~/.ontotext/*
 
     # 3. Install cluster operators (ingress-nginx, cert-manager,
-    #    CNPG, Keycloak operator, metrics-server). LE_EMAIL is used
-    #    by cert-manager's ACME account.
+    #    CNPG, Keycloak operator, metrics-server) AND observability
+    #    (Kubernetes Dashboard + Prometheus + Grafana + AlertManager).
+    #    LE_EMAIL is used by cert-manager's ACME account.
+    #    GRAPHWISE_APEX is exported automatically via /etc/profile.d/.
     export LE_EMAIL=you@example.com
     ./scripts/cluster-bootstrap.sh
+
+    # 3a. (Observability) Get a 24-hour login token for the
+    #     Kubernetes Dashboard at https://dashboard.$HOSTNAME_FQDN/
+    #     (paste into the Dashboard's bearer-token login screen):
+    kubectl -n kubernetes-dashboard create token dashboard-admin --duration=24h
 
     # 4. Drop your Graphwise license files under files/licenses/:
     #    PoolParty (poolparty.key), GraphDB (graphdb.license),
@@ -268,6 +287,11 @@ Endpoints once everything is wired up:
     Chatbot:   https://graphrag.$HOSTNAME_FQDN/
     PoolParty: https://poolparty.$HOSTNAME_FQDN/PoolParty/
     Keycloak:  https://auth.$HOSTNAME_FQDN/
+
+Observability (available after step 3, basic auth: demo / rdf#rocks):
+    Kubernetes Dashboard: https://dashboard.$HOSTNAME_FQDN/
+    Prometheus:           https://prometheus.$HOSTNAME_FQDN/
+    Grafana:              https://grafana.$HOSTNAME_FQDN/   (admin / demo-graphwise-2026)
 EOF
 chown "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/NEXT_STEPS.txt"
 
