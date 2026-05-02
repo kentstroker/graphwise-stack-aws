@@ -52,6 +52,43 @@ echo "Extracting $found_json → $DEST"
 mkdir -p "$(dirname "$DEST")"
 docker run --rm --entrypoint=sh "$IMAGE" -c "cat $found_json" > "$DEST"
 
+# ---------------------------------------------------------------------------
+# Substitute Ontotext's ${...} env-var placeholders with concrete values.
+# ---------------------------------------------------------------------------
+# Ontotext's realm export ships with placeholders like
+# ${POOLPARTY_KEYCLOAK_LOGIN_CLIENTSECRET} that were meant to be expanded
+# at Keycloak boot time. The operator-managed KeycloakRealmImport CR does
+# NOT perform that substitution -- the literal placeholder strings end up
+# stored as the password / client secret values in Keycloak, breaking
+# every login attempt against Ontotext-baked credentials.
+#
+# Fix: rewrite the realm export at extract time so the values match what
+# PoolParty's image actually sends.
+#
+# Image-version coupling: POOLPARTY_KEYCLOAK_LOGIN_CLIENTSECRET is read
+# from the PoolParty container env. As of poolparty:10.x, the value is
+# ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5. If a future image bumps it, update
+# the value below by inspecting `kubectl exec ... env | grep CLIENTSECRET`
+# on a running PoolParty pod.
+#
+# (The companion fix is the post-install authz-import Job in
+# charts/keycloak-realms/templates/keycloak-authz-import-job.yaml --
+# the operator's RealmImport CR drops the .clients[].authorizationSettings
+# block; the Job re-imports it via the Keycloak admin REST API.)
+PPT_SECRET="ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
+SUPERADMIN_PASSWORD="poolparty"
+
+echo
+echo "Substituting Ontotext placeholders..."
+TMP=$(mktemp)
+jq --arg ppt_secret "$PPT_SECRET" --arg superadmin_pw "$SUPERADMIN_PASSWORD" '
+    (.clients[]? | select(.clientId == "ppt") | .secret) = $ppt_secret
+    | (.users[]? | select(.username == "superadmin") | .credentials[0].value) = $superadmin_pw
+    | (.users[]? | select(.username == "superadmin") | .credentials[0].temporary) = false
+' "$DEST" > "$TMP" && mv "$TMP" "$DEST"
+echo "  ppt.secret      -> ohIP...eFb5  (matches PoolParty image)"
+echo "  superadmin pw   -> poolparty   (temporary=false)"
+
 echo
 echo "Sanity check:"
 jq -r '"  realm: \(.realm)"' "$DEST" 2>/dev/null || echo "  (jq not installed; skip sanity check)"

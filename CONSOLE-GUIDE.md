@@ -548,6 +548,19 @@ helm upgrade graphrag ./charts/vendor/graphrag -n graphrag -f charts/vendor/grap
    keycloak-ingress`. After cert is good, confirm
    `curl -s https://auth.<sub>.<base>/realms/master/.well-known/openid-configuration | jq -r .issuer`
    reads exactly `https://auth.<sub>.<base>/realms/master`.
+2a. **PoolParty browser login bounces / shows `Internal Error` after
+    Keycloak sign-in** → the per-client Authorization Services config
+    didn't import. The Keycloak operator's `KeycloakRealmImport` CR
+    silently drops the `.clients[].authorizationSettings` block; the
+    umbrella works around this with a post-install Job
+    (`charts/keycloak-realms/templates/keycloak-authz-import-job.yaml`)
+    that POSTs the authz config back via the admin REST API. Check it
+    ran: `kubectl get job -n keycloak | grep authz-import` (should be
+    `1/1` Completions). Logs: `kubectl logs -n keycloak job/keycloak-authz-import`.
+    If the Job is missing, your chart pre-dates the fix — `git pull`
+    on the EC2 + re-run `reset-helm.sh`. If the Job ran but PoolParty
+    still loops, manually verify `ppt` client has the resource-server
+    config: see "Manual recovery" snippet at the end of this runbook.
 3. **PoolParty `Unauthorized HTTP 401` during init
    (RoleServiceFacade)** → master-realm `poolparty_auth_admin` user
    missing or password wrong. The `keycloak-bootstrap-admin` Helm

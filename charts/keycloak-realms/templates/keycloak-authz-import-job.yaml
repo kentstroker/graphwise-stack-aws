@@ -1,0 +1,185 @@
+{{- if .Values.poolparty.enabled -}}
+{{/*
+Helm post-install/post-upgrade Job that re-imports each client's
+.authorizationSettings block from the realm export back into Keycloak.
+
+Why this is needed:
+  The Keycloak operator's KeycloakRealmImport CR imports the realm
+  JSON's top-level fields and per-client basic config, but DROPS the
+  .clients[].authorizationSettings block (resources, scopes, policies
+  for fine-grained authorization). PoolParty depends on this for its
+  UMA permission ticket flow ("Client does not support permissions"
+  error otherwise). We restore it via the Keycloak admin REST API
+  /admin/realms/<realm>/clients/<uuid>/authz/resource-server/import.
+
+  The substitution is also needed because the import flips
+  authorizationServicesEnabled back to false on a vanilla client repr;
+  this Job re-enables it via a PUT on the client's full representation
+  before the authz POST.
+
+How it works:
+  1. ConfigMap built at chart render time -- iterates the realm JSON
+     for clients with authorizationSettings, emits one /authz/<id>.json
+     key per such client (currently just "ppt").
+  2. Job mounts the ConfigMap, gets an admin token via password grant
+     against master realm (using poolparty-auth-admin Secret created
+     by the umbrella's keycloak-bootstrap-admin-job.yaml), then for
+     each /authz/*.json: looks up the client's UUID, PUTs the client
+     representation with authorizationServicesEnabled=true, POSTs the
+     authz settings to the resource-server import endpoint.
+
+Hook semantics:
+  - post-install,post-upgrade: runs every install/upgrade.
+  - hook-weight: 10 -- after umbrella's keycloak-bootstrap-admin-job
+    (weight 5) which creates the poolparty-auth-admin Secret we read.
+  - hook-delete-policy: before-hook-creation,hook-succeeded so the
+    last successful run is gone before we re-run, and successful runs
+    clean up after themselves. Failed runs stay for inspection.
+
+Auth credentials:
+  Hardcoded poolparty_auth_admin / admin via the poolparty-auth-admin
+  Secret. If the umbrella's keycloak.bootstrapAdmin.{username,password}
+  values change, the Secret keys remain "username"/"password" so this
+  Job continues to work transparently.
+
+Companion code: scripts/extract-poolparty-realm.sh handles the OTHER
+gap in Ontotext's realm export -- substituting ${...} placeholders for
+client secrets and user passwords. Both fixes are needed for a clean
+deploy.
+*/}}
+{{- $realmJsonRaw := .Files.Get "files/poolparty-realm.json" -}}
+{{- if $realmJsonRaw -}}
+{{- $ppHost := printf "https://poolparty.%s.%s" .Values.subdomain .Values.baseDomain -}}
+{{- $rewritten := $realmJsonRaw -}}
+{{- $rewritten = $rewritten | replace "https://stroker.semantic-proof.com" $ppHost -}}
+{{- $rewritten = $rewritten | replace "http://stroker.semantic-proof.com" $ppHost -}}
+{{- $rewritten = $rewritten | replace "https://localhost.127.0.0.1.nip.io" $ppHost -}}
+{{- $rewritten = $rewritten | replace "http://localhost.127.0.0.1.nip.io" $ppHost -}}
+{{- $realmObj := $rewritten | fromJson -}}
+{{- $clientsWithAuthz := list -}}
+{{- range $realmObj.clients -}}
+  {{- if .authorizationSettings -}}
+    {{- $clientsWithAuthz = append $clientsWithAuthz . -}}
+  {{- end -}}
+{{- end -}}
+{{- if $clientsWithAuthz -}}
+{{- $ns := .Values.keycloakNamespace | default "keycloak" -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-authz-import-data
+  namespace: {{ $ns }}
+  labels:
+    {{- include "keycloak-realms.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "9"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+{{- range $clientsWithAuthz }}
+  {{ .clientId }}.json: |
+    {{ .authorizationSettings | toJson }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-authz-import
+  namespace: {{ $ns }}
+  labels:
+    {{- include "keycloak-realms.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak-realms.labels" . | nindent 8 }}
+        app.kubernetes.io/name: keycloak-authz-import
+        app.kubernetes.io/component: keycloak-authz-import
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: import
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KC_SERVER
+              value: "http://{{ .Values.keycloakCRName }}-service.{{ $ns }}:8080"
+            - name: REALM
+              value: poolparty
+            - name: ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: poolparty-auth-admin
+                  key: username
+            - name: ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: poolparty-auth-admin
+                  key: password
+          volumeMounts:
+            - name: authz
+              mountPath: /authz
+              readOnly: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              apk add --no-cache bash curl jq >/dev/null
+              exec /bin/bash <<'IMPORT_EOF'
+              set -euo pipefail
+              echo "Waiting for realm '$REALM' at $KC_SERVER ..."
+              for i in $(seq 1 60); do
+                  if curl -sf -o /dev/null "$KC_SERVER/realms/$REALM/.well-known/openid-configuration"; then
+                      echo "  realm '$REALM' ready after $i attempt(s)"
+                      break
+                  fi
+                  [ "$i" = "60" ] && { echo "Realm '$REALM' never came up" >&2; exit 1; }
+                  sleep 5
+              done
+              echo "Getting admin token as $ADMIN_USER ..."
+              TOKEN=$(curl -sf --data-urlencode "client_id=admin-cli" --data-urlencode "grant_type=password" --data-urlencode "username=$ADMIN_USER" --data-urlencode "password=$ADMIN_PASS" "$KC_SERVER/realms/master/protocol/openid-connect/token" | jq -r .access_token)
+              if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+                  echo "Failed to get admin token" >&2
+                  exit 1
+              fi
+              for f in /authz/*.json; do
+                  CLIENT_ID=$(basename "$f" .json)
+                  echo "---"
+                  echo "Client '$CLIENT_ID':"
+                  CUUID=$(curl -sf -H "Authorization: Bearer $TOKEN" "$KC_SERVER/admin/realms/$REALM/clients?clientId=$CLIENT_ID" | jq -r '.[0].id // empty')
+                  if [ -z "$CUUID" ]; then
+                      echo "  not found in realm $REALM -- skipping"
+                      continue
+                  fi
+                  echo "  uuid=$CUUID"
+                  echo "  enabling Authorization Services..."
+                  REPR=$(curl -sf -H "Authorization: Bearer $TOKEN" "$KC_SERVER/admin/realms/$REALM/clients/$CUUID")
+                  PATCHED=$(echo "$REPR" | jq '.authorizationServicesEnabled = true')
+                  CODE=$(echo "$PATCHED" | curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data-binary @- "$KC_SERVER/admin/realms/$REALM/clients/$CUUID")
+                  echo "    PUT client repr -> $CODE"
+                  echo "  POSTing authz settings ($(wc -c < "$f") bytes)..."
+                  CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data-binary @"$f" "$KC_SERVER/admin/realms/$REALM/clients/$CUUID/authz/resource-server/import")
+                  echo "    POST authz import -> $CODE"
+                  case "$CODE" in
+                      2*) echo "  OK" ;;
+                      *)  echo "  FAILED" >&2; exit 1 ;;
+                  esac
+              done
+              echo "---"
+              echo "All authz imports done."
+              IMPORT_EOF
+      volumes:
+        - name: authz
+          configMap:
+            name: keycloak-authz-import-data
+{{- end -}}
+{{- end -}}
+{{- end -}}
