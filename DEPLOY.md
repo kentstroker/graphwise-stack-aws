@@ -528,26 +528,56 @@ place last time.
 
 ### 8. Deploy the stack
 
+**Full deploy** (umbrella + GraphRAG, requires Maven creds + n8n license):
+
 ```bash
 # On EC2
 ./scripts/reset-helm.sh --yes <your-subdomain>
 ```
 
-This:
-- regenerates per-subdomain values overlays at `/tmp/values-<sub>.yaml`
-  and `/tmp/values-<sub>-graphrag.yaml`,
-- runs `helm dependency update` on both chart paths,
-- installs the **`graphwise-stack`** umbrella release in `graphwise` ns
-  (PoolParty, GraphDB, addons, Keycloak, console, supporting graphrag
-  Secrets/Postgres),
-- installs the **`graphrag`** release in `graphrag` ns (chatbot,
-  conversation, components, workflows pods),
-- runs the post-install Job that creates the master-realm
-  `poolparty_auth_admin` user the PoolParty chart expects.
+**Umbrella-only deploy** (skip GraphRAG, useful when you don't yet have
+Maven creds / n8n license, or when you only need PoolParty / GraphDB /
+addons for testing):
 
-First install takes ~10–15 minutes (image pulls, Keycloak realm
-imports, Spring init, Lucene index warmup, LE cert issuance). Watch
-progress in another shell:
+```bash
+# On EC2
+./scripts/reset-helm.sh --yes --skip-graphrag <your-subdomain>
+```
+
+The `--skip-graphrag` flag tells `reset-helm.sh` to:
+- skip rendering the graphrag values overlay
+- skip `helm dependency update` on the vendored graphrag chart
+- skip the `helm upgrade --install graphrag` step
+
+Everything umbrella-side runs identically (PoolParty, GraphDB ×2,
+Elasticsearch, addons, Keycloak, console, observability). The n8n
+Postgres + supporting Secrets/ConfigMap that the umbrella creates in
+the `graphrag` namespace are still rendered — they're cheap and let
+you flip the flag later without a values change.
+
+To later add GraphRAG once you have credentials: drop the flag and
+re-run (`./scripts/reset-helm.sh --yes <subdomain>`). The umbrella's
+existing release is upgraded in place; the graphrag release is
+installed fresh.
+
+`reset-helm.sh` (with or without `--skip-graphrag`):
+- regenerates per-subdomain values overlay at `/tmp/values-<sub>.yaml`
+  (and `/tmp/values-<sub>-graphrag.yaml` unless `--skip-graphrag`),
+- runs `helm dependency update` on the umbrella chart path (and on
+  `charts/vendor/graphrag` unless `--skip-graphrag`),
+- installs the **`graphwise-stack`** umbrella release in `graphwise` ns
+  (PoolParty, GraphDB ×2, addons, Keycloak, console, supporting
+  graphrag Secrets/Postgres),
+- installs the **`graphrag`** release in `graphrag` ns (chatbot,
+  conversation, components, workflows pods) **unless** `--skip-graphrag`,
+- runs the post-install Job that creates the master-realm
+  `poolparty_auth_admin` user the PoolParty chart expects,
+- runs the post-install Job that re-imports per-client Authorization
+  Services config (the operator-managed RealmImport CR drops it).
+
+First install takes ~10–15 minutes for the full deploy, ~7–10 minutes
+for `--skip-graphrag` (no GraphRAG image pulls, no n8n boot wait).
+Watch progress in another shell:
 
 ```bash
 # On EC2 (in another SSH session)
