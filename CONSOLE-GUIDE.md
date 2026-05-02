@@ -167,7 +167,7 @@ breaks even though everything else still works.
 
 ## UnifiedViews
 
-**URL:** `https://unifiedviews.<sub>.<base>/`
+**URL:** `https://unifiedviews.<sub>.<base>/UnifiedViews/`
 **Login:** App-local — try `admin` / `admin` (default; change after
 first login)
 
