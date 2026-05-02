@@ -59,6 +59,24 @@ charts/keycloak-realms/files/*.json
 .claude/
 
 # ---------------------------------------------------------------------------
+# Nested-subchart packaged tarballs
+# ---------------------------------------------------------------------------
+# Subcharts of subcharts (e.g. charts/addons/charts/unifiedviews-1.0.0.tgz)
+# are PACKAGED snapshots that Helm prefers over the source directory at
+# render time. Committing them creates a footgun: edits to the source
+# subchart (e.g. charts/addons/charts/unifiedviews/) get masked by a
+# stale tarball, the umbrella's own packaging includes BOTH copies, and
+# operators end up debugging "why isn't my chart change taking effect".
+# Always regenerate from source via `helm dependency update` on the
+# umbrella; never commit the inner-subchart tarballs.
+#
+# The umbrella's own packaged tarballs (charts/graphwise-stack/charts/*.tgz)
+# ARE committed -- they're the umbrella's vendored deps, deliberately
+# pinned so deploys don't need network access.
+charts/*/charts/*.tgz
+charts/*/Chart.lock
+
+# ---------------------------------------------------------------------------
 # Let's Encrypt state — deployment-specific, must never be committed
 # ---------------------------------------------------------------------------
 # certbot writes cert + key material, account info, and logs under
