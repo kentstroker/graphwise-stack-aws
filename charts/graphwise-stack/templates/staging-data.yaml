@@ -1,0 +1,72 @@
+{{- if .Values.staging.enabled -}}
+{{/*
+Per-namespace PV + PVC pairs that expose the EC2's standardized
+ingest landing pad to pods.
+
+Three-layer wiring (see HOWITWORKS §11):
+  Layer 1 -- /home/ec2-user/staging-data on the EC2 host
+             (created by infra/terraform/user-data.sh.tpl).
+  Layer 2 -- /staging-data inside the KIND control-plane container
+             (mounted by infra/kind/kind-config.yaml extraMounts).
+  Layer 3 -- this template -- one hostPath PV per namespace, plus
+             a PVC named `staging-data` in each namespace. Pods in
+             those namespaces mount the PVC to read the uploaded
+             data.
+
+Why one PV per namespace: PVs are 1:1 with PVCs in Kubernetes. To
+make the same underlying path available to PVCs in multiple
+namespaces, we create N PVs, each pointing at the same hostPath.
+volumeName on each PVC pins the binding -- without it, K8s would
+try (and fail) to dynamically provision since no provisioner
+exists for the sentinel storageClassName.
+
+Toggle off via .Values.staging.enabled = false. Adjust the
+namespace list, size, and access mode in values.yaml.
+*/}}
+{{- range $ns := .Values.staging.namespaces }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: staging-data-{{ $ns }}-pv
+  labels:
+    {{- include "graphwise-stack.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: staging-data
+    graphwise-stack/staging-namespace: {{ $ns }}
+spec:
+  capacity:
+    storage: {{ $.Values.staging.size }}
+  accessModes:
+    - {{ $.Values.staging.accessMode }}
+  persistentVolumeReclaimPolicy: {{ $.Values.staging.reclaimPolicy }}
+  storageClassName: {{ $.Values.staging.storageClassName }}
+  hostPath:
+    path: {{ $.Values.staging.hostPath }}
+    type: Directory
+  # Pre-bind to a specific PVC so this PV doesn't get claimed by an
+  # unrelated workload that happens to ask for the same storage class.
+  claimRef:
+    namespace: {{ $ns }}
+    name: staging-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: staging-data
+  namespace: {{ $ns }}
+  labels:
+    {{- include "graphwise-stack.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: staging-data
+spec:
+  accessModes:
+    - {{ $.Values.staging.accessMode }}
+  resources:
+    requests:
+      storage: {{ $.Values.staging.size }}
+  storageClassName: {{ $.Values.staging.storageClassName }}
+  # Pin to the specific PV created above. Required because the
+  # storageClassName is a sentinel -- no provisioner will fulfill
+  # a dynamic claim against it, so PVCs would stay Pending.
+  volumeName: staging-data-{{ $ns }}-pv
+{{- end }}
+{{- end }}

@@ -61,6 +61,16 @@ nodes:
       - containerPort: 443
         hostPort: 443
         protocol: TCP
+    # Mount the EC2's standardized ingest landing pad into the KIND
+    # control-plane container so it can be exposed to pods via a
+    # hostPath PV. Cloud-init creates /home/ec2-user/staging-data on
+    # first EC2 boot (see infra/terraform/user-data.sh.tpl); the
+    # umbrella chart's templates/staging-data.yaml renders per-namespace
+    # PV/PVC pairs against the containerPath below. See HOWITWORKS §11
+    # for the three-layer wiring explanation.
+    extraMounts:
+      - hostPath: /home/ec2-user/staging-data
+        containerPath: /staging-data
 networking:
   apiServerAddress: "127.0.0.1"
   apiServerPort: 6443

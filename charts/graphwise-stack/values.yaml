@@ -112,6 +112,50 @@ graphrag-secrets:
     activationKey: "REPLACE_WITH_REAL_N8N_LICENSE_KEY"
 
 ####################################################################
+# Staging data — universal upload path
+####################################################################
+# A standardized hostPath-backed PV/PVC pair per namespace, exposing
+# /home/ec2-user/staging-data (on the EC2) -> /staging-data (inside
+# the KIND container) -> a PVC named "staging-data" in each listed
+# namespace. Pods then mount the PVC to read the uploaded data.
+#
+# Operators upload via:
+#   rsync -azP -e "ssh -i <key.pem>" <local>/  ec2-user@<eip>:~/staging-data/
+#
+# Adding extraMounts to KIND requires a `kind delete` + `kind create`
+# (destructive, wipes K8s state). If you pull this for the first time
+# on an existing deployment, the PV/PVC objects render successfully
+# but the underlying /staging-data path inside the running KIND
+# container won't exist until you recreate the cluster. Pods that
+# don't mount the PVC are unaffected; pods that do mount it will
+# FailedMount until the path exists.
+#
+# See HOWITWORKS §11 for the three-layer wiring explanation.
+staging:
+  enabled: true
+  # Namespaces that get a PVC named "staging-data". One PV per PVC
+  # (PVs bind 1:1); all PVs point at the same hostPath so all
+  # namespaces see identical data.
+  namespaces:
+    - graphwise
+    - graphrag
+  # Path INSIDE the KIND container (set by infra/kind/kind-config.yaml's
+  # extraMounts). Don't change unless you also change kind-config.
+  hostPath: /staging-data
+  # Nominal capacity. hostPath doesn't enforce; this is just what
+  # `kubectl get pvc` reports. Bump if your ingest data grows.
+  size: 50Gi
+  accessMode: ReadWriteMany
+  # Sentinel storage class -- no provisioner exists for it. PVs are
+  # statically created by this template; PVCs pin to their PV via
+  # volumeName. Without that pin, PVCs would stay Pending while K8s
+  # tried (and failed) to dynamically provision.
+  storageClassName: hostpath-staging
+  # Retain on PVC delete -- the underlying files on the EC2 host
+  # outlive any helm uninstall / reset-helm cycle.
+  reclaimPolicy: Retain
+
+####################################################################
 # Sub-chart overrides
 ####################################################################
 
