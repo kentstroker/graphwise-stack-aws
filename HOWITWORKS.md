@@ -331,7 +331,163 @@ Setting `spec.hostname.hostname: auth.<sub>.<base>` (no `/auth` path) and `stric
 
 ---
 
-## 11. When something breaks — symptom → first command
+## 11. Staging data — the universal upload path
+
+For multi-GB ingest data (PDFs, source documents, reference corpora that GraphRAG / PoolParty pipelines consume), there's a standardized landing pad at `~/staging-data/` on the EC2. Cloud-init creates the directory; you `rsync` data into it from your laptop:
+
+```bash
+# laptop
+rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/local-pdfs/ ec2-user@<eip>:~/staging-data/
+```
+
+Files survive EC2 stop/start, KIND restart, `reset-helm.sh`. They do **NOT** survive `terraform destroy` (the root EBS volume goes with the instance).
+
+### Three layers between EC2 disk and pod filesystem
+
+The data sits on the EC2 disk by default but is invisible to pods until three layers are wired. All three must exist before a pod sees the files:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│ Layer 1: EC2 host                                         │
+│   /home/ec2-user/staging-data/   (real files on EBS)      │
+└─────────────────────────┬─────────────────────────────────┘
+                          │  Docker bind-mount (Docker -v),
+                          │  declared in infra/kind/kind-config.yaml
+                          ▼
+┌───────────────────────────────────────────────────────────┐
+│ Layer 2: KIND control-plane container                     │
+│   /staging-data/  (same files, different path inside)     │
+└─────────────────────────┬─────────────────────────────────┘
+                          │  Kubernetes hostPath PV,
+                          │  bound 1:1 to a namespaced PVC
+                          ▼
+┌───────────────────────────────────────────────────────────┐
+│ Layer 3: Pod (e.g. graphrag-workflows-xxx)                │
+│   /data/staging/  (volumeMount path the app reads from)   │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Layer 1 → Layer 2: KIND extraMount
+
+`infra/kind/kind-config.yaml` declares which host paths are visible inside the KIND container. KIND turns this into a Docker `-v` flag at cluster create time:
+
+```yaml
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /home/ec2-user/staging-data
+        containerPath: /staging-data
+```
+
+**KIND can't add mounts to a running cluster.** Adding this requires `kind delete cluster` + `kind create cluster` — destructive (wipes all K8s state including PVCs). Schedule with the next planned `reset-helm.sh` cycle, not as a hotfix.
+
+### Layer 2 → Layer 3: PersistentVolume + PersistentVolumeClaim
+
+PVs are cluster-scoped (no namespace); PVCs are namespaced. A PVC binds 1:1 to a PV. Pods in a namespace mount via the PVC.
+
+For pods in `graphrag` namespace:
+
+```yaml
+# Cluster-scoped: tells K8s "/staging-data inside the node is a volume"
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: staging-data-graphrag-pv
+spec:
+  capacity:
+    storage: 50Gi          # nominal; hostPath doesn't enforce
+  accessModes:
+    - ReadWriteMany        # multi-pod read+write OK on a single-node KIND
+  persistentVolumeReclaimPolicy: Retain   # don't delete files on PVC delete
+  storageClassName: hostpath-staging      # sentinel; no provisioner
+  hostPath:
+    path: /staging-data    # path INSIDE the KIND container
+    type: Directory
+---
+# Namespaced: pods in graphrag bind to this name
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: staging-data
+  namespace: graphrag
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: hostpath-staging
+  volumeName: staging-data-graphrag-pv    # pin to the specific PV
+```
+
+Note `volumeName` — without it, K8s would try to dynamically provision a new volume from the storageClass, fail (no provisioner exists for the sentinel `hostpath-staging`), and the PVC would stay `Pending` forever.
+
+**For multiple namespaces, create one PV+PVC pair per namespace.** PVs are 1:1 with PVCs, so you need a separate PV per claim — but all PVs point at the same `hostPath: /staging-data`. So you'd have:
+
+- `staging-data-graphrag-pv` ↔ PVC `staging-data` in `graphrag`
+- `staging-data-graphwise-pv` ↔ PVC `staging-data` in `graphwise`
+
+All look at the same underlying files. Pods across namespaces see identical data.
+
+### Layer 3: Pod-level mount
+
+The PVC is wired into a pod's spec via `volumes` (chart side) and `volumeMounts` (container side):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graphrag-workflows
+  namespace: graphrag
+spec:
+  template:
+    spec:
+      containers:
+        - name: workflows
+          # ...
+          volumeMounts:
+            - name: staging
+              mountPath: /data/staging      # path INSIDE the pod
+              readOnly: false               # set true if appropriate
+      volumes:
+        - name: staging
+          persistentVolumeClaim:
+            claimName: staging-data
+```
+
+Inside the pod, `ls /data/staging/` shows your uploaded files.
+
+### Where this lands in the chart (deferred)
+
+When a concrete consumer is identified:
+
+1. **`infra/kind/kind-config.yaml`** — add the extraMount (one-line change).
+2. **`charts/graphwise-stack/templates/staging-data.yaml`** (new) — renders the per-namespace PV+PVC pairs. Gated by `staging.enabled`. Namespace list from `staging.namespaces` (default `[graphwise, graphrag]`). Size from `staging.size` (default `50Gi`).
+3. **Consumer subchart's pod spec** — add the `volumes`/`volumeMounts` stanzas referencing PVC `staging-data`. Most vendored charts expose `extraVolumes`/`extraVolumeMounts` values for this exact pattern.
+
+### Checklist when ready to apply
+
+```text
+1. Edit infra/kind/kind-config.yaml      (add extraMount)
+2. Edit charts/graphwise-stack/values.yaml  (add staging block)
+3. Add charts/graphwise-stack/templates/staging-data.yaml  (PV + PVC)
+4. Edit consumer subchart values         (volumes + volumeMounts)
+5. On EC2:
+     kind delete cluster --name graphwise
+     kind create cluster --config infra/kind/kind-config.yaml --name graphwise
+6. cluster-bootstrap.sh                  (re-install operators)
+7. extract-poolparty-realm.sh + install-licenses.sh
+8. reset-helm.sh --yes <subdomain>       (re-install workloads with the volume wired)
+9. Verify:
+     kubectl get pv,pvc -A | grep staging       -> Bound
+     kubectl exec -n graphrag <pod> -- ls /data/staging   -> your files
+```
+
+Steps 5-8 are the same destructive bring-up as a fresh install. Plan accordingly — schedule when other workloads aren't depended on.
+
+---
+
+## 12. When something breaks — symptom → first command
 
 | Symptom | First command | Why it helps |
 |---|---|---|
@@ -348,7 +504,7 @@ Setting `spec.hostname.hostname: auth.<sub>.<base>` (no `/auth` path) and `stric
 
 ---
 
-## 12. Where to go next
+## 13. Where to go next
 
 - **Stand up the stack from scratch:** [QUICKSTART.md](QUICKSTART.md). Sequential 0-18 step list, every command marked `# laptop` or `# EC2`.
 - **Detail on any prerequisite step:** [SETUP.md](SETUP.md). IAM users, EIP allocation, DNS records, key pair, Bedrock, the EC2 Instance Connect manual SG rule.
