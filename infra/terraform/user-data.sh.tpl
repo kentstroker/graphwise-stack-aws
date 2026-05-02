@@ -232,6 +232,18 @@ EOF
 chown "$TARGET_USER:$TARGET_USER" "$SECRETS_FILE"
 chmod 600 "$SECRETS_FILE"
 
+# Standardized landing pad for ingest data (PDFs, source docs, large
+# reference corpora that GraphRAG / PoolParty pipelines consume).
+# Operators upload via:
+#   rsync -azP -e "ssh -i <key.pem>" <local>/  ec2-user@<eip>:~/staging-data/
+# To make this directory visible inside KIND pods, add a hostPath mount
+# to infra/kind/kind-config.yaml + a PV/PVC pair (deferred until first
+# real ingest workload). See DEPLOY.md "Upload ingest data" for the
+# full operator flow.
+mkdir -p "/home/$TARGET_USER/staging-data"
+chown "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/staging-data"
+chmod 755 "/home/$TARGET_USER/staging-data"
+
 # Friendly breadcrumb so the first SSH session is immediately oriented.
 cat > "/home/$TARGET_USER/NEXT_STEPS.txt" <<EOF
 Welcome to your Graphwise stack instance.

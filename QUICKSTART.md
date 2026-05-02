@@ -239,6 +239,25 @@ Details: [DEPLOY §3](DEPLOY.md#3-connect-and-prepare-creds).
 
 ---
 
+## 12.5 (Optional) Upload ingest data
+
+Standardized landing pad at `~/staging-data/` on the EC2 (created by
+cloud-init). For multi-GB uploads use rsync; resumes interrupted
+transfers:
+
+```bash
+# laptop
+rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+```
+
+Persists across EC2 stop/start and reset-helm but NOT
+`terraform destroy`. Cluster-side mount/PVC wiring is deferred until a
+concrete consumer is identified.
+
+Details: [DEPLOY §3.5](DEPLOY.md#35-upload-ingest-data-optional).
+
+---
+
 ## 13. Cluster operators (EC2)
 
 ```bash

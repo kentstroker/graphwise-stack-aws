@@ -313,6 +313,76 @@ later get fresh licenses (renewals, different customer engagement),
 overwrite these three files in place and re-run
 `./scripts/install-licenses.sh` followed by a Helm upgrade.
 
+### 3.5 Upload ingest data (optional)
+
+The Terraform cloud-init creates a standardized landing pad for
+ingest data — PDFs, source documents, large reference corpora that
+GraphRAG / PoolParty pipelines consume. Upload here once; later
+chart work mounts this directory into the consuming pods via a
+hostPath PV/PVC.
+
+**Standardized path:** `/home/ec2-user/staging-data/` on the EC2.
+The directory exists from first boot; you don't need to create it.
+
+#### Upload from your laptop (rsync — recommended)
+
+Use `rsync` instead of `scp` for any sizable upload (multiple GB,
+many files, slow links). It compresses on the wire (`-z`), shows
+progress (`-P`), and resumes interrupted transfers cleanly:
+
+```bash
+# On laptop
+rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+```
+
+(Note the trailing `/` on the source. `rsync` is sensitive to this:
+`source/` copies the *contents* of `source` into the destination;
+`source` (no slash) copies the directory `source` itself into the
+destination.)
+
+For small one-off files, plain `scp` works:
+
+```bash
+# On laptop
+scp -i $GRAPHWISE_KEY ~/path/to/file.pdf ec2-user@<your-eip>:~/staging-data/
+```
+
+#### Verify the upload landed
+
+```bash
+# On EC2
+ls -la ~/staging-data/ && du -sh ~/staging-data/
+```
+
+Expected: your files listed, total size matches what you sent.
+
+#### Where the data lives + persistence guarantees
+
+- Stored on the EC2's root EBS volume.
+- **Survives** EC2 stop/start, `cluster-resume.sh`, `reset-helm.sh`,
+  KIND cluster recreate, helm upgrade.
+- **Does NOT survive** `terraform destroy` (the root EBS volume goes
+  with the instance). For data you can't re-upload, attach a separate
+  EBS volume — out of scope for this default; mention it in an issue
+  if you need the pattern documented.
+
+#### Making the data visible inside Kubernetes pods (deferred)
+
+Today the data is on the host disk but not yet inside the cluster.
+When you have a real ingest workload, the wiring is:
+
+1. Add a `hostPath` mount to `infra/kind/kind-config.yaml` mapping
+   `/home/ec2-user/staging-data` → `/staging-data` (inside the KIND
+   container). Requires KIND cluster recreate to take effect.
+2. Add a `PersistentVolume` + `PersistentVolumeClaim` per consuming
+   namespace (one PV per PVC; all PVs use the same `hostPath:
+   /staging-data`).
+3. Mount the PVC into the consuming pod's `volumeMounts`.
+
+We'll add a Helm template for steps 2-3 when there's a concrete
+consumer (graphrag-workflows, graphrag-components, or wherever the
+ingest happens). Ping when you're ready and we'll wire it.
+
 ### 4. Install cluster operators
 
 One-time install of ingress-nginx, cert-manager (+ Let's Encrypt
