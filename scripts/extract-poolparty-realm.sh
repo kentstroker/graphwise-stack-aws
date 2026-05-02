@@ -58,5 +58,13 @@ jq -r '"  realm: \(.realm)"' "$DEST" 2>/dev/null || echo "  (jq not installed; s
 jq -r '.clients[]? | "  client: \(.clientId)"' "$DEST" 2>/dev/null || true
 
 echo
-echo "Done. Now (re-)install the keycloak-realms chart:"
-echo "  helm upgrade --install keycloak-realms ./charts/keycloak-realms ..."
+echo "Done. The realm JSON is now staged at:"
+echo "  charts/keycloak-realms/files/poolparty-realm.json"
+echo
+echo "keycloak-realms is a subchart of the umbrella (charts/graphwise-stack)"
+echo "and consumes this file via .Files.Get at render time. The next umbrella"
+echo "install picks it up automatically -- no separate helm command needed."
+echo
+echo "Next steps in the standard deploy flow:"
+echo "  ./scripts/install-licenses.sh"
+echo "  ./scripts/reset-helm.sh --yes <subdomain>      # or --skip-graphrag for umbrella-only"
