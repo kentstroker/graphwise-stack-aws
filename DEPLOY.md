@@ -64,8 +64,22 @@ laptop-zero through ready-for-`terraform-apply`. At a glance:
   records) on a domain you control. Graphwise SEs use Kent's
   `semantic-proof.com` zone; everyone else uses their own DNS
   provider (GoDaddy / Route53 / Cloudflare / Namecheap — all fine).
-- Graphwise Maven registry credentials and three license files
-  (PoolParty, GraphDB, UnifiedViews) — request from Graphwise.
+- **Graphwise-issued credentials and license material** — all four
+  required for a full deploy; request from Graphwise:
+  - Maven registry username + password (pulls private GraphRAG
+    container images from `maven.ontotext.com`)
+  - PoolParty license file (`poolparty.key`)
+  - GraphDB EE license file (`graphdb.license`)
+  - UnifiedViews license file (`uv-license.key`)
+  - **n8n Enterprise license activation key** (drives the
+    graphrag-workflows pod; without it, n8n won't start cleanly)
+  - **AWS Bedrock access key** for the `graphrag-bedrock` IAM user
+    you created in SETUP §4b (drives graphrag-components embedding
+    calls)
+  - For an umbrella-only deploy (`reset-helm.sh --skip-graphrag`),
+    only the three license files + Maven creds are strictly
+    required; the n8n license + Bedrock keys are deferred until
+    you re-run without `--skip-graphrag`.
 
 The EC2 instance side (Amazon Linux 2023 ARM64, Docker, KIND,
 kubectl, helm) is handled by the Terraform module's cloud-init;
