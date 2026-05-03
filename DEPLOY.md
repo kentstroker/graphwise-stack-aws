@@ -447,6 +447,63 @@ HTTP-01 cert issuance for the three observability hosts).
 
 Idempotent — safe to re-run.
 
+#### Confirm cluster-bootstrap.sh finished cleanly
+
+The script prints `=== cluster-bootstrap done ===` on success, but
+if you missed it (long scrollback, ssh disconnect, etc.) here's the
+inventory check. All commands run on EC2; expect non-empty,
+healthy output for each.
+
+```bash
+kubectl get pods -A | grep -vE "Running|Completed"
+```
+
+Expected: empty output. Any pod listed here is still starting,
+crashed, or pending — wait 60s and re-run before declaring failure.
+
+```bash
+kubectl get clusterissuer letsencrypt-prod
+```
+
+Expected: `letsencrypt-prod   True   <age>`. `READY=True` confirms
+cert-manager registered with LE successfully.
+
+```bash
+kubectl get pods -n cert-manager && kubectl get pods -n ingress-nginx && kubectl get pods -n cnpg-system && kubectl get pods -n monitoring && kubectl get pods -n kubernetes-dashboard
+```
+
+Expected: every pod `Running`. cert-manager has 3 (controller +
+cainjector + webhook), ingress-nginx 1, cnpg-system 1, monitoring
+~6 (alertmanager + grafana + kube-state-metrics + operator +
+prometheus + node-exporter), kubernetes-dashboard 2.
+
+```bash
+kubectl get pod -n keycloak -l app.kubernetes.io/name=keycloak-operator && kubectl get pod -n kube-system -l k8s-app=metrics-server
+```
+
+Expected: `keycloak-operator-...` Running, `metrics-server-...`
+Running.
+
+```bash
+kubectl get secret -n graphwise graphwise && kubectl get secret -n graphrag graphwise
+```
+
+Expected: both Secrets exist (the `graphwise` image-pull secret
+created from `~/.ontotext/maven-{user,pass}` in both namespaces).
+
+```bash
+ls -la ~/dashboard-kubeconfig.yaml
+```
+
+Expected: file present, owned by ec2-user. This is the kubeconfig
+you scp to your laptop and upload at the Dashboard login screen
+(see §4a below).
+
+If any of these checks fail, the script can be re-run safely
+(idempotent). If failures persist, paste the failing command's
+output and the tail of `/tmp/cluster-bootstrap-<timestamp>.log` for
+diagnosis.
+
 #### 4a. Verify the observability tier
 
 After the script completes, the three observability UIs become
