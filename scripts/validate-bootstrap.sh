@@ -133,14 +133,17 @@ else
                "kubectl get pods -n keycloak -l app.kubernetes.io/name=keycloak-operator"
 fi
 
-# metrics-server lives in kube-system.
-MS_READY=$(kubectl get pods -n kube-system -l k8s-app=metrics-server --no-headers 2>/dev/null \
-    | awk '{split($2,r,"/"); if ($3 == "Running" && r[1] == r[2]) print "yes"}')
+# metrics-server lives in kube-system. Newer chart versions label
+# the pod with app.kubernetes.io/name=metrics-server; older versions
+# used k8s-app=metrics-server. Match by name prefix to handle both
+# conventions and any future label drift.
+MS_READY=$(kubectl get pods -n kube-system --no-headers 2>/dev/null \
+    | awk '$1 ~ /^metrics-server-/ {split($2,r,"/"); if ($3 == "Running" && r[1] == r[2]) print "yes"}')
 if [ "$MS_READY" = "yes" ]; then
     check_pass "kube-system            (metrics-server Running)"
 else
     check_fail "kube-system            (metrics-server NOT Running)" \
-               "kubectl get pods -n kube-system -l k8s-app=metrics-server"
+               "kubectl get pods -n kube-system | grep metrics-server"
 fi
 
 # --------------------------------------------------------------------
