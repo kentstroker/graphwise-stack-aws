@@ -35,7 +35,7 @@ clear
 
 cat <<HEADER
 ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════╗
-║         Graphwise Stack -- Cluster Bootstrap Validation         ║
+║         Graphwise Stack -- Cluster Bootstrap Validation          ║
 ╚══════════════════════════════════════════════════════════════════╝${RESET}
 
 ${DIM}Verifies every piece installed by scripts/cluster-bootstrap.sh.
@@ -159,33 +159,16 @@ else
 fi
 
 # --------------------------------------------------------------------
-# 4. Image-pull secrets
+# (Image-pull secrets check is intentionally NOT here.)
+#
+# The `graphwise` image-pull Secret for maven.ontotext.com is created
+# by scripts/reset-helm.sh, NOT cluster-bootstrap.sh -- it's only
+# consumed by the GraphRAG release pods at install time, so the
+# bootstrap script doesn't touch it. Validating it from this script
+# would (a) check the wrong lifecycle stage and (b) cause confusing
+# failures for operators running validate-bootstrap before reset-helm.
+# That check belongs in a future validate-helm.sh, post-reset-helm.
 # --------------------------------------------------------------------
-# cluster-bootstrap.sh creates the `graphwise` Secret in both consuming
-# namespaces from ~/.ontotext/maven-{user,pass}. If those source files
-# don't exist yet, the operator is at an earlier deploy stage (DEPLOY
-# §3 hasn't been done) -- that's a deferred state, not a real failure.
-# Treat as WARN with a hint, not a hard fail.
-section "Image-pull secrets (private GraphRAG registry)"
-MAVEN_USER_FILE="$HOME/.ontotext/maven-user"
-MAVEN_PASS_FILE="$HOME/.ontotext/maven-pass"
-if [ -s "$MAVEN_USER_FILE" ] && [ -s "$MAVEN_PASS_FILE" ]; then
-    MAVEN_CREDS_PRESENT=yes
-else
-    MAVEN_CREDS_PRESENT=no
-fi
-
-for ns in graphwise graphrag; do
-    if kubectl get secret -n "$ns" graphwise >/dev/null 2>&1; then
-        check_pass "graphwise secret present in '$ns' namespace"
-    elif [ "$MAVEN_CREDS_PRESENT" = "no" ]; then
-        check_warn "graphwise secret deferred in '$ns' namespace" \
-                   "~/.ontotext/maven-{user,pass} not on disk yet (DEPLOY §3 step). Drop creds, re-run cluster-bootstrap.sh."
-    else
-        check_fail "graphwise secret MISSING in '$ns' namespace" \
-                   "Maven creds exist on disk but secret wasn't created -- re-run cluster-bootstrap.sh"
-    fi
-done
 
 # --------------------------------------------------------------------
 # 5. Dashboard kubeconfig artifact
