@@ -336,8 +336,16 @@ Setting `spec.hostname.hostname: auth.<sub>.<base>` (no `/auth` path) and `stric
 For multi-GB ingest data (PDFs, source documents, reference corpora that GraphRAG / PoolParty pipelines consume), there's a standardized landing pad at `~/staging-data/` on the EC2. Cloud-init creates the directory; you `rsync` data into it from your laptop:
 
 ```bash
-# laptop
+# laptop -- if rsync is missing on macOS, install via `brew install rsync`
+# (Apple ships openrsync since Ventura which has compat quirks).
 rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/local-pdfs/ ec2-user@<eip>:~/staging-data/
+```
+
+For one-off small files or stable links where you don't want to install rsync, plain `scp -r` works as a fallback (no resume support, no compression):
+
+```bash
+# laptop -- fallback
+scp -r -i $GRAPHWISE_KEY ~/local-pdfs/ ec2-user@<eip>:~/staging-data/
 ```
 
 Files survive EC2 stop/start, KIND restart, `reset-helm.sh`. They do **NOT** survive `terraform destroy` (the root EBS volume goes with the instance).

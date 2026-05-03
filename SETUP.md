@@ -310,6 +310,31 @@ dig -v
 If you'd rather not, `nslookup` is an OK fallback for the few times
 this guide uses `dig`.
 
+### rsync (used for ingest-data uploads to the EC2)
+
+Modern macOS may ship without GNU rsync (Apple replaced the bundled
+one with `openrsync` in Ventura+, which has compatibility quirks).
+Install GNU rsync via Homebrew so multi-GB ingest uploads work
+cleanly with `-z` compression and `-P` resume:
+
+**macOS:**
+
+```bash
+brew install rsync
+rsync --version | head -1
+```
+
+**Windows:**
+
+```powershell
+choco install rsync -y
+rsync --version
+```
+
+Want at least rsync 3.x. If you'd rather not install it, `scp` is
+the documented fallback in DEPLOY §3.5 — fine for one-off file
+drops, painful for multi-GB transfers (no resume, no compression).
+
 ### Clone the graphwise-stack-aws repo to your laptop
 
 You need this repo on your laptop disk to run `terraform apply`,

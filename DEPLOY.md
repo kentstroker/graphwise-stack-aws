@@ -338,11 +338,22 @@ hostPath PV/PVC.
 **Standardized path:** `/home/ec2-user/staging-data/` on the EC2.
 The directory exists from first boot; you don't need to create it.
 
-#### Upload from your laptop (rsync — recommended)
+#### Upload from your laptop (rsync — recommended for multi-GB)
 
 Use `rsync` instead of `scp` for any sizable upload (multiple GB,
 many files, slow links). It compresses on the wire (`-z`), shows
-progress (`-P`), and resumes interrupted transfers cleanly:
+progress (`-P`), and resumes interrupted transfers cleanly.
+
+**Install if missing** (Apple replaced the bundled rsync with
+openrsync in macOS Ventura+; brew installs the proper GNU rsync):
+
+```bash
+# laptop -- install once
+brew install rsync               # macOS
+choco install rsync -y           # Windows
+```
+
+Then upload:
 
 ```bash
 # On laptop
@@ -354,11 +365,22 @@ rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ ec2-user@<your-eip>:
 `source` (no slash) copies the directory `source` itself into the
 destination.)
 
-For small one-off files, plain `scp` works:
+#### Fallback: `scp` (when you can't / won't install rsync)
+
+`scp` ships with every macOS / Windows / Linux SSH client by
+default. Works fine for one-off small uploads, but has no resume
+support and no compression — a dropped connection on a 5 GB
+transfer means starting over. Use only for small files or as a
+last resort on a stable link:
 
 ```bash
-# On laptop
+# On laptop -- single file
 scp -i $GRAPHWISE_KEY ~/path/to/file.pdf ec2-user@<your-eip>:~/staging-data/
+```
+
+```bash
+# On laptop -- whole directory (recursive)
+scp -r -i $GRAPHWISE_KEY ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
 ```
 
 #### Verify the upload landed

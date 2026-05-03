@@ -242,17 +242,28 @@ Details: [DEPLOY §3](DEPLOY.md#3-connect-and-prepare-creds).
 ## 12.5 (Optional) Upload ingest data
 
 Standardized landing pad at `~/staging-data/` on the EC2 (created by
-cloud-init). For multi-GB uploads use rsync; resumes interrupted
-transfers:
+cloud-init). For multi-GB uploads use rsync (resumes interrupted
+transfers, compresses on the wire). If rsync is missing, install
+once on the laptop: `brew install rsync` (macOS — Apple ships
+openrsync since Ventura which has compat quirks) or
+`choco install rsync -y` (Windows).
 
 ```bash
-# laptop
+# laptop -- recommended
 rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
 ```
 
+Fallback (no install needed, but no resume):
+
+```bash
+# laptop -- scp recursive copy
+scp -r -i $GRAPHWISE_KEY ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+```
+
 Persists across EC2 stop/start and reset-helm but NOT
-`terraform destroy`. Cluster-side mount/PVC wiring is deferred until a
-concrete consumer is identified.
+`terraform destroy`. Cluster-side PV/PVC pair already wired in for
+graphwise + graphrag namespaces (default-on); pods mount PVC
+`staging-data` to read.
 
 Details: [DEPLOY §3.5](DEPLOY.md#35-upload-ingest-data-optional).
 
