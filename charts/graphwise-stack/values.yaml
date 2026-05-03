@@ -4,6 +4,34 @@
 # Most teammates only need to change global.subdomain. Everything
 # else cascades from there.
 ####################################################################
+#
+# ╔══════════════════════════════════════════════════════════════╗
+# ║                                                              ║
+# ║   ⚠  REQUIRED USER-SUPPLIED CREDENTIALS — EDIT BEFORE DEPLOY ║
+# ║                                                              ║
+# ║   The deploy will fail or run with broken GraphRAG until     ║
+# ║   the following two blocks are populated. Both live in       ║
+# ║   `graphrag-secrets:` directly below the global block:       ║
+# ║                                                              ║
+# ║     1. graphrag-secrets.awsCredentials                       ║
+# ║          - region          (Bedrock region)                  ║
+# ║          - accessKeyId     (graphrag-bedrock IAM user)       ║
+# ║          - secretAccessKey (matching secret)                 ║
+# ║                                                              ║
+# ║     2. graphrag-secrets.n8nLicense                           ║
+# ║          - activationKey   (n8n Enterprise license key)      ║
+# ║                                                              ║
+# ║   For umbrella-only deploys (reset-helm.sh --skip-graphrag), ║
+# ║   both can stay as placeholders — GraphRAG isn't installed   ║
+# ║   in that mode. Required only when running a full deploy.    ║
+# ║                                                              ║
+# ║   Edit on the EC2 host, NEVER on your laptop. The shipped    ║
+# ║   file is in git with placeholders; committing your real     ║
+# ║   credentials would publish them to the public repo.         ║
+# ║                                                              ║
+# ║   Walkthrough: DEPLOY.md §7.                                 ║
+# ║                                                              ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 global:
   # Per-teammate subdomain. Required. All app hostnames are computed:
@@ -19,10 +47,90 @@ global:
     - name: graphwise
 
 ####################################################################
+# graphrag-secrets — Secrets / ConfigMap consumed by the vendored
+# graphrag chart. The first two sub-blocks below are the REQUIRED
+# user-supplied credentials called out in the header banner. The
+# remaining sub-blocks are internal/cluster-only and don't normally
+# need editing.
+#
+# Idempotent — re-installs replace.
+####################################################################
+graphrag-secrets:
+  enabled: true
+  namespace: graphrag
+
+  # ─────────────────────────────────────────────────────────────────
+  # ⚠  REQUIRED #1 — AWS Bedrock credentials
+  # ─────────────────────────────────────────────────────────────────
+  # Drives graphrag-components embedding calls. Use the access key
+  # for the `graphrag-bedrock` IAM user from SETUP §4b. The region
+  # must match the region the IAM policy ARN was scoped to and must
+  # be a Bedrock-enabled region (us-east-1 or us-west-2 cover
+  # cohere.embed-english-v3 reliably).
+  #
+  # Without real values: graphrag-components pod returns
+  # `AccessDeniedException` on every prompt; chatbot is broken.
+  # Materialized as: Secret graphrag-components-aws-credentials
+  awsCredentials:
+    region: "us-west-2"
+    accessKeyId: ""           # ← FILL IN: AKIA...
+    secretAccessKey: ""       # ← FILL IN: matching secret
+
+  # ─────────────────────────────────────────────────────────────────
+  # ⚠  REQUIRED #2 — n8n Enterprise license activation key
+  # ─────────────────────────────────────────────────────────────────
+  # Drives the graphrag-workflows pod. Issued by Graphwise alongside
+  # your Maven creds.
+  #
+  # Without real value: graphrag-workflows pod refuses to start clean
+  # (n8n's license check fails on every boot).
+  # Materialized as: Secret graphrag-n8n-license
+  n8nLicense:
+    activationKey: "REPLACE_WITH_REAL_N8N_LICENSE_KEY"   # ← FILL IN
+
+  # ─────────────────────────────────────────────────────────────────
+  # Internal — don't normally need to edit
+  # ─────────────────────────────────────────────────────────────────
+
+  # Secret graphrag-conversation-database-credentials.
+  conversation:
+    dbUsername: "graphrag_conversation"
+    dbPassword: "rdf#rocks"
+
+  # Secret graphrag-conversation-keycloak-client. clientSecret must
+  # match the conversation-api-client secret in the graphrag realm
+  # (keycloak-realms.graphragConversationClientSecret below).
+  conversationKeycloak:
+    clientId: "conversation-api-client"
+    clientSecret: "rdf#rocks"
+    scope: "openid"
+
+  # ConfigMap graphrag-components-vector-database. We reuse
+  # poolparty-elasticsearch as the vector store (Q3: option a).
+  vectorDB:
+    vectorStore: "elasticsearch"
+    elasticUrl: "http://poolparty-elasticsearch.graphwise:9200"
+    vectorIndex: "graphrag-vectors"
+    vectorFieldName: "embedding"
+
+  # Secret graphrag-n8n-database-credentials.
+  n8nDatabase:
+    username: "n8n"
+    password: "rdf#rocks"
+
+  # Secret graphrag-n8n-encryption — long random key, MUST stay
+  # constant or n8n credentials become unreadable.
+  # Auto-generated by Terraform's `random_id.n8n_encryption_key` and
+  # supplied via the ~/graphwise-secrets.yaml overlay that
+  # reset-helm.sh auto-includes. Don't edit this default — it's only
+  # used as a placeholder if the overlay is absent.
+  n8nEncryption:
+    key: "change-me-32-character-random-string"
+
+####################################################################
 # Infrastructure pieces this umbrella owns directly (no sub-chart):
 # - Keycloak operator CR + CNPG Postgres for it
 # - n8n Postgres (CNPG cluster + bootstrap Secrets)
-# - GraphRAG ancillary Secrets/ConfigMaps
 ####################################################################
 
 keycloak:
@@ -63,53 +171,6 @@ n8nPostgres:
   superuserPassword: "rdf#rocks"
   appUsername: n8n
   appPassword: "rdf#rocks"
-
-graphrag-secrets:
-  # Secrets / ConfigMap consumed by the vendored graphrag chart's
-  # values.example.yaml pattern. Idempotent — re-installs replace.
-  enabled: true
-  namespace: graphrag
-
-  # Secret graphrag-conversation-database-credentials
-  conversation:
-    dbUsername: "graphrag_conversation"
-    dbPassword: "rdf#rocks"
-
-  # Secret graphrag-conversation-keycloak-client. clientSecret must
-  # match the conversation-api-client secret in the graphrag realm
-  # (keycloak-realms.graphragConversationClientSecret).
-  conversationKeycloak:
-    clientId: "conversation-api-client"
-    clientSecret: "rdf#rocks"
-    scope: "openid"
-
-  # ConfigMap graphrag-components-vector-database. We reuse
-  # poolparty-elasticsearch as the vector store (Q3: option a).
-  vectorDB:
-    vectorStore: "elasticsearch"
-    elasticUrl: "http://poolparty-elasticsearch.graphwise:9200"
-    vectorIndex: "graphrag-vectors"
-    vectorFieldName: "embedding"
-
-  # Secret graphrag-components-aws-credentials (Bedrock)
-  awsCredentials:
-    region: "us-west-2"
-    accessKeyId: ""
-    secretAccessKey: ""
-
-  # Secret graphrag-n8n-database-credentials
-  n8nDatabase:
-    username: "n8n"
-    password: "rdf#rocks"
-
-  # Secret graphrag-n8n-encryption — long random key, MUST stay
-  # constant or n8n credentials become unreadable.
-  n8nEncryption:
-    key: "change-me-32-character-random-string"
-
-  # Secret graphrag-n8n-license — n8n Enterprise activation key.
-  n8nLicense:
-    activationKey: "REPLACE_WITH_REAL_N8N_LICENSE_KEY"
 
 ####################################################################
 # Staging data — universal upload path
