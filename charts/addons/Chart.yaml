@@ -5,29 +5,29 @@ description: |
   Workbench, GraphViews, RDF4J, UnifiedViews. Each is toggleable via
   <name>.enabled in values.yaml. Mirrors today's addons.yaml.
 type: application
-version: 1.0.0
+version: 1.0.0-rc1
 appVersion: "1.0.0"
 maintainers:
   - name: graphwise-stack-aws
     url: https://github.com/kentstroker/graphwise-stack-aws
 dependencies:
   - name: adf
-    version: 1.0.0
+    version: 1.0.0-rc1
     repository: file://./charts/adf
     condition: adf.enabled
   - name: semantic-workbench
-    version: 1.0.0
+    version: 1.0.0-rc1
     repository: file://./charts/semantic-workbench
     condition: semantic-workbench.enabled
   - name: graphviews
-    version: 1.0.0
+    version: 1.0.0-rc1
     repository: file://./charts/graphviews
     condition: graphviews.enabled
   - name: rdf4j
-    version: 1.0.0
+    version: 1.0.0-rc1
     repository: file://./charts/rdf4j
     condition: rdf4j.enabled
   - name: unifiedviews
-    version: 1.0.0
+    version: 1.0.0-rc1
     repository: file://./charts/unifiedviews
     condition: unifiedviews.enabled

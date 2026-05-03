@@ -75,6 +75,12 @@ charts/keycloak-realms/files/*.json
 # pinned so deploys don't need network access.
 charts/*/charts/*.tgz
 charts/*/Chart.lock
+# Re-include the umbrella's own bundled tarballs + lockfile -- those are
+# intentional vendored deps, pinned so deploys don't need network. Only
+# the nested-subchart-of-subchart tarballs (e.g. charts/addons/charts/*.tgz,
+# charts/keycloak-realms/Chart.lock) are the footgun.
+!charts/graphwise-stack/charts/*.tgz
+!charts/graphwise-stack/Chart.lock
 
 # ---------------------------------------------------------------------------
 # Let's Encrypt state — deployment-specific, must never be committed

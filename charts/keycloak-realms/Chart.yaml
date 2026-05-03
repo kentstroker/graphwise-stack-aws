@@ -21,7 +21,7 @@ description: |
   per-deployment subdomain so each teammate's realm points at their
   own URLs.
 type: application
-version: 1.0.0
+version: 1.0.0-rc1
 appVersion: "1.0.0"
 maintainers:
   - name: graphwise-stack-aws

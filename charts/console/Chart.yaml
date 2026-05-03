@@ -12,7 +12,7 @@ description: |
   The HTML self-adapts: JS rewrites every reference hostname to
   window.location.hostname, so no per-deployment editing is needed.
 type: application
-version: 1.0.0
+version: 1.0.0-rc1
 appVersion: "1.0.0"
 maintainers:
   - name: graphwise-stack-aws
