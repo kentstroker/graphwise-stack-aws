@@ -161,13 +161,29 @@ fi
 # --------------------------------------------------------------------
 # 4. Image-pull secrets
 # --------------------------------------------------------------------
+# cluster-bootstrap.sh creates the `graphwise` Secret in both consuming
+# namespaces from ~/.ontotext/maven-{user,pass}. If those source files
+# don't exist yet, the operator is at an earlier deploy stage (DEPLOY
+# §3 hasn't been done) -- that's a deferred state, not a real failure.
+# Treat as WARN with a hint, not a hard fail.
 section "Image-pull secrets (private GraphRAG registry)"
+MAVEN_USER_FILE="$HOME/.ontotext/maven-user"
+MAVEN_PASS_FILE="$HOME/.ontotext/maven-pass"
+if [ -s "$MAVEN_USER_FILE" ] && [ -s "$MAVEN_PASS_FILE" ]; then
+    MAVEN_CREDS_PRESENT=yes
+else
+    MAVEN_CREDS_PRESENT=no
+fi
+
 for ns in graphwise graphrag; do
     if kubectl get secret -n "$ns" graphwise >/dev/null 2>&1; then
         check_pass "graphwise secret present in '$ns' namespace"
+    elif [ "$MAVEN_CREDS_PRESENT" = "no" ]; then
+        check_warn "graphwise secret deferred in '$ns' namespace" \
+                   "~/.ontotext/maven-{user,pass} not on disk yet (DEPLOY §3 step). Drop creds, re-run cluster-bootstrap.sh."
     else
         check_fail "graphwise secret MISSING in '$ns' namespace" \
-                   "kubectl get secret -n $ns graphwise"
+                   "Maven creds exist on disk but secret wasn't created -- re-run cluster-bootstrap.sh"
     fi
 done
 
