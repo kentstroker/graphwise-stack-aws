@@ -107,9 +107,19 @@ graphrag-secrets:
 
   # ConfigMap graphrag-components-vector-database. We reuse
   # poolparty-elasticsearch as the vector store (Q3: option a).
+  #
+  # The poolparty-elasticsearch subchart's Service is rendered by the
+  # umbrella with the <release>-<chart> fullname pattern -- so the
+  # actual in-cluster name is `graphwise-stack-poolparty-elasticsearch`,
+  # not the bare `poolparty-elasticsearch`. Matches the same naming
+  # convention as the graphdb-embedded / graphdb-projects services
+  # (see CLAUDE.md "GraphDB subchart fullname pattern").
+  #
+  # If you ever rename the umbrella's Helm release away from
+  # `graphwise-stack`, update this URL in lockstep.
   vectorDB:
     vectorStore: "elasticsearch"
-    elasticUrl: "http://poolparty-elasticsearch.graphwise:9200"
+    elasticUrl: "http://graphwise-stack-poolparty-elasticsearch.graphwise:9200"
     vectorIndex: "graphrag-vectors"
     vectorFieldName: "embedding"
 

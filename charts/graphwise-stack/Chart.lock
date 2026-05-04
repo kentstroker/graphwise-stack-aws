@@ -21,4 +21,4 @@ dependencies:
   repository: file://../addons
   version: 1.0.0-rc1
 digest: sha256:d7e610600a3098c1e1b736d7d4c931bb313c73d2c5dd4a9ff30cb927608a293e
-generated: "2026-05-03T16:57:09.331412-07:00"
+generated: "2026-05-04T06:43:44.769891-07:00"
