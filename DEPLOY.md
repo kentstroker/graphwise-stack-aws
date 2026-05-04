@@ -285,32 +285,51 @@ does **not** work against this stack's strict `admin_cidr` — see
 [SETUP §9](SETUP.md#9-optional-ec2-instance-connect)
 for why.)
 
-**Preferred path — one push command from your laptop.** Keep canonical
-copies of your secrets file (`~/graphwise-secrets.yaml`) and the three
-license files (`~/graphwise-licenses/{poolparty.key,graphdb.license,uv-license.key}`)
-on your laptop, gitignored. After every `terraform apply`, push them all
-in one shot:
+**Preferred path — symmetric pull/push cycle.** Keep canonical copies
+of every operator-supplied artifact on your laptop (gitignored), and
+re-push after every `terraform destroy/apply`. The pair:
 
 ```bash
-# On laptop -- pushes secrets YAML + 3 license files in one go
+# Before terraform destroy: capture deployment state to your laptop.
+./scripts/laptop/pull-secrets.sh
+
+# After terraform apply: restore everything in one shot.
 ./scripts/laptop/push-secrets.sh
 ```
 
-The script splices the FRESH `n8nEncryption.key` from the new EC2 into
-your local secrets copy before push (the local one is from a destroyed
-n8n DB and useless on the new one). License files land at
-`~/graphwise-stack-aws/files/licenses/` on the EC2 — exactly where
-`install-licenses.sh` looks for them. Missing files are warned + skipped,
-not fatal.
+What's captured (laptop paths shown):
+- `~/graphwise-secrets.yaml` — single-file secrets (maven, Bedrock, n8n license, n8n encryption key)
+- `~/graphwise-licenses/{poolparty.key, graphdb.license, uv-license.key}` — vendor license files
+- `~/graphwise-licenses/wildcard-tls.yaml` — the live LE wildcard TLS cert as a Secret YAML
 
-Bootstrap the laptop side once:
+The cert is the headline: `pull-secrets.sh` extracts it from
+`kubectl get secret -n cert-manager wildcard-tls -o yaml`,
+`push-secrets.sh` re-pushes it to `~/wildcard-tls-saved.yaml` on the
+new EC2, and `cluster-bootstrap.sh` detects + applies it before
+creating the Certificate resource. cert-manager sees a valid cert in
+place and **skips the LE issuance call entirely** — saves a per-week
+LE rate-limit slot (5 duplicate certs / identifier / 168h). Validation
+is built in: SANs must match the new deployment's apex + wildcard,
+cert must have >30 days remaining; on any mismatch, cert-manager
+issues fresh.
+
+The push helper also splices the FRESH `n8nEncryption.key` from the
+new EC2 into your local secrets copy before push (the local one is
+from a destroyed n8n DB and useless on the new one). Missing files
+are warned + skipped, not fatal.
+
+Bootstrap the laptop side once (very first time, before you have
+anything to pull):
 
 ```bash
-# On laptop -- one-time setup (after first manual edit of the EC2 secrets file)
-scp -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-secrets.yaml ~/
+# On laptop -- one-time setup
 mkdir -p ~/graphwise-licenses
 mv ~/Downloads/poolparty.key ~/Downloads/graphdb.license ~/Downloads/uv-license.key ~/graphwise-licenses/
+$EDITOR ~/graphwise-secrets.yaml   # template at infra/terraform/user-data.sh.tpl
 ```
+
+Subsequently the cycle is fully automatic: `pull-secrets.sh` before
+each destroy, `push-secrets.sh` after each apply.
 
 **Manual fallback** — if you'd rather edit on the EC2 and scp licenses
 ad-hoc, or you don't want the push helper:

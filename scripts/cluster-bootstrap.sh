@@ -218,8 +218,78 @@ helm upgrade --install reflector emberstack/reflector \
     --wait --timeout 3m
 
 # ---------------------------------------------------------------------------
-# Wildcard TLS Certificate (LE prod via DNS-01)
+# Wildcard TLS Certificate (LE prod via DNS-01) -- with optional restore
+# of a saved cert from a prior deployment to skip an LE issuance call
 # ---------------------------------------------------------------------------
+# If ~/wildcard-tls-saved.yaml exists (placed by
+# scripts/laptop/push-secrets.sh from a prior pull-secrets.sh capture),
+# validate it and apply the Secret BEFORE creating the Certificate.
+# cert-manager checks the Secret on Certificate reconcile -- if the
+# cert covers all the spec'd SANs and isn't expired (within 1/3-of-
+# lifetime renewBefore window = 30 days for a 90-day LE cert), it
+# skips issuance entirely. That saves a per-week LE rate-limit slot
+# (5 duplicate certs per identifier per 168h).
+#
+# Validation (fail open: any check failure -> skip restore, let
+# cert-manager issue fresh):
+#   - File parses as YAML
+#   - data.tls.crt + data.tls.key present and base64-decodable
+#   - cert covers BOTH the apex and *.apex SANs
+#   - cert not expired and >30 days remaining
+SAVED_CERT="/home/$(whoami)/wildcard-tls-saved.yaml"
+if [ -f "$SAVED_CERT" ]; then
+    echo "Found saved wildcard cert at $SAVED_CERT -- validating..."
+    saved_summary=$(python3 -c "
+import yaml, base64, sys, datetime, subprocess
+try:
+    with open('$SAVED_CERT') as f:
+        d = yaml.safe_load(f)
+    crt = base64.b64decode(d['data']['tls.crt']).decode()
+    base64.b64decode(d['data']['tls.key'])  # parse-check only
+    p = subprocess.run(['openssl', 'x509', '-noout', '-ext', 'subjectAltName', '-enddate'],
+                       input=crt, capture_output=True, text=True, check=True)
+    out = p.stdout
+    sans = [s.strip()[4:] for s in out.split('\\n') if s.strip().startswith('DNS:')]
+    # The single SAN line lists all SANs comma-separated; split and clean.
+    flat = []
+    for line in out.split('\\n'):
+        if 'DNS:' in line:
+            for chunk in line.split(','):
+                chunk = chunk.strip()
+                if chunk.startswith('DNS:'):
+                    flat.append(chunk[4:])
+    sans = flat
+    enddate_line = [l for l in out.split('\\n') if l.startswith('notAfter=')][0]
+    enddate = enddate_line[len('notAfter='):]
+    end_epoch = int(subprocess.run(['date', '-d', enddate, '+%s'], capture_output=True, text=True).stdout.strip() or 0)
+    days = (end_epoch - int(datetime.datetime.now().timestamp())) // 86400
+    print(','.join(sans))
+    print(days)
+except Exception as e:
+    sys.stderr.write(f'parse-error: {e}\\n')
+    sys.exit(1)
+" 2>&1)
+    if [ $? -ne 0 ]; then
+        echo "  WARNING: saved cert failed validation ($saved_summary). Skipping restore; cert-manager will issue fresh."
+    else
+        saved_sans=$(echo "$saved_summary" | sed -n '1p')
+        saved_days=$(echo "$saved_summary" | sed -n '2p')
+        expected_apex="$GRAPHWISE_APEX"
+        expected_wild="*.$GRAPHWISE_APEX"
+        if [ "$saved_days" -lt 30 ] 2>/dev/null; then
+            echo "  WARNING: saved cert has $saved_days days remaining (under renewBefore=30). Skipping restore; cert-manager will issue fresh."
+        elif ! echo ",$saved_sans," | grep -q ",$expected_apex,"; then
+            echo "  WARNING: saved cert SANs don't include apex '$expected_apex' (got: $saved_sans). Skipping restore; cert-manager will issue fresh."
+        elif ! echo ",$saved_sans," | grep -q ",$expected_wild,"; then
+            echo "  WARNING: saved cert SANs don't include wildcard '$expected_wild' (got: $saved_sans). Skipping restore; cert-manager will issue fresh."
+        else
+            echo "  ✓ saved cert valid: SANs=$saved_sans, $saved_days days remaining"
+            kubectl apply -f "$SAVED_CERT" >/dev/null
+            echo "  ✓ wildcard-tls Secret restored to cert-manager namespace; LE issuance will be skipped."
+        fi
+    fi
+fi
+
 # Two SANs cover everything: the apex (<sub>.<base>) for the Console
 # landing page, and the wildcard (*.<sub>.<base>) for every app
 # subdomain. cert-manager issues ONE Certificate, produces ONE Secret

@@ -21,6 +21,20 @@
 #      exact names). Missing files are warned + skipped, not fatal --
 #      lets operators push partial sets during initial onboarding.
 #
+#   3. ~/graphwise-licenses/wildcard-tls.yaml  (saved by pull-secrets.sh
+#      from a prior deployment's live wildcard cert) ->
+#                                 EC2:~/wildcard-tls-saved.yaml
+#
+#      cluster-bootstrap.sh detects this file and applies the Secret
+#      BEFORE creating the wildcard Certificate resource. cert-manager
+#      sees a valid cert in place and skips the LE issuance call --
+#      saves a per-week LE rate-limit slot. Cert is validated for
+#      expiry + SAN match before restore; if it fails, cert-manager
+#      issues fresh as normal.
+#
+#      Optional: if you don't have a saved cert yet (first deploy on
+#      this domain), this is just skipped.
+#
 # Important n8nEncryption note: cloud-init wrote a fresh
 # n8nEncryption.key into the EC2's ~/graphwise-secrets.yaml. By default
 # this script preserves THAT key (splices it into your local copy
@@ -62,12 +76,14 @@ LICENSES_DIR="$HOME/graphwise-licenses"
 KEEP_LOCAL_ENCRYPTION_KEY=no
 SKIP_SECRETS=no
 SKIP_LICENSES=no
+SKIP_CERT=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --secrets-file)              SECRETS_FILE="$2"; shift 2 ;;
         --licenses-dir)              LICENSES_DIR="$2"; shift 2 ;;
         --skip-secrets)              SKIP_SECRETS=yes; shift ;;
         --skip-licenses)             SKIP_LICENSES=yes; shift ;;
+        --skip-cert)                 SKIP_CERT=yes; shift ;;
         --keep-local-encryption-key) KEEP_LOCAL_ENCRYPTION_KEY=yes; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -213,11 +229,52 @@ USAGE
 fi
 
 # ---------------------------------------------------------------------
+# Phase 3: saved wildcard cert -> EC2:~/wildcard-tls-saved.yaml
+# ---------------------------------------------------------------------
+if [ "$SKIP_CERT" != "yes" ]; then
+    echo "${BOLD}== Wildcard TLS cert (saved from prior deployment) ==${RESET}"
+    cert_local="$LICENSES_DIR/wildcard-tls.yaml"
+    if [ ! -f "$cert_local" ]; then
+        printf '  %s⚠%s no saved cert at %s -- skipping (cluster-bootstrap.sh will let cert-manager issue fresh from LE)\n' "$YELLOW" "$RESET" "$cert_local"
+    else
+        # Print summary of what we're about to push, including expiry,
+        # so the operator sees whether restore will save an LE rate-limit
+        # slot or whether cert-manager will renew it shortly anyway.
+        cert_pem=$(python3 -c "
+import yaml, base64
+with open('$cert_local') as f:
+    d = yaml.safe_load(f)
+print(base64.b64decode(d['data']['tls.crt']).decode())
+" 2>/dev/null)
+        if [ -z "$cert_pem" ]; then
+            printf '  %s⚠%s could not decode cert from %s -- skipping push\n' "$YELLOW" "$RESET" "$cert_local"
+        else
+            sans=$(echo "$cert_pem" | openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://; s/^ //' | tr '\n' ' ')
+            not_after=$(echo "$cert_pem" | openssl x509 -noout -enddate 2>/dev/null | sed 's/notAfter=//')
+            not_after_epoch=$(date -j -f "%b %d %T %Y %Z" "$not_after" +%s 2>/dev/null || date -d "$not_after" +%s 2>/dev/null || echo 0)
+            now_epoch=$(date +%s)
+            days_remaining=$(( (not_after_epoch - now_epoch) / 86400 ))
+            printf '  %sLocal:%s     %s\n' "$DIM" "$RESET" "$cert_local"
+            printf '  %sRemote:%s    %s@%s:~/wildcard-tls-saved.yaml\n' "$DIM" "$RESET" "$USR" "$HOST"
+            printf '  %sSANs:%s      %s\n' "$DIM" "$RESET" "$sans"
+            printf '  %sNot After:%s %s (%s days remaining)\n' "$DIM" "$RESET" "$not_after" "$days_remaining"
+            if [ "$days_remaining" -lt 30 ]; then
+                printf '  %s⚠ cert expiring within 30 days -- cluster-bootstrap will restore it but cert-manager will renew shortly%s\n' "$YELLOW" "$RESET"
+            fi
+            scp -i "$KEY" "$cert_local" "$USR@$HOST:~/wildcard-tls-saved.yaml" >/dev/null
+            printf '%s✓ pushed%s wildcard-tls-saved.yaml (cluster-bootstrap will detect + restore before LE issuance)\n' "$GREEN" "$RESET"
+        fi
+    fi
+    echo
+fi
+
+# ---------------------------------------------------------------------
 # Verify hint
 # ---------------------------------------------------------------------
 echo "Verify on EC2:"
-echo "  ssh -i \$GRAPHWISE_KEY \$GRAPHWISE_USER@\$GRAPHWISE_HOST 'ls -la ~/graphwise-secrets.yaml ~/graphwise-stack-aws/files/licenses/'"
+echo "  ssh -i \$GRAPHWISE_KEY \$GRAPHWISE_USER@\$GRAPHWISE_HOST 'ls -la ~/graphwise-secrets.yaml ~/wildcard-tls-saved.yaml ~/graphwise-stack-aws/files/licenses/ 2>/dev/null'"
 echo
-echo "Then on EC2:"
+echo "Then on EC2 (in this order):"
+echo "  ./scripts/cluster-bootstrap.sh   # auto-restores wildcard cert if pushed; saves an LE rate-limit slot"
 echo "  ./scripts/install-licenses.sh    # turns license files into K8s Secrets"
 echo "  ./scripts/reset-helm.sh stroker  # picks up secrets via -f overlay"

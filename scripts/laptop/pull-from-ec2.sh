@@ -1,4 +1,25 @@
 #!/usr/bin/env bash
+# pull-from-ec2.sh -- DEPRECATED. Use scripts/laptop/pull-secrets.sh
+# instead.
+#
+# pull-secrets.sh is the symmetric counterpart to push-secrets.sh and
+# captures the modern operator-state set:
+#   - ~/graphwise-secrets.yaml       (single-file secrets overlay)
+#   - ~/graphwise-licenses/*         (license files in canonical
+#                                     filenames install-licenses.sh
+#                                     looks for)
+#   - ~/graphwise-licenses/wildcard-tls.yaml (live LE wildcard cert
+#                                     from the cluster -- restored on
+#                                     next deploy to skip an LE
+#                                     issuance call)
+#
+# This script remains for operators with old workflows; its file
+# manifest is STALE (still pulls ~/.ontotext/maven-{user,pass} and
+# the chart values.yaml, neither of which is the canonical source
+# anymore). Will be removed in a future cleanup.
+#
+# ---- Legacy doc below ----
+#
 # pull-from-ec2.sh -- run from your LAPTOP. Downloads license files,
 # Maven creds, and per-deployment state from a deployed EC2 host
 # into a timestamped backup directory before `terraform destroy`.
