@@ -21,7 +21,7 @@ No application source code is in this repo. Only:
 - `charts/{poolparty,graphdb,addons,console,poolparty-elasticsearch,keycloak-realms}/` — per-app sub-charts
 - `charts/vendor/graphrag*/` — vendored GraphRAG charts (chatbot, conversation, components, workflows) — installed as a separate Helm release
 - Helper scripts under `scripts/`: `cluster-bootstrap.sh`, `cluster-resume.sh`, `cluster-stop.sh`, `reset-helm.sh`, `render-values.sh`, `install-licenses.sh`, `extract-poolparty-realm.sh`, `validate-bootstrap.sh`, `validate-stack.sh`
-- Laptop-side helpers under `scripts/laptop/`: `push-to-ec2.sh`, `pull-from-ec2.sh` (legacy backup, deprecated), and the symmetric deployment-state pair `pull-config.sh` / `push-config.sh` — one command pulls/pushes `~/graphwise-secrets.yaml` + the three license files from `~/graphwise-licenses/` + the live wildcard TLS cert. `cluster-bootstrap.sh` detects the saved cert at `~/wildcard-tls-saved.yaml` and applies the Secret BEFORE creating the Certificate resource (cert-manager skips the LE issuance call → saves a per-week rate-limit slot).
+- Laptop-side helpers under `scripts/laptop/`: `push-to-ec2.sh`, `pull-from-ec2.sh` (legacy backup, deprecated), and the symmetric deployment-state pair `pull-config.sh` / `push-config.sh` — one command pulls/pushes `~/graphwise-secrets.yaml` + the three license files + the live wildcard TLS cert. `pull-config.sh` writes a dated snapshot folder at `~/Downloads/graphwise-config-<UTC-timestamp>/` (each pull stands alone — no clobber of `$HOME`), captures the EC2's live `charts/graphwise-stack/values.yaml` + diff vs the git baseline, auto-migrates Bedrock + n8n license values out of pre-overlay-arch chart-values into the snapshot's `graphwise-secrets.yaml`, and also grabs `~/dashboard-kubeconfig.yaml` for convenience (NOT pushed back — the bearer token is tied to that cluster's signing key). `pushLastPull.sh` is a one-line wrapper that finds the most recent snapshot folder and re-runs `push-config.sh` against it (forwards extra flags through). `cluster-bootstrap.sh` detects the saved cert at `~/wildcard-tls-saved.yaml` and applies the Secret BEFORE creating the Certificate resource (cert-manager skips the LE issuance call → saves a per-week rate-limit slot).
 - Vendor license files under `files/licenses/` (gitignored)
 
 Changes are usually to a chart's `values.yaml` / `templates/`, the umbrella's `templates/`, or `scripts/render-values.sh`.
@@ -179,6 +179,30 @@ The `KeycloakRealmImport` CR ALSO drops the per-client `.authorizationSettings` 
 2. The Job mounts that ConfigMap, gets an admin token via password grant against the master realm using the existing `poolparty-auth-admin` Secret (which the umbrella's bootstrap-admin Job already created), and for each client: fetches the UUID, PUTs the client representation with `authorizationServicesEnabled = true`, POSTs the authz config to `/admin/realms/<realm>/clients/<uuid>/authz/resource-server/import`.
 
 Idempotent, generic across clients (any future client with `authorizationSettings` is auto-handled). Container is `alpine:3.20` + apk-add `bash curl jq` — same pattern as the bootstrap-admin Job.
+
+### graphrag-realm-patch post-install/upgrade Job
+
+`KeycloakRealmImport` CRs are **import-once-only**. The Keycloak operator marks `status.conditions.Done=True` after the first successful import and never re-imports a given CR — even if the spec changes (e.g., a chart-template fix or a new apex hostname). The first deploy of this stack imported the graphrag realm with `redirectUris` like `https://graphrag../*` (empty subdomain/baseDomain due to a Helm globals-propagation bug); subsequent `helm upgrade`s silently no-op'd, the chatbot login failed with `Invalid parameter: redirect_url`, and the only fix was to manually delete the realm + CR + helm upgrade.
+
+`charts/keycloak-realms/templates/graphrag-realm-patch-job.yaml` is a Helm `post-install,post-upgrade` Job that runs after every helm operation and idempotently PATCHes the graphrag realm via the Keycloak admin REST API:
+
+- `chatbot-app-client.redirectUris` ← computed from the current subdomain/baseDomain
+- `chatbot-app-client.webOrigins` ← same
+- `conversation-api-client.webOrigins` ← same
+
+Auth flow mirrors `keycloak-bootstrap-admin-job.yaml`: wait for `/realms/graphrag/.well-known/openid-configuration`, get a temp-admin token from master, PUT the client representation. Runs regardless of whether the `KeycloakRealmImport` CR re-ran. Gated by `.Values.graphrag.enabled`.
+
+### unifiedviews uv-password-reset post-install/upgrade Job
+
+UV's image bootstraps `admin` + `user` accounts on first boot, but the password triple it lays down doesn't decode against any known default — the literal `admin / admin` printed in UV docs does NOT log you in on a clean deploy. UV has no built-in password reset, so the historical recovery dance was: exec into the rdf4j workbench → find the conf graph + user resource URI → `python3 hashlib.pbkdf2_hmac("sha1", b"admin", salt, 100000, 32)` → format as `100000:salt-hex:dk-hex` → DELETE old + INSERT new in the right named graph (`<.../resource/graph/conf>`, NOT the default graph).
+
+`charts/addons/charts/unifiedviews/templates/uv-password-reset-job.yaml` replaces that. It runs on every install + upgrade and SPARQL-resets the admin/admin + user/user passwords by DELETE+INSERTing the password triple in the `conf` graph of the RDF4J `uv` repository. Talks to the rdf4j Service in-cluster (`http://rdf4j:8080/...`) so it bypasses the nginx ingress + basic-auth (rdf4j-workbench has no container-level auth). Waits for the `uv` repo to exist AND for UV's seed admin user triple to be present before patching. Gated by `.Values.passwordReset.enabled` (default true).
+
+### graphrag-vectors-index post-install/upgrade Job
+
+`graphrag-components`'s startup probe hits `/__gtg`, which runs `ElasticSearchVectorHealthCheck`. That health check verifies the `graphrag-vectors` index exists in Elasticsearch; if it doesn't, the probe returns 503 forever and the pod never goes Ready. Pre-Job, every fresh deploy required a manual `kubectl exec ... curl -XPUT` to create the index.
+
+`charts/graphwise-stack/templates/graphrag-vectors-index-job.yaml` PUTs the index automatically: `embedding: dense_vector, dims=1024` (cohere.embed-english-v3 size), `similarity=cosine`. Idempotent — PUT-ing an existing index returns 400 with `resource_already_exists_exception` which the Job treats as success. `hook-weight: 10` (after Keycloak bootstrap weight=5; ES StatefulSet is up by then). Gated on `graphrag-secrets.enabled` AND `graphrag-secrets.vectorDB.vectorStore == "elasticsearch"`.
 
 ### GraphDB subchart fullname pattern (alias-aware) + namespace split
 

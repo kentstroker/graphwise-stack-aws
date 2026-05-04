@@ -285,22 +285,30 @@ does **not** work against this stack's strict `admin_cidr` — see
 [SETUP §9](SETUP.md#9-optional-ec2-instance-connect)
 for why.)
 
-**Preferred path — symmetric pull/push cycle.** Keep canonical copies
-of every operator-supplied artifact on your laptop (gitignored), and
-re-push after every `terraform destroy/apply`. The pair:
+**Preferred path — symmetric pull/push cycle.** Capture every
+operator-supplied artifact on your laptop before `terraform destroy`,
+restore it after `terraform apply`. The pair:
 
 ```bash
-# Before terraform destroy: capture deployment state to your laptop.
+# Before terraform destroy: capture deployment state to a dated snapshot folder
+# under ~/Downloads/ (each pull stands alone, no clobber of $HOME).
 ./scripts/laptop/pull-config.sh
 
-# After terraform apply: restore everything in one shot.
-./scripts/laptop/push-config.sh
+# After terraform apply: restore the most recent snapshot in one shot.
+./scripts/laptop/pushLastPull.sh
+# (or, to push a specific snapshot:
+#   ./scripts/laptop/push-config.sh \
+#       --secrets-file ~/Downloads/graphwise-config-<UTC>/graphwise-secrets.yaml \
+#       --licenses-dir ~/Downloads/graphwise-config-<UTC>/licenses )
 ```
 
-What's captured (laptop paths shown):
-- `~/graphwise-secrets.yaml` — single-file secrets (maven, Bedrock, n8n license, n8n encryption key)
-- `~/graphwise-licenses/{poolparty.key, graphdb.license, uv-license.key}` — vendor license files
-- `~/graphwise-licenses/wildcard-tls.yaml` — the live LE wildcard TLS cert as a Secret YAML
+What lands in the snapshot (`~/Downloads/graphwise-config-<UTC>/`):
+- `payload.tgz` — the tarball as it arrived (kept for archival / re-extract)
+- `graphwise-secrets.yaml` — single-file secrets (maven, Bedrock, n8n license, n8n encryption key)
+- `chart-values.yaml` + `chart-values.diff` — the EC2's live chart values + diff vs git baseline (pre-overlay-arch deployments stored Bedrock/n8n license here; auto-migrated into the snapshot's `graphwise-secrets.yaml`)
+- `dashboard-kubeconfig.yaml` — saves a separate scp post-deploy (NOT pushed back; token is tied to the cluster's signing key)
+- `licenses/{poolparty.key, graphdb.license, uv-license.key}` — vendor license files
+- `licenses/wildcard-tls.yaml` — the live LE wildcard TLS cert as a Secret YAML
 
 The cert is the headline: `pull-config.sh` extracts it from
 `kubectl get secret -n cert-manager wildcard-tls -o yaml`,
@@ -318,18 +326,11 @@ new EC2 into your local secrets copy before push (the local one is
 from a destroyed n8n DB and useless on the new one). Missing files
 are warned + skipped, not fatal.
 
-Bootstrap the laptop side once (very first time, before you have
-anything to pull):
-
-```bash
-# On laptop -- one-time setup
-mkdir -p ~/graphwise-licenses
-mv ~/Downloads/poolparty.key ~/Downloads/graphdb.license ~/Downloads/uv-license.key ~/graphwise-licenses/
-$EDITOR ~/graphwise-secrets.yaml   # template at infra/terraform/user-data.sh.tpl
-```
-
-Subsequently the cycle is fully automatic: `pull-config.sh` before
-each destroy, `push-config.sh` after each apply.
+First time only (you don't yet have a snapshot to pull): edit
+`~/graphwise-secrets.yaml` directly on the EC2 (cloud-init pre-creates
+it with placeholders) and scp the three license files in. Subsequent
+cycles are automatic: `pull-config.sh` before each destroy,
+`pushLastPull.sh` after each apply.
 
 **Manual fallback** — if you'd rather edit on the EC2 and scp licenses
 ad-hoc, or you don't want the push helper:
@@ -1000,9 +1001,14 @@ curl -s https://auth.<sub>.<base>/realms/master/.well-known/openid-configuration
 │   ├── reset-helm.sh                # Wipe + reinstall both Helm releases
 │   ├── install-licenses.sh          # Load license files as K8s Secrets
 │   ├── extract-poolparty-realm.sh   # Pull realm JSON from poolparty-keycloak image
+│   ├── validate-bootstrap.sh        # Post-cluster-bootstrap health check
+│   ├── validate-stack.sh            # Post-reset-helm health check
 │   └── laptop/                      # Laptop-side helpers
-│       ├── push-to-ec2.sh           # rsync local edits to the EC2 host
-│       └── pull-from-ec2.sh         # rsync EC2-side edits back to laptop
+│       ├── pull-config.sh           # Pull operator state (secrets + licenses + LE cert) into ~/Downloads/graphwise-config-<UTC>/
+│       ├── push-config.sh           # Push operator state back to a fresh EC2
+│       ├── pushLastPull.sh          # Convenience wrapper: push the most recent pull-config snapshot
+│       ├── push-to-ec2.sh           # (legacy) rsync local edits to the EC2 host
+│       └── pull-from-ec2.sh         # (legacy) rsync EC2-side edits back to laptop
 ├── files/licenses/                  # Vendor license files (gitignored)
 ├── README.md                        # One-page summary + zero-to-deployed checklist
 ├── DEPLOY.md                        # This file (full walkthrough)
