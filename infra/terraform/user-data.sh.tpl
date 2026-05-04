@@ -235,7 +235,7 @@ chmod 600 "$SECRETS_FILE"
 # Standardized landing pad for ingest data (PDFs, source docs, large
 # reference corpora that GraphRAG / PoolParty pipelines consume).
 # Operators upload via:
-#   rsync -azP -e "ssh -i <key.pem>" <local>/  ec2-user@<eip>:~/staging-data/
+#   rsync -azP -e "ssh -i $GRAPHWISE_KEY" <local>/  $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 # To make this directory visible inside KIND pods, add a hostPath mount
 # to infra/kind/kind-config.yaml + a PV/PVC pair (deferred until first
 # real ingest workload). See DEPLOY.md "Upload ingest data" for the
@@ -284,7 +284,7 @@ What's still manual, in order:
     #     scp it to your laptop and upload via the Dashboard's
     #     Kubeconfig login option (the token-field paste handler is
     #     broken in Chrome/Safari):
-    #       scp -i <key.pem> ec2-user@<eip>:~/dashboard-kubeconfig.yaml ~/Downloads/
+    #       scp -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
     #     Then https://dashboard.$HOSTNAME_FQDN/ -> Kubeconfig radio
     #     -> Choose file -> Sign In.
 

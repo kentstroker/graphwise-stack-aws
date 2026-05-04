@@ -338,14 +338,14 @@ For multi-GB ingest data (PDFs, source documents, reference corpora that GraphRA
 ```bash
 # laptop -- if rsync is missing on macOS, install via `brew install rsync`
 # (Apple ships openrsync since Ventura which has compat quirks).
-rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/local-pdfs/ ec2-user@<eip>:~/staging-data/
+rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/local-pdfs/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 For one-off small files or stable links where you don't want to install rsync, plain `scp -r` works as a fallback (no resume support, no compression):
 
 ```bash
 # laptop -- fallback
-scp -r -i $GRAPHWISE_KEY ~/local-pdfs/ ec2-user@<eip>:~/staging-data/
+scp -r -i $GRAPHWISE_KEY ~/local-pdfs/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 Files survive EC2 stop/start, KIND restart, `reset-helm.sh`. They do **NOT** survive `terraform destroy` (the root EBS volume goes with the instance).

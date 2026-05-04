@@ -115,7 +115,11 @@ AWS Console → EC2 → Network & Security → Key Pairs → Create key pair →
 mv ~/Downloads/graphwise-stack.pem ~/.ssh/
 chmod 400 ~/.ssh/graphwise-stack.pem
 export GRAPHWISE_KEY=~/.ssh/graphwise-stack.pem
+export GRAPHWISE_HOST=<your-subdomain>.<your-base-domain>   # or your EIP
+export GRAPHWISE_USER=ec2-user
 ```
+
+Add the three exports to `~/.zshrc` / `~/.bashrc` (or PowerShell `$PROFILE`) so every subsequent terminal already has them. Every `ssh` / `scp` / `rsync` command below references these three vars.
 
 Details: [SETUP §7](SETUP.md#7-ec2-key-pair).
 
@@ -175,7 +179,7 @@ After apply finishes, cloud-init keeps running for 2-3 more minutes:
 
 ```bash
 # laptop
-ssh -i $GRAPHWISE_KEY ec2-user@<your-eip> 'sudo tail -f /var/log/bootstrap.log'
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST 'sudo tail -f /var/log/bootstrap.log'
 # Wait for "=== Bootstrap complete ===", then Ctrl-C
 ```
 
@@ -200,7 +204,7 @@ Protects against AWS-published AMI refreshes triggering an EC2 force-replace on 
 
 ```bash
 # laptop -- the ssh command lands you on EC2 as ec2-user
-ssh -i $GRAPHWISE_KEY ec2-user@<your-eip>
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST
 # Or, if you set up step 7:
 aws ec2-instance-connect ssh --instance-id <your-instance-id> --private-key-file $GRAPHWISE_KEY
 ```
@@ -222,9 +226,9 @@ In another terminal on your laptop:
 
 ```bash
 # laptop
-scp -i $GRAPHWISE_KEY ~/path/to/poolparty.key   ec2-user@<your-eip>:~/graphwise-stack-aws/files/licenses/poolparty.key
-scp -i $GRAPHWISE_KEY ~/path/to/graphdb.license ec2-user@<your-eip>:~/graphwise-stack-aws/files/licenses/graphdb.license
-scp -i $GRAPHWISE_KEY ~/path/to/uv-license.key  ec2-user@<your-eip>:~/graphwise-stack-aws/files/licenses/uv-license.key
+scp -i $GRAPHWISE_KEY ~/path/to/poolparty.key   $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/files/licenses/poolparty.key
+scp -i $GRAPHWISE_KEY ~/path/to/graphdb.license $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/files/licenses/graphdb.license
+scp -i $GRAPHWISE_KEY ~/path/to/uv-license.key  $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/files/licenses/uv-license.key
 ```
 
 Confirm on EC2:
@@ -250,14 +254,14 @@ openrsync since Ventura which has compat quirks) or
 
 ```bash
 # laptop -- recommended
-rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 Fallback (no install needed, but no resume):
 
 ```bash
 # laptop -- scp recursive copy
-scp -r -i $GRAPHWISE_KEY ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+scp -r -i $GRAPHWISE_KEY ~/path/to/local-pdfs/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 Persists across EC2 stop/start and reset-helm but NOT

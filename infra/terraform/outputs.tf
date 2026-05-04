@@ -48,8 +48,8 @@ output "instance_public_dns" {
 }
 
 output "ssh" {
-  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created."
-  value       = "ssh -i <path-to-your-keypair.pem> ec2-user@${local.public_ip}"
+  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created. Set GRAPHWISE_KEY / GRAPHWISE_HOST / GRAPHWISE_USER per SETUP §7 -- the literal IP form ssh -i <path-to-keypair.pem> ec2-user@${local.public_ip} also works."
+  value       = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST   # GRAPHWISE_HOST=${local.public_ip} or your subdomain"
 }
 
 output "expected_urls" {
@@ -69,5 +69,5 @@ output "expected_urls" {
 
 output "bootstrap_log_hint" {
   description = "Path on the instance where the cloud-init bootstrap script writes its log. The KIND cluster bring-up runs in this script and adds ~3-5 minutes to the usual provisioning time. Tail this on first SSH to confirm the install finished cleanly."
-  value       = "ssh -i <path-to-your-keypair.pem> ec2-user@${local.public_ip} 'sudo tail -f /var/log/bootstrap.log'"
+  value       = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST 'sudo tail -f /var/log/bootstrap.log'   # GRAPHWISE_HOST=${local.public_ip} or your subdomain"
 }

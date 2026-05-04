@@ -122,7 +122,7 @@ KIND nodes are **Docker** containers (we migrated off podman in late 2026 — se
 While iterating on the Helm charts, edits land on the developer's Mac and get scp'd to the EC2 host. Git is intentionally not in the loop until the changes settle. After every chart/script edit, sync the affected files before `helm upgrade`:
 
 ```bash
-scp -i <key.pem> <changed-files> ec2-user@<eip>:~/graphwise-stack-aws/<paths>/
+scp -i $GRAPHWISE_KEY <changed-files> $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/<paths>/
 ```
 
 `helm get manifest graphwise-stack -n graphwise` confirms what was actually applied — useful when an expected change isn't taking effect.
@@ -225,7 +225,7 @@ Multi-GB ingest data (PDFs, source documents, reference corpora the GraphRAG pip
 2. **KIND container:** mounted at `/staging-data` via `extraMounts` in `infra/kind/kind-config.yaml`. **Adding this requires `kind delete cluster` + `kind create cluster`** — KIND can't add mounts to a running cluster. Schedule with the next planned `reset-helm.sh` cycle, never as a hotfix.
 3. **Pod:** PVC named `staging-data` per consuming namespace. `charts/graphwise-stack/templates/staging-data.yaml` renders one hostPath PV + one PVC per entry in `.Values.staging.namespaces` (default `[graphwise, graphrag]`). PVs use a sentinel `storageClassName: hostpath-staging` (no provisioner) and `claimRef`-pre-bind to their specific PVC; PVCs pin via `volumeName`. Both pre-binding mechanisms are required — without either, PVCs would stay `Pending` while K8s tried (and failed) to dynamically provision against the sentinel storage class.
 
-Operator workflow: `rsync -azP -e "ssh -i $GRAPHWISE_KEY" <local>/ ec2-user@<eip>:~/staging-data/`. Files survive EC2 stop/start, KIND restart, `reset-helm.sh`. Do NOT survive `terraform destroy` (root EBS goes with the instance).
+Operator workflow: `rsync -azP -e "ssh -i $GRAPHWISE_KEY" <local>/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/`. Files survive EC2 stop/start, KIND restart, `reset-helm.sh`. Do NOT survive `terraform destroy` (root EBS goes with the instance).
 
 Pods are not auto-volumeMounted to `staging-data` by default — consuming workloads (graphrag-workflows, graphrag-components, etc.) add `volumes` + `volumeMounts` referencing PVC `staging-data` in their own namespace when ready. Toggle the entire feature off via `staging.enabled: false` in umbrella values.
 

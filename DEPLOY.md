@@ -181,7 +181,7 @@ with:
 
 ```bash
 # On laptop
-ssh -i <key.pem> ec2-user@<eip> 'sudo tail -f /var/log/bootstrap.log'
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST 'sudo tail -f /var/log/bootstrap.log'
 ```
 
 Wait for `=== Bootstrap complete at <timestamp> ===`. The cluster is
@@ -266,15 +266,18 @@ nothing works.
 
 ```bash
 # On laptop -- the ssh command lands you on the EC2 as ec2-user
-ssh -i <key.pem> ec2-user@<eip>
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST
 ```
+
+(`$GRAPHWISE_KEY`, `$GRAPHWISE_HOST`, `$GRAPHWISE_USER` are the three
+exports you set in [SETUP §7](SETUP.md#export-the-deploy-environment-variables-now).)
 
 Or, if you prefer AWS-injected per-session keys (and have the small
 inline IAM policy from [SETUP §9 Method 1](SETUP.md#method-1-recommended-aws-cli--aws-ec2-instance-connect-ssh)):
 
 ```bash
 # On laptop -- alternative login via AWS CLI EC2 Instance Connect
-aws ec2-instance-connect ssh --instance-id $(terraform -chdir=infra/terraform output -raw instance_id) --private-key-file <key.pem>
+aws ec2-instance-connect ssh --instance-id $(terraform -chdir=infra/terraform output -raw instance_id) --private-key-file $GRAPHWISE_KEY
 ```
 
 Both land you as `ec2-user`. (EC2 Instance Connect from the AWS Console
@@ -295,9 +298,9 @@ chmod 600 ~/.ontotext/*
 # Drop Graphwise license files via scp from your laptop:
 mkdir -p files/licenses
 # (back on your laptop, in another terminal)
-#   scp -i <key.pem> ~/path/to/poolparty.key ec2-user@<eip>:~/graphwise-stack-aws/files/licenses/poolparty.key
-#   scp -i <key.pem> ~/path/to/graphdb.license ec2-user@<eip>:~/graphwise-stack-aws/files/licenses/graphdb.license
-#   scp -i <key.pem> ~/path/to/uv-license.key ec2-user@<eip>:~/graphwise-stack-aws/files/licenses/uv-license.key
+#   scp -i $GRAPHWISE_KEY ~/path/to/poolparty.key $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/files/licenses/poolparty.key
+#   scp -i $GRAPHWISE_KEY ~/path/to/graphdb.license $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/files/licenses/graphdb.license
+#   scp -i $GRAPHWISE_KEY ~/path/to/uv-license.key $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/files/licenses/uv-license.key
 ls files/licenses/
 ```
 
@@ -357,7 +360,7 @@ Then upload:
 
 ```bash
 # On laptop
-rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+rsync -azP -e "ssh -i $GRAPHWISE_KEY" ~/path/to/local-pdfs/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 (Note the trailing `/` on the source. `rsync` is sensitive to this:
@@ -375,12 +378,12 @@ last resort on a stable link:
 
 ```bash
 # On laptop -- single file
-scp -i $GRAPHWISE_KEY ~/path/to/file.pdf ec2-user@<your-eip>:~/staging-data/
+scp -i $GRAPHWISE_KEY ~/path/to/file.pdf $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 ```bash
 # On laptop -- whole directory (recursive)
-scp -r -i $GRAPHWISE_KEY ~/path/to/local-pdfs/ ec2-user@<your-eip>:~/staging-data/
+scp -r -i $GRAPHWISE_KEY ~/path/to/local-pdfs/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/
 ```
 
 #### Verify the upload landed
@@ -538,7 +541,7 @@ cluster-admin RBAC.
 > on the EC2 host. Pull it down with one scp:
 >
 > ```bash
-> scp -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
+> scp -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
 > ```
 >
 > On the Dashboard login screen → switch radio to **Kubeconfig** →
@@ -785,7 +788,7 @@ To bring it back:
 
 ```bash
 aws ec2 start-instances --instance-ids <id>      # from your laptop
-ssh ec2-user@<eip>                               # wait ~60s for boot
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST    # wait ~60s for boot
 ./scripts/cluster-resume.sh                      # restart KIND node containers
 # If you scaled workloads to 0 with cluster-stop.sh, re-run the
 # helm upgrade commands above to restore the chart's declared

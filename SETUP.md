@@ -961,33 +961,54 @@ The path you note here is what you'll paste into
 `terraform.tfvars` as `key_pair_name` (the name only, not the
 path), and into the `ssh -i <path>` commands later.
 
-### Export the key path so SSH/SCP commands stay short
+### Export the deploy environment variables now
 
-The deploy walkthrough has a lot of `ssh -i …` and the
-`scripts/laptop/{push,pull}-*.sh` helpers take `--key`. Export
-once in your shell rc so you don't paste the path every time:
+Every `ssh`, `scp`, and `rsync` command in the rest of this guide
+(SETUP, QUICKSTART, DEPLOY, HOWITWORKS, CONSOLE-GUIDE) is written to
+reference three shell variables. Set them once in your shell rc and
+the commands paste cleanly without further substitution:
+
+| Var | What | Example |
+|---|---|---|
+| `GRAPHWISE_KEY` | Absolute path to the `.pem` you just saved | `~/.ssh/graphwise-stack.pem` |
+| `GRAPHWISE_HOST` | Your deployment hostname **or** Elastic IP. Either works for SSH; the apex hostname is friendlier once DNS is in place. | `stroker.semantic-proof.com` (or `54.149.12.34`) |
+| `GRAPHWISE_USER` | SSH user on the EC2. Always `ec2-user` for this stack (AL2023 default). | `ec2-user` |
 
 **macOS / Linux** (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
 export GRAPHWISE_KEY=~/.ssh/graphwise-stack.pem
-# Optional -- once Terraform is applied, set this to your EIP or
-# subdomain so the laptop helpers can drop --host too.
-# export GRAPHWISE_HOST=stroker.semantic-proof.com
+export GRAPHWISE_HOST=stroker.semantic-proof.com   # or your EIP
+export GRAPHWISE_USER=ec2-user
 ```
 
 **Windows** (PowerShell profile, `$PROFILE`):
 
 ```powershell
 $env:GRAPHWISE_KEY = "$HOME\.ssh\graphwise-stack.pem"
-# $env:GRAPHWISE_HOST = "stroker.semantic-proof.com"
+$env:GRAPHWISE_HOST = "stroker.semantic-proof.com"
+$env:GRAPHWISE_USER = "ec2-user"
 ```
 
-After reloading the shell, `scripts/laptop/push-to-ec2.sh` and
-`pull-from-ec2.sh` honor `GRAPHWISE_KEY` and `GRAPHWISE_HOST` as
-defaults, so you can run them with just the operation-specific
-flags. SSH/SCP itself doesn't read these env vars — for those, an
-`~/.ssh/config` entry is the cleaner pattern:
+Reload the shell (`exec $SHELL` or just open a new terminal) and
+verify:
+
+```bash
+echo "$GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST"
+# Should print: /Users/you/.ssh/graphwise-stack.pem ec2-user@stroker.semantic-proof.com
+```
+
+You don't have a working host yet (Terraform hasn't run), but
+exporting it now means you only do it once. After
+`terraform apply`, set `GRAPHWISE_HOST` to your subdomain or EIP
+and every subsequent command in the docs Just Works.
+
+The `scripts/laptop/push-to-ec2.sh` and `pull-from-ec2.sh` helpers
+also honor these three vars as defaults, so you can run them with
+just the operation-specific flags.
+
+If you'd prefer `ssh graphwise` / `scp foo graphwise:bar` (no
+flags at all), an `~/.ssh/config` alias is the cleaner pattern:
 
 ```
 Host graphwise
@@ -996,7 +1017,9 @@ Host graphwise
     IdentityFile ~/.ssh/graphwise-stack.pem
 ```
 
-Then `ssh graphwise` and `scp foo graphwise:bar` Just Work.
+The docs use the env-var form because it's transparent (every
+command shows exactly what `ssh` is doing) and works on a fresh
+laptop without an SSH config.
 
 ---
 
@@ -1264,7 +1287,7 @@ unrelated reasons).
 
 In order of complexity:
 
-1. **Plain SSH** (`ssh -i $GRAPHWISE_KEY ec2-user@<eip>`) — simplest,
+1. **Plain SSH** (`ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST`) — simplest,
    no AWS API calls, no Console step. Use this 99% of the time.
 2. **`aws ec2-instance-connect ssh ...`** (Method 1 above) — adds
    one inline IAM policy, no SG change. Useful when your local

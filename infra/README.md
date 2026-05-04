@@ -187,7 +187,7 @@ godaddy_dns_records   = <<-EOT
                         EOT
 instance_id           = "i-0abcdef0123456789"
 instance_public_dns   = "ec2-54-149-12-34.us-west-2.compute.amazonaws.com"
-ssh                   = "ssh -i <path-to-your-keypair.pem> ec2-user@54.149.12.34"
+ssh                   = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST   # GRAPHWISE_HOST=54.149.12.34 or your subdomain"
 expected_urls         = { chatbot = "https://graphrag.<sub>.<base>/" ...}
 bootstrap_log_hint    = "ssh ... 'sudo tail -f /var/log/bootstrap.log'"
 ```
@@ -253,7 +253,7 @@ From `terraform apply` complete to a working HTTPS stack.
 
 ```bash
 # Takes 2-3 minutes after apply. Tail the log to know when it's done.
-ssh -i <path-to-your-keypair.pem> ec2-user@<elastic_ip> 'sudo tail -f /var/log/bootstrap.log'
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST 'sudo tail -f /var/log/bootstrap.log'
 ```
 
 Look for `=== Bootstrap complete at <timestamp> ===`. Then Ctrl-C.
@@ -311,7 +311,7 @@ dig +short <sub>.<base> poolparty.<sub>.<base>
 ### 3. SSH in as ec2-user
 
 ```bash
-ssh -i <path-to-your-keypair.pem> ec2-user@<elastic_ip>
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST
 ```
 
 The `~/NEXT_STEPS.txt` file mirrors this runbook.

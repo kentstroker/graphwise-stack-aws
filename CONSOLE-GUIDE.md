@@ -338,7 +338,7 @@ chart is still the placeholder `REPLACE_WITH_REAL_N8N_LICENSE_KEY`.
 `cluster-bootstrap.sh` auto-generates `~/dashboard-kubeconfig.yaml` on EC2 with the long-lived token embedded. Pull it down once:
 
 ```bash
-scp -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
+scp -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
 ```
 
 On the Dashboard login screen → switch radio to **Kubeconfig** → "Choose kubeconfig file" → select `~/Downloads/dashboard-kubeconfig.yaml` → Sign In. Same kubeconfig works forever (until you revoke the underlying token).
@@ -460,7 +460,7 @@ for the full list.
 
 ```bash
 # Plain SSH (default)
-ssh -i $GRAPHWISE_KEY ec2-user@$GRAPHWISE_HOST
+ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST
 
 # AWS CLI EC2 Instance Connect -- AWS pushes a temp key, then SSH from
 # your laptop (no SG change needed). Requires the inline IAM policy
