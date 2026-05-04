@@ -487,14 +487,53 @@ export LE_EMAIL=you@example.com
 ./scripts/cluster-bootstrap.sh
 ```
 
-`GRAPHWISE_APEX` (the apex hostname for your deployment) is
-exported automatically via `/etc/profile.d/graphwise.sh` from
-cloud-init, so a fresh login shell already has it. If you ever
-invoke `cluster-bootstrap.sh` from a non-login context, set it
-explicitly: `GRAPHWISE_APEX=<sub>.<base> ./scripts/cluster-bootstrap.sh`.
+Three env vars are required, all auto-exported via
+`/etc/profile.d/graphwise.sh` from cloud-init:
 
-Takes ~5–6 minutes the first time (image pulls + helm waits + LE
-DNS-01 wildcard cert issuance).
+| Var | Source | Used by |
+|---|---|---|
+| `GRAPHWISE_APEX` | cloud-init from `var.subdomain.var.base_domain` | observability Ingress hostnames (dashboard / prometheus / grafana) + the wildcard cert SANs |
+| `ROUTE53_ZONE_ID` | cloud-init from `var.route53_zone_id` | cert-manager DNS-01 ClusterIssuer (Route 53 solver writes `_acme-challenge` TXT records into this zone) |
+| `AWS_REGION` | cloud-init from `var.region` | cert-manager Route 53 solver's STS endpoint selection |
+
+Plus operator-supplied: `LE_EMAIL` (your Let's Encrypt account email).
+
+> **⚠ Footgun: SSH session pre-dates the EC2 rebuild.**
+> If your shell was open BEFORE `terraform apply` finished
+> (i.e., you SSH'd in once and your tabs survived the rebuild),
+> `/etc/profile.d/graphwise.sh` won't be sourced into your current
+> shell — only fresh login shells inherit it. `cluster-bootstrap.sh`
+> bombs immediately at the `${ROUTE53_ZONE_ID:?...}` required-env
+> check, after installing only ingress-nginx. Symptom in
+> `validate-bootstrap.sh`: every namespace except ingress-nginx
+> shows "0 pods", `letsencrypt-prod ClusterIssuer NOT Ready (status=missing)`.
+>
+> **Two recovery paths:**
+>
+> ```bash
+> # On EC2 -- option A: source the profile in your current shell, then re-run.
+> source /etc/profile.d/graphwise.sh
+> echo "GRAPHWISE_APEX=$GRAPHWISE_APEX ROUTE53_ZONE_ID=$ROUTE53_ZONE_ID AWS_REGION=$AWS_REGION"
+> LE_EMAIL=you@example.com ./scripts/cluster-bootstrap.sh
+> ```
+>
+> ```bash
+> # On EC2 -- option B: just open a fresh login shell.
+> exit
+> # then SSH back in -- new shell sources the profile automatically
+> ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST
+> LE_EMAIL=you@example.com ./scripts/cluster-bootstrap.sh
+> ```
+>
+> Either way `cluster-bootstrap.sh` is idempotent — it picks up
+> where it left off (ingress-nginx already installed, skips it,
+> moves on to cert-manager + reflector + the rest).
+
+Takes ~5–6 minutes the first time (image pulls + helm waits +
+LE DNS-01 wildcard cert issuance — though if you pushed a saved
+wildcard cert via `scripts/laptop/push-config.sh`,
+cluster-bootstrap.sh restores it from `~/wildcard-tls-saved.yaml`
+and skips the LE call entirely).
 
 Idempotent — safe to re-run.
 
