@@ -49,7 +49,7 @@ Details: [SETUP §3 → Clone the repo](SETUP.md#clone-the-graphwise-stack-aws-r
 
 Performed by **root or IAM admin** (not by the users you're creating). Web UI only.
 
-1. **Terraform user** — `terraform-demo` → API access only → attach `AmazonEC2FullAccess` → create access key (Application running outside AWS) → save Access Key ID + Secret.
+1. **Terraform user** — `terraform-demo` → API access only → attach `AmazonEC2FullAccess` → also attach a scoped inline IAM policy `graphwise-stack-iam` so Terraform can manage the EC2 instance role for cert-manager → create access key (Application running outside AWS) → save Access Key ID + Secret. Inline-policy JSON in [SETUP §4a "Attach scoped IAM permissions"](SETUP.md#attach-scoped-iam-permissions-for-the-ec2-instance-role) — without it `terraform apply` / `destroy` fail with `AccessDenied: iam:CreateRole`.
 2. **Bedrock user** — `graphrag-bedrock` → API access only → inline policy `bedrock-cohere-invoke` (`bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` on `arn:aws:bedrock:<your-region>::foundation-model/cohere.embed-english-v3`) → create access key → save.
 
 Details: [SETUP §4a](SETUP.md#4a-create-the-terraform-iam-user) + [§4b](SETUP.md#4b-create-the-bedrock-iam-user).

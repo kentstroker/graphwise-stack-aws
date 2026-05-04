@@ -381,7 +381,7 @@ Skip the "Sign up" subsection if you already have an AWS account.
 >
 > | Step | Performed by | Why |
 > |---|---|---|
-> | §4 — create §4a Terraform user, §4b Bedrock user, attach policies, generate access keys | **Root user** (the email you signed up with) **OR** an existing IAM admin user (`AdministratorAccess` or `IAMFullAccess`) | Only IAM admins can create users and attach policies. `terraform-demo` doesn't exist yet at this point, and after creation it has only `AmazonEC2FullAccess` — no IAM rights at all. |
+> | §4 — create §4a Terraform user, §4b Bedrock user, attach **all** policies (managed `AmazonEC2FullAccess`, scoped inline `graphwise-stack-iam`, scoped inline Bedrock policy), generate access keys | **Root user** (the email you signed up with) **OR** an existing IAM admin user (`AdministratorAccess` or `IAMFullAccess`) | Only IAM admins can create users and attach policies. `terraform-demo` doesn't exist yet at this point, and after creation it has only `AmazonEC2FullAccess` — no IAM rights at all (so it can't grant itself the inline IAM policies it needs in §4a / §9). |
 > | §5 verify steps (`aws sts get-caller-identity`, `aws ec2 describe-vpcs`, `aws bedrock-runtime invoke-model`) | The user whose creds are loaded — `terraform-demo` (default profile) for §4a verify, `graphrag-bedrock` (env-vars) for §4b verify | These are read-only / runtime-API checks that the freshly-created users *do* have permission to run. |
 > | Everything else (Terraform applies, EIP allocation, key-pair creation, billing alarm, EC2 ops) | The IAM user whose creds you've loaded into `aws configure` (typically `terraform-demo`) — uses `AmazonEC2FullAccess` | Plain EC2 / general AWS work, scoped to what `terraform-demo` was granted. |
 >
@@ -439,6 +439,73 @@ common conventions: `graphwise-stack-admin`, `iac-deploy`,
    checkbox next to it. **Do not attach `AdministratorAccess`** —
    over-permissive, defeats the point of a separate user.
 7. Click **Next** → **Create user**.
+
+#### Attach scoped IAM permissions for the EC2 instance role
+
+Terraform creates a small IAM role + instance profile so the EC2
+host can talk to Route 53 (cert-manager writes `_acme-challenge`
+TXT records there for DNS-01 wildcard cert issuance — see
+[CLAUDE.md "Why letsencrypt-prod only"](CLAUDE.md)).
+`AmazonEC2FullAccess` does **not** include `iam:*`, so without this
+extra inline policy `terraform apply` and `terraform destroy` both
+fail with `AccessDenied: iam:CreateRole` /
+`iam:ListInstanceProfilesForRole`.
+
+Scoped to **only** role + instance-profile names matching
+`graphwise-stack-*`. `terraform-demo` still can't touch any other
+IAM resources in the account.
+
+1. Same flow as the EC2 Instance Connect inline policy in §9 (root
+   or IAM admin per §4 actor table). IAM Console → Users →
+   `terraform-demo` → **Permissions** tab → **Add permissions** →
+   **Create inline policy** → **JSON** tab.
+2. Paste the policy below.
+3. **Next** → **Policy name:** `graphwise-stack-iam` → **Create policy**.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageEC2InstanceRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:UpdateRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:ListRoleTags",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:TagInstanceProfile",
+        "iam:UntagInstanceProfile",
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/graphwise-stack-*",
+        "arn:aws:iam::*:instance-profile/graphwise-stack-*"
+      ]
+    }
+  ]
+}
+```
+
+After this, `terraform-demo` can create / destroy the role +
+instance profile that Terraform's `infra/terraform/main.tf` defines,
+and can `iam:PassRole` it to `aws_instance.stack` at launch time.
+Nothing more.
 
 #### Create an access key
 
