@@ -277,13 +277,21 @@ fi
 INVENTORY=$(mktemp -t graphwise-push-inv.XXXXXX)
 trap 'rm -rf "$STAGE" "$INVENTORY"' EXIT
 
+# Pass REMOTE_EXTRACT as the SSH command-line argument (NOT via
+# stdin / `bash -s`). Stdin is reserved for the tarball bytes flowing
+# from `tar -czf - | ssh ...`; the embedded `tar -xzf -` inside
+# REMOTE_EXTRACT reads them. Earlier code piped tar into `bash -s`
+# which reads its script from stdin -- so bash tried to interpret
+# tarball bytes as commands and we got a flood of `command not found`
+# garbage. ssh client quotes the single argument cleanly to the
+# remote $SHELL -c.
 if ! tar -czf - -C "$STAGE" . | \
      ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USR@$HOST" \
-         "bash -s" 2> "$INVENTORY"; then
+         "$REMOTE_EXTRACT" 2> "$INVENTORY"; then
     echo "${RED}ERROR: remote extract failed. Inventory so far:${RESET}" >&2
     cat "$INVENTORY" >&2
     exit 1
-fi <<<"$REMOTE_EXTRACT"
+fi
 
 # Replay placement inventory.
 echo
