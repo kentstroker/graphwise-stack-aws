@@ -117,7 +117,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 SUB="$1"
-BASE="${2:-semantic-proof.com}"
+BASE="${2:-semantic-demo.com}"
 
 # Belt-and-braces: validate the rendered components against RFC 1123
 # before we touch anything, so a typo can't get as far as a half-failed

@@ -1,0 +1,110 @@
+{{- if and (index .Values "graphrag-secrets" "enabled") (eq (index .Values "graphrag-secrets" "vectorDB" "vectorStore") "elasticsearch") }}
+{{/*
+Helm post-install/upgrade hook that creates the `graphrag-vectors`
+Elasticsearch index that graphrag-components requires for its
+ElasticSearchVectorHealthCheck.
+
+Why this exists:
+  graphrag-components' startup probe hits /__gtg which runs
+  ElasticSearchVectorHealthCheck. That health check verifies the
+  vector index exists in ES; if it doesn't, the probe returns 503
+  forever and the pod never goes Ready. We were creating the index
+  by hand via `kubectl exec ... curl -XPUT` after every fresh deploy
+  (documented in CLAUDE.md "graphrag-components broken on startup");
+  now this Job does it automatically.
+
+What it creates:
+  PUT http://<es>:9200/graphrag-vectors with mapping:
+    embedding: dense_vector, dims=1024 (cohere.embed-english-v3 size),
+               similarity=cosine
+
+Idempotent:
+  PUT-ing an existing index returns 400 with
+  resource_already_exists_exception. The Job treats that as success
+  (the index is what we wanted, regardless of who created it).
+
+Hook semantics:
+  - post-install,post-upgrade: runs every install/upgrade.
+  - hook-weight: 10 (after Keycloak bootstrap weight=5; ES StatefulSet
+    is up by the time the umbrella's main release finishes).
+  - hook-delete-policy: before-hook-creation,hook-succeeded so the
+    last successful run is gone before we re-run, and a successful
+    run cleans up after itself. Failed runs stay for inspection.
+
+Lives in graphwise namespace because that's where the
+poolparty-elasticsearch Service lives -- pods reach the ES service
+via bare-name resolution within the same namespace.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: graphrag-vectors-index-init
+  namespace: graphwise
+  labels:
+    {{- include "graphwise-stack.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "graphwise-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: graphrag-vectors-index-init
+        app.kubernetes.io/component: graphrag-vectors-index-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: index-init
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ES_URL
+              value: {{ index .Values "graphrag-secrets" "vectorDB" "elasticUrl" | quote }}
+            - name: VECTOR_INDEX
+              value: {{ index .Values "graphrag-secrets" "vectorDB" "vectorIndex" | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "Installing curl + jq..."
+              apk add --no-cache curl jq >/dev/null
+
+              echo "Waiting for Elasticsearch at $ES_URL..."
+              attempt=0
+              max_attempts=60
+              until curl -sSf "$ES_URL/_cluster/health" >/dev/null 2>&1; do
+                attempt=$((attempt + 1))
+                if [ $attempt -ge $max_attempts ]; then
+                  echo "ERROR: ES still unreachable after $max_attempts attempts (5 min). Aborting."
+                  exit 1
+                fi
+                sleep 5
+              done
+              echo "ES reachable after $((attempt * 5))s."
+
+              echo "Creating index '$VECTOR_INDEX'..."
+              http_code=$(curl -sS -o /tmp/resp -w '%{http_code}' \
+                  -XPUT -H "Content-Type: application/json" \
+                  "$ES_URL/$VECTOR_INDEX" \
+                  -d '{"mappings":{"properties":{"embedding":{"type":"dense_vector","dims":1024,"similarity":"cosine"}}}}')
+
+              if [ "$http_code" = "200" ]; then
+                echo "Index '$VECTOR_INDEX' created successfully."
+                exit 0
+              fi
+
+              # Already exists is success too -- idempotent re-runs.
+              if [ "$http_code" = "400" ] && \
+                  jq -e '.error.type == "resource_already_exists_exception"' /tmp/resp >/dev/null 2>&1; then
+                echo "Index '$VECTOR_INDEX' already exists (idempotent no-op)."
+                exit 0
+              fi
+
+              echo "ERROR: PUT $ES_URL/$VECTOR_INDEX returned HTTP $http_code:"
+              cat /tmp/resp
+              exit 1
+{{- end }}

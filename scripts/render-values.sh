@@ -69,7 +69,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 SUB="$1"
-BASE="${2:-semantic-proof.com}"
+BASE="${2:-semantic-demo.com}"
 OUT_DIR="${OUT_DIR:-/tmp}"
 
 # Apex + per-app hostnames.
