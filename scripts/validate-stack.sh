@@ -220,6 +220,42 @@ check_job_completed keycloak keycloak-authz-import   "authz-import    (per-clien
 # 8. Certificates (cert-manager)
 # --------------------------------------------------------------------
 section "TLS Certificates (cert-manager)"
+
+# 8a. Both ClusterIssuers should exist + Ready (cluster-bootstrap.sh
+# installs both -- letsencrypt-staging is the default, letsencrypt-prod
+# is the customer-demo-time flip target).
+for issuer in letsencrypt-staging letsencrypt-prod; do
+    status=$(kubectl get clusterissuer "$issuer" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+    if [ "$status" = "True" ]; then
+        check_pass "ClusterIssuer ${BOLD}$issuer${RESET} Ready=True"
+    elif [ -z "$status" ]; then
+        check_fail "ClusterIssuer $issuer MISSING" "cluster-bootstrap.sh should have created both; re-run it"
+    else
+        check_fail "ClusterIssuer $issuer Ready=$status (expected True)" \
+                   "kubectl describe clusterissuer $issuer"
+    fi
+done
+
+# 8b. Which issuer is each Certificate currently bound to? In a healthy
+# stack they're all the same -- mixed state means a switch-cert-issuer.sh
+# run was interrupted or someone hand-patched some Ingresses.
+ISSUER_COUNTS=$(kubectl get certificate -A -o jsonpath='{range .items[*]}{.spec.issuerRef.name}{"\n"}{end}' 2>/dev/null | sort | uniq -c | awk '{ print $2"="$1 }')
+ISSUER_IN_USE=$(kubectl get certificate -A -o jsonpath='{.items[0].spec.issuerRef.name}' 2>/dev/null)
+distinct_issuers=$(echo "$ISSUER_COUNTS" | grep -c '=' || true)
+if [ -z "$ISSUER_IN_USE" ]; then
+    check_warn "active issuer: (no Certificates yet)" "wait for cert-manager + ingress-shim to create them"
+elif [ "$distinct_issuers" -gt 1 ]; then
+    check_fail "mixed issuers in use: $(echo "$ISSUER_COUNTS" | tr '\n' ' ')" \
+               "expected one consistent issuer; re-run scripts/switch-cert-issuer.sh <staging|prod> --yes"
+elif [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
+    check_pass "active issuer: ${BOLD}letsencrypt-staging${RESET} ${DIM}(default; iteration-friendly, browsers warn 'Not Secure' until LE staging root CA is trusted -- see SETUP §3, or flip via ./scripts/switch-cert-issuer.sh prod)${RESET}"
+elif [ "$ISSUER_IN_USE" = "letsencrypt-prod" ]; then
+    check_pass "active issuer: ${BOLD}letsencrypt-prod${RESET} ${DIM}(real browser-trusted certs; subject to LE 5-cert/identifier/168h rate limit)${RESET}"
+else
+    check_warn "active issuer: $ISSUER_IN_USE (unrecognized)" "expected letsencrypt-staging or letsencrypt-prod"
+fi
+
+# 8c. Per-Certificate readiness + issuer + age table.
 total_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
 ready_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | awk '$3 == "True" { c++ } END { print c+0 }')
 if [ "$total_certs" = "0" ]; then
@@ -230,6 +266,30 @@ else
     not_ready=$((total_certs - ready_certs))
     check_fail "$ready_certs/$total_certs Certificates Ready ($not_ready not yet issued)" \
                "kubectl get certificate -A | grep -v True"
+fi
+if [ "$total_certs" != "0" ]; then
+    printf '\n%s    NAMESPACE                NAME                              READY  ISSUER                AGE%s\n' "$DIM" "$RESET"
+    NOW_EPOCH=$(date +%s)
+    while IFS=$'\t' read -r ns name ready issuer age; do
+        if [ "$ready" = "True" ]; then
+            ready_disp="${GREEN}True ${RESET}"
+        else
+            ready_disp="${RED}${ready}${RESET}"
+        fi
+        printf '    %-24s %-32s %s  %-20s  %s\n' "$ns" "$name" "$ready_disp" "$issuer" "$age"
+    done < <(kubectl get certificate -A --no-headers -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,ISSUER:.spec.issuerRef.name,AGE:.metadata.creationTimestamp' 2>/dev/null | awk -v now="$NOW_EPOCH" '
+        {
+            # Convert RFC3339 timestamp to relative age (rough -- d/h/m).
+            # Both date(1) flavors supported: GNU (-d) and BSD (-j -f).
+            cmd = "date -d \"" $5 "\" +%s 2>/dev/null || date -j -f %Y-%m-%dT%H:%M:%SZ \"" $5 "\" +%s 2>/dev/null"
+            cmd | getline created; close(cmd)
+            sec = now - created
+            if (sec >= 86400)      age = int(sec/86400) "d"
+            else if (sec >= 3600)  age = int(sec/3600)  "h"
+            else if (sec >= 60)    age = int(sec/60)    "m"
+            else                   age = sec "s"
+            printf "%s\t%s\t%s\t%s\t%s\n", $1, $2, $3, $4, age
+        }')
 fi
 
 # --------------------------------------------------------------------
@@ -251,19 +311,17 @@ done
 # --------------------------------------------------------------------
 # 10. HTTPS reachability sweep
 # --------------------------------------------------------------------
-# Detect which ClusterIssuer is in use on the apex Ingress's cert.
-# If letsencrypt-staging, the cert chain isn't browser-trusted (no
-# ISRG root in the LE staging chain), so curl without -k would
-# report the entire stack as broken even when it's healthy. Add -k
-# when staging is detected; print a banner explaining why TLS
-# verification is being skipped.
-ISSUER_IN_USE=$(kubectl get certificate -A -o jsonpath='{.items[0].spec.issuerRef.name}' 2>/dev/null)
+# ISSUER_IN_USE was set in section 8. If it's letsencrypt-staging the
+# cert chain isn't browser-trusted (no ISRG root in the LE staging
+# chain), so curl without -k would report the entire stack as broken
+# even when it's healthy. Add -k when staging is detected; print a
+# banner explaining why TLS verification is being skipped.
 CURL_TLS_FLAG=""
 if [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
     CURL_TLS_FLAG="-k"
     section "HTTPS reachability (every app URL)  ${YELLOW}[staging certs detected -- TLS verification skipped]${RESET}"
-    printf '  %s%s%s\n' "$DIM" "Browser visits will show 'Not Secure' warnings. Flip to letsencrypt-prod via" "$RESET"
-    printf '  %s%s%s\n\n' "$DIM" "scripts/switch-cert-issuer.sh prod  before any customer demo." "$RESET"
+    printf '  %s%s%s\n' "$DIM" "Browser visits will show 'Not Secure' warnings. Trust the LE staging root CA per" "$RESET"
+    printf '  %s%s%s\n\n' "$DIM" "SETUP §3, OR flip to prod via scripts/switch-cert-issuer.sh prod before a demo." "$RESET"
 else
     section "HTTPS reachability (every app URL)"
 fi
