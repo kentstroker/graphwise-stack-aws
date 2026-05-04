@@ -7,27 +7,22 @@
 #
 # ╔══════════════════════════════════════════════════════════════╗
 # ║                                                              ║
-# ║   ⚠  REQUIRED USER-SUPPLIED CREDENTIALS — EDIT BEFORE DEPLOY ║
+# ║   ⚠  USER-SUPPLIED CREDENTIALS DO NOT LIVE IN THIS FILE      ║
 # ║                                                              ║
-# ║   The deploy will fail or run with broken GraphRAG until     ║
-# ║   the following two blocks are populated. Both live in       ║
-# ║   `graphrag-secrets:` directly below the global block:       ║
+# ║   AWS Bedrock keys + n8n license activation key live in      ║
+# ║   ~/graphwise-secrets.yaml on the EC2 host (auto-created     ║
+# ║   by Terraform cloud-init, gitignored, never tracked).       ║
+# ║   reset-helm.sh auto-includes that file via -f, so the       ║
+# ║   overlay's values merge over this file's defaults.          ║
 # ║                                                              ║
-# ║     1. graphrag-secrets.awsCredentials                       ║
-# ║          - region          (Bedrock region)                  ║
-# ║          - accessKeyId     (graphrag-bedrock IAM user)       ║
-# ║          - secretAccessKey (matching secret)                 ║
+# ║   Why a separate overlay: every git pull would otherwise     ║
+# ║   merge-conflict against your real credentials. The overlay  ║
+# ║   stays EC2-local; pulls are always clean fast-forwards.     ║
 # ║                                                              ║
-# ║     2. graphrag-secrets.n8nLicense                           ║
-# ║          - activationKey   (n8n Enterprise license key)      ║
-# ║                                                              ║
-# ║   For umbrella-only deploys (reset-helm.sh --skip-graphrag), ║
-# ║   both can stay as placeholders — GraphRAG isn't installed   ║
-# ║   in that mode. Required only when running a full deploy.    ║
-# ║                                                              ║
-# ║   Edit on the EC2 host, NEVER on your laptop. The shipped    ║
-# ║   file is in git with placeholders; committing your real     ║
-# ║   credentials would publish them to the public repo.         ║
+# ║   For a full deploy: edit ~/graphwise-secrets.yaml and       ║
+# ║   fill in awsCredentials + n8nLicense. For an umbrella-only  ║
+# ║   deploy (reset-helm.sh --skip-graphrag) you can leave them  ║
+# ║   as placeholders -- GraphRAG isn't installed in that mode.  ║
 # ║                                                              ║
 # ║   Walkthrough: DEPLOY.md §7.                                 ║
 # ║                                                              ║
@@ -48,9 +43,15 @@ global:
 
 ####################################################################
 # graphrag-secrets — Secrets / ConfigMap consumed by the vendored
-# graphrag chart. The first two sub-blocks below are the REQUIRED
-# user-supplied credentials called out in the header banner. The
-# remaining sub-blocks are internal/cluster-only and don't normally
+# graphrag chart.
+#
+# awsCredentials + n8nLicense + n8nEncryption are NOT defined here --
+# they live in ~/graphwise-secrets.yaml on the EC2 host (per the
+# header banner above). Defaults below are placeholders that the
+# overlay file overrides on every reset-helm/upgrade.
+#
+# Remaining sub-blocks (conversation, conversationKeycloak, vectorDB,
+# n8nDatabase, etc.) are internal/cluster-only and don't normally
 # need editing.
 #
 # Idempotent — re-installs replace.
@@ -59,34 +60,17 @@ graphrag-secrets:
   enabled: true
   namespace: graphrag
 
-  # ─────────────────────────────────────────────────────────────────
-  # ⚠  REQUIRED #1 — AWS Bedrock credentials
-  # ─────────────────────────────────────────────────────────────────
-  # Drives graphrag-components embedding calls. Use the access key
-  # for the `graphrag-bedrock` IAM user from SETUP §4b. The region
-  # must match the region the IAM policy ARN was scoped to and must
-  # be a Bedrock-enabled region (us-east-1 or us-west-2 cover
-  # cohere.embed-english-v3 reliably).
-  #
-  # Without real values: graphrag-components pod returns
-  # `AccessDeniedException` on every prompt; chatbot is broken.
-  # Materialized as: Secret graphrag-components-aws-credentials
+  # Placeholders overridden by ~/graphwise-secrets.yaml on the EC2.
+  # Materialized as: Secret graphrag-components-aws-credentials.
   awsCredentials:
     region: "us-west-2"
-    accessKeyId: ""           # ← FILL IN: AKIA...
-    secretAccessKey: ""       # ← FILL IN: matching secret
+    accessKeyId: ""
+    secretAccessKey: ""
 
-  # ─────────────────────────────────────────────────────────────────
-  # ⚠  REQUIRED #2 — n8n Enterprise license activation key
-  # ─────────────────────────────────────────────────────────────────
-  # Drives the graphrag-workflows pod. Issued by Graphwise alongside
-  # your Maven creds.
-  #
-  # Without real value: graphrag-workflows pod refuses to start clean
-  # (n8n's license check fails on every boot).
-  # Materialized as: Secret graphrag-n8n-license
+  # Placeholder overridden by ~/graphwise-secrets.yaml on the EC2.
+  # Materialized as: Secret graphrag-n8n-license.
   n8nLicense:
-    activationKey: "REPLACE_WITH_REAL_N8N_LICENSE_KEY"   # ← FILL IN
+    activationKey: ""
 
   # ─────────────────────────────────────────────────────────────────
   # Internal — don't normally need to edit
