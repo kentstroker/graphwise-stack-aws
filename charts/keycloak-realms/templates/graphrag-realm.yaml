@@ -11,18 +11,18 @@ Two clients:
                             inter-service auth
 
 Subdomain/baseDomain resolution:
-  Helm auto-propagates `.Values.global.*` from the umbrella to
-  subcharts. We prefer the umbrella's global.subdomain /
-  global.baseDomain (the operator's canonical per-deployment values
-  rendered by scripts/render-values.sh), falling back to the
-  subchart-local subdomain/baseDomain for standalone-install
-  scenarios. Without this fallback chain, a standalone subchart
-  install with empty subchart values would render bogus URLs like
-  https://graphrag.../* and the chatbot login fails with
+  Reads `.Values.subdomain` and `.Values.baseDomain` directly. The
+  umbrella graphwise-stack chart sets these explicitly via
+  scripts/render-values.sh's overlay (a `keycloak-realms:` block
+  with subdomain + baseDomain) -- we don't depend on Helm's global
+  propagation (.Values.global.*) because in our chart structure
+  globals don't reliably reach this subchart's render context.
+  Without these values being set, redirectUris would render as
+  `https://graphrag../*` and the chatbot login fails with
   "Invalid parameter: redirect_url".
 */}}
-{{- $sub  := default .Values.subdomain  (((.Values.global)).subdomain)  -}}
-{{- $base := default .Values.baseDomain (((.Values.global)).baseDomain) -}}
+{{- $sub  := required "keycloak-realms.subdomain must be set (umbrella's render-values.sh sets this)"  .Values.subdomain  -}}
+{{- $base := required "keycloak-realms.baseDomain must be set (umbrella's render-values.sh sets this)" .Values.baseDomain -}}
 apiVersion: k8s.keycloak.org/v2alpha1
 kind: KeycloakRealmImport
 metadata:

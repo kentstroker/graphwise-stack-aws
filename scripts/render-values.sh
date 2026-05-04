@@ -99,6 +99,16 @@ global:
   subdomain: "${SUB}"
   baseDomain: "${BASE}"
 
+# Pass subdomain + baseDomain explicitly to the keycloak-realms subchart.
+# Helm's globals propagation (.Values.global.* in subchart context) is
+# unreliable in our render path; explicit subchart-namespace values are
+# guaranteed to land. Without these, the graphrag realm import renders
+# chatbot-app-client redirectUris with empty subdomain/baseDomain and
+# the chatbot login fails with "Invalid parameter: redirect_url".
+keycloak-realms:
+  subdomain: "${SUB}"
+  baseDomain: "${BASE}"
+
 graphdb-embedded:
   externalUrl: "https://${GDB_E_HOST}/"
   ingress:
