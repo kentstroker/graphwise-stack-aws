@@ -123,10 +123,40 @@ if [ "$SKIP_SECRETS" != "yes" ]; then
     if [ ! -f "$SECRETS_FILE" ]; then
         cat >&2 <<USAGE
 ${RED}ERROR:${RESET} secrets file not found: $SECRETS_FILE
-Create one (see DEPLOY §3) or pass --skip-secrets.
+Create one (see DEPLOY step 3) or pass --skip-secrets.
 USAGE
         exit 2
     fi
+    # Sniff for accidental tarball / gzip / non-text payload. The
+    # canonical mistake is passing the snapshot's payload.tgz here
+    # instead of the extracted graphwise-secrets.yaml; without this
+    # check the script later trips a UnicodeDecodeError deep in
+    # PyYAML's reader and the operator burns time tracing it.
+    magic=$(head -c 4 "$SECRETS_FILE" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "$magic" in
+        1f8b*)  # gzip
+            cat >&2 <<USAGE
+${RED}ERROR:${RESET} --secrets-file points at a gzipped tarball (gzip magic 1f8b detected):
+  $SECRETS_FILE
+
+You probably meant the EXTRACTED graphwise-secrets.yaml from the snapshot.
+If your snapshot dir is "\$SNAP", try:
+  --secrets-file "\$SNAP/graphwise-secrets.yaml"
+USAGE
+            exit 2 ;;
+        *)
+            # Quick text-vs-binary heuristic: the first byte should be
+            # printable ASCII (yaml file starts with '#' or 'm' or 'g' etc).
+            first_byte=$(head -c 1 "$SECRETS_FILE" | od -An -tx1 | tr -d ' \n')
+            if [ -n "$first_byte" ] && [ "$first_byte" \< "20" ] && [ "$first_byte" != "0a" ] && [ "$first_byte" != "09" ]; then
+                cat >&2 <<USAGE
+${RED}ERROR:${RESET} --secrets-file doesn't look like text (first byte: 0x$first_byte):
+  $SECRETS_FILE
+Expected a YAML file. Did you point at a binary by accident?
+USAGE
+                exit 2
+            fi ;;
+    esac
     if [ "$KEEP_LOCAL_ENCRYPTION_KEY" = "no" ]; then
         echo "  reading fresh n8nEncryption.key from remote..."
         REMOTE_KEY=$(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USR@$HOST" 'python3 -c "
