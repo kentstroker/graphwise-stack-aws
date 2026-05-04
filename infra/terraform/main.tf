@@ -294,9 +294,19 @@ resource "aws_instance" "stack" {
 
   # IMDSv2 required — closes the SSRF-to-credentials hole that IMDSv1
   # leaves open. Modern AWS SDKs speak v2 by default.
+  #
+  # http_put_response_hop_limit = 3 (not the AWS default of 1, not the
+  # K8s-on-EC2 typical of 2): cert-manager runs as a pod inside a
+  # KIND node container which itself runs on the EC2 host. IMDS
+  # response packets must traverse two network namespaces to reach
+  # the pod (pod -> KIND node container -> host), so the IP TTL
+  # needs to survive both hops. With limit=2 the response TTL hits
+  # zero at the second hop and IMDS appears unreachable -- error
+  # surfaces as "no EC2 IMDS role found" in the cert-manager Route 53
+  # solver, blocking DNS-01 wildcard cert issuance forever.
   metadata_options {
     http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+    http_put_response_hop_limit = 3
     http_endpoint               = "enabled"
   }
 
