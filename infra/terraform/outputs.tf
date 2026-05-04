@@ -51,9 +51,22 @@ output "instance_public_dns" {
   value       = aws_instance.stack.public_dns
 }
 
+output "graphwise_env_exports" {
+  description = "Three ready-to-paste shell exports for the GRAPHWISE_KEY/HOST/USER env vars that every doc command and laptop-side script relies on (ssh / scp / push-config.sh / pull-config.sh / SETUP §7). Paste into your terminal once per session, or append to your shell rc to persist. GRAPHWISE_KEY assumes the .pem lives at ~/.ssh/<key_pair_name>.pem -- adjust if yours is elsewhere. GRAPHWISE_HOST defaults to the apex hostname (preferred once DNS is up); if DNS hasn't propagated yet, swap in the EIP."
+  value       = <<-EOT
+    # Paste these into your terminal (or append to ~/.zshrc / ~/.bashrc):
+    export GRAPHWISE_KEY=~/.ssh/${var.key_pair_name}.pem
+    export GRAPHWISE_HOST=${var.subdomain}.${var.base_domain}
+    export GRAPHWISE_USER=ec2-user
+
+    # If DNS hasn't propagated yet, use the EIP instead:
+    #   export GRAPHWISE_HOST=${local.public_ip}
+  EOT
+}
+
 output "ssh" {
-  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created. Set GRAPHWISE_KEY / GRAPHWISE_HOST / GRAPHWISE_USER per SETUP §7 -- the literal IP form (ssh -i <path-to-keypair.pem> ec2-user@<elastic-ip>) also works."
-  value       = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST   # GRAPHWISE_HOST=${local.public_ip} or your subdomain"
+  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created. Uses GRAPHWISE_KEY / GRAPHWISE_HOST / GRAPHWISE_USER -- export them via the graphwise_env_exports output above. The literal IP form (ssh -i <path-to-keypair.pem> ec2-user@<elastic-ip>) also works."
+  value       = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST   # GRAPHWISE_HOST=${local.public_ip} or ${var.subdomain}.${var.base_domain}"
 }
 
 output "expected_urls" {
