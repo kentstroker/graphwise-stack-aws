@@ -173,11 +173,9 @@ chatbot:
     enabled: true
     className: nginx
     host: "${GRAPHRAG_HOST}"
-    annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-prod
     tls:
       enabled: true
-      secretName: graphrag-chatbot-tls
+      secretName: wildcard-tls
 
 conversation:
   configuration:
@@ -190,11 +188,10 @@ workflows:
     className: nginx
     host: "${GRAPHRAG_HOST}"
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-prod
       nginx.ingress.kubernetes.io/rewrite-target: /\$2
     tls:
       enabled: true
-      secretName: graphrag-workflows-tls
+      secretName: wildcard-tls
   configuration:
     externalUrl: "https://${GRAPHRAG_HOST}/graphrag/workflows/"
 EOF

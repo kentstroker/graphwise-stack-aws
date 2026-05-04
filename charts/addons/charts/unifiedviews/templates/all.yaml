@@ -110,12 +110,11 @@ metadata:
   name: {{ include "uv.fullname" . }}
   labels: {{- include "uv.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:
     - hosts: [{{ include "uv.host" . | quote }}]
-      secretName: {{ include "uv.fullname" . }}-tls
+      secretName: wildcard-tls
   rules:
     - host: {{ include "uv.host" . | quote }}
       http:

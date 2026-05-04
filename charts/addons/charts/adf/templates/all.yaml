@@ -85,12 +85,11 @@ metadata:
   name: {{ include "adf.fullname" . }}
   labels: {{- include "adf.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:
     - hosts: [{{ include "adf.host" . | quote }}]
-      secretName: {{ include "adf.fullname" . }}-tls
+      secretName: wildcard-tls
   rules:
     - host: {{ include "adf.host" . | quote }}
       http:

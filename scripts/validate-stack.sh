@@ -219,14 +219,12 @@ check_job_completed keycloak keycloak-authz-import   "authz-import    (per-clien
 # --------------------------------------------------------------------
 # 8. Certificates (cert-manager)
 # --------------------------------------------------------------------
-section "TLS Certificates (cert-manager)"
+section "TLS (wildcard cert + ClusterIssuer + reflection)"
 
-# 8a. letsencrypt-prod ClusterIssuer must be Ready (the only one we
-# install -- staging is unsupported because the JVM truststore in
-# PoolParty / graphrag-conversation can't validate the staging chain).
+# 8a. letsencrypt-prod ClusterIssuer must be Ready.
 status=$(kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
 if [ "$status" = "True" ]; then
-    check_pass "ClusterIssuer ${BOLD}letsencrypt-prod${RESET} Ready=True"
+    check_pass "ClusterIssuer ${BOLD}letsencrypt-prod${RESET} Ready=True (DNS-01 via Route 53)"
 elif [ -z "$status" ]; then
     check_fail "ClusterIssuer letsencrypt-prod MISSING" "cluster-bootstrap.sh should have created it; re-run it"
 else
@@ -234,56 +232,51 @@ else
                "kubectl describe clusterissuer letsencrypt-prod"
 fi
 
-# 8b. Sanity: every Certificate must reference letsencrypt-prod. Any
-# leftover staging-issued cert (from an older deploy that pre-dates
-# the prod-only switch) won't be trusted by in-cluster JVM clients
-# and is a deploy-blocker.
-ISSUER_COUNTS=$(kubectl get certificate -A -o jsonpath='{range .items[*]}{.spec.issuerRef.name}{"\n"}{end}' 2>/dev/null | sort | uniq -c | awk '{ print $2"="$1 }')
-non_prod=$(echo "$ISSUER_COUNTS" | grep -v '^letsencrypt-prod=' | grep -c '=' || true)
-if [ "$(echo "$ISSUER_COUNTS" | grep -c '=')" = "0" ]; then
-    check_warn "no Certificates yet" "wait for cert-manager + ingress-shim to create them"
-elif [ "$non_prod" -gt 0 ]; then
-    check_fail "non-prod issuers in use: $(echo "$ISSUER_COUNTS" | tr '\n' ' ')" \
-               "delete the stale Certificates so cert-manager re-issues against letsencrypt-prod"
+# 8b. The single wildcard Certificate in cert-manager namespace must
+# be Ready, and its dnsNames must cover BOTH the apex and the wildcard.
+cert_ready=$(kubectl get certificate -n cert-manager wildcard-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+cert_dns=$(kubectl get certificate -n cert-manager wildcard-tls -o jsonpath='{.spec.dnsNames}' 2>/dev/null)
+if [ -z "$cert_ready" ]; then
+    check_fail "wildcard-tls Certificate MISSING in cert-manager namespace" "cluster-bootstrap.sh should have created it; re-run it"
+elif [ "$cert_ready" != "True" ]; then
+    check_fail "wildcard-tls Certificate Ready=$cert_ready" "kubectl describe certificate -n cert-manager wildcard-tls"
 else
-    check_pass "all Certificates issued by ${BOLD}letsencrypt-prod${RESET}"
+    check_pass "wildcard-tls Certificate Ready=True (SANs: $cert_dns)"
+fi
+if echo "$cert_dns" | grep -q "\\*\\.$APEX"; then
+    check_pass "wildcard SAN *.${APEX} present"
+else
+    check_fail "wildcard SAN *.${APEX} MISSING from cert" "kubectl get certificate -n cert-manager wildcard-tls -o jsonpath='{.spec.dnsNames}'"
+fi
+if echo "$cert_dns" | grep -qE "(^|\")${APEX}(\"|$)"; then
+    check_pass "apex SAN ${APEX} present"
+else
+    check_fail "apex SAN ${APEX} MISSING from cert" "kubectl get certificate -n cert-manager wildcard-tls -o jsonpath='{.spec.dnsNames}'"
 fi
 
-# 8c. Per-Certificate readiness + issuer + age table.
-total_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-ready_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | awk '$3 == "True" { c++ } END { print c+0 }')
-if [ "$total_certs" = "0" ]; then
-    check_fail "no Certificate resources cluster-wide" "cert-manager + ingress-shim should have created one per Ingress; check cluster-bootstrap.sh ran"
-elif [ "$ready_certs" = "$total_certs" ]; then
-    check_pass "$ready_certs/$total_certs Certificates Ready=True"
+# 8c. Reflector must have copied the wildcard-tls Secret into every
+# consuming namespace (Ingress.spec.tls.secretName resolves
+# in-namespace). Without this, Ingress TLS fails with "Secret not
+# found" and ingress-nginx serves a self-signed default cert.
+section "Wildcard Secret reflection (kubernetes-reflector)"
+reflect_targets=(graphwise graphrag keycloak kubernetes-dashboard monitoring)
+for ns in "${reflect_targets[@]}"; do
+    if kubectl get secret -n "$ns" wildcard-tls >/dev/null 2>&1; then
+        check_pass "wildcard-tls present in '${BOLD}${ns}${RESET}' namespace"
+    else
+        check_fail "wildcard-tls MISSING in '${ns}' namespace" \
+                   "reflector should have mirrored from cert-manager ns; check kubectl get pods -n kube-system -l app.kubernetes.io/name=reflector"
+    fi
+done
+
+# 8d. Drift check: any per-app Certificate left over from the pre-
+# wildcard era? Should be zero -- only wildcard-tls in cert-manager.
+extra_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | grep -v '^cert-manager\s\+wildcard-tls\s' | wc -l | tr -d ' ')
+if [ "$extra_certs" = "0" ]; then
+    check_pass "no leftover per-app Certificates"
 else
-    not_ready=$((total_certs - ready_certs))
-    check_fail "$ready_certs/$total_certs Certificates Ready ($not_ready not yet issued)" \
-               "kubectl get certificate -A | grep -v True"
-fi
-if [ "$total_certs" != "0" ]; then
-    printf '\n%s    NAMESPACE                NAME                              READY  ISSUER                AGE%s\n' "$DIM" "$RESET"
-    NOW_EPOCH=$(date +%s)
-    while IFS=$'\t' read -r ns name ready issuer age; do
-        if [ "$ready" = "True" ]; then
-            ready_disp="${GREEN}True ${RESET}"
-        else
-            ready_disp="${RED}${ready}${RESET}"
-        fi
-        printf '    %-24s %-32s %s  %-20s  %s\n' "$ns" "$name" "$ready_disp" "$issuer" "$age"
-    done < <(kubectl get certificate -A --no-headers -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,ISSUER:.spec.issuerRef.name,AGE:.metadata.creationTimestamp' 2>/dev/null | awk -v now="$NOW_EPOCH" '
-        {
-            # Convert RFC3339 timestamp to relative age (rough -- d/h/m).
-            # Both date(1) flavors supported: GNU (-d) and BSD (-j -f).
-            cmd = "date -d \"" $5 "\" +%s 2>/dev/null || date -j -f %Y-%m-%dT%H:%M:%SZ \"" $5 "\" +%s 2>/dev/null"
-            cmd | getline created; close(cmd)
-            sec = now - created
-            if (sec >= 86400)      age = int(sec/86400) "d"
-            else if (sec >= 3600)  age = int(sec/3600)  "h"
-            else if (sec >= 60)    age = int(sec/60)    "m"
-            else                   age = sec "s"
-            printf "%s\t%s\t%s\t%s\t%s\n", $1, $2, $3, $4, age
-        }')
+    check_warn "$extra_certs leftover Certificate(s) detected" \
+               "kubectl get certificate -A | grep -v wildcard-tls -- pre-wildcard-era leftovers, safe to delete"
 fi
 
 # --------------------------------------------------------------------

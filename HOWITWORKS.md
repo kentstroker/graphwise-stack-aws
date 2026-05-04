@@ -183,56 +183,65 @@ You never run certbot. You never copy `.pem` files anywhere. cert-manager does i
 
 **The cast:**
 
-- **cert-manager** — a controller running in the `cert-manager` namespace. Watches Ingress objects and Certificate resources.
-- **ClusterIssuer** — a recipe for getting certs. We use **only `letsencrypt-prod`** (real browser-trusted certs, subject to LE rate limits — 5 certs/identifier/168h). LE staging was tried and reverted: its certs aren't trusted by JVM truststores in PoolParty / graphrag-conversation, breaking every in-cluster HTTPS call to Keycloak. See [CLAUDE.md → Why letsencrypt-prod only](CLAUDE.md) for the rate-limit math + iteration mitigations.
-- **ingress-shim** — a sub-component of cert-manager. Watches every Ingress: if it has both an annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` AND a `tls:` block listing hosts and a Secret name, ingress-shim auto-creates a Certificate resource for those hosts.
-- **HTTP-01 challenge** — Let's Encrypt's way of proving you own the domain: it makes an HTTP request to `http://<your-domain>/.well-known/acme-challenge/<random-token>` and expects a specific response.
+- **cert-manager** — a controller running in the `cert-manager` namespace. Watches Certificate resources.
+- **ClusterIssuer** — a recipe for getting certs. We use **only `letsencrypt-prod` via DNS-01 against Route 53**. One wildcard cert (`<sub>.<base>` + `*.<sub>.<base>`) covers every Ingress in the stack. See [CLAUDE.md → TLS architecture](CLAUDE.md) for rationale.
+- **DNS-01 challenge** — Let's Encrypt's way of proving you own the domain: cert-manager writes a `_acme-challenge.<host>` TXT record into the Route 53 hosted zone; LE reads it back to confirm zone ownership. Required for wildcard certs (HTTP-01 can't issue wildcards).
+- **kubernetes-reflector** — a tiny operator that watches Secrets carrying `reflector.v1.k8s.emberstack.com/reflection-*` annotations and copies them into target namespaces. We use it to mirror the single `wildcard-tls` Secret from `cert-manager` into every consuming namespace (`graphwise`, `graphrag`, `keycloak`, `kubernetes-dashboard`, `monitoring`).
 
-**The dance, end-to-end** (happens on first install for each app, and on cert renewal ~60 days later):
+**The dance, end-to-end** (happens once at `cluster-bootstrap.sh` time, and on cert renewal ~60 days later):
 
 ```
-1. Helm installs an Ingress for poolparty.<apex>
-       │   (with cert-manager annotation + tls block)
-       ▼
-2. ingress-shim sees it, creates a Certificate resource
+1. cluster-bootstrap.sh creates a Certificate resource named
+   wildcard-tls in the cert-manager namespace, with two SANs:
+   <apex> + *.<apex>
        │
        ▼
-3. cert-manager creates an Order with Let's Encrypt
+2. cert-manager creates an Order with Let's Encrypt for those SANs
        │
        ▼
-4. Order produces a Challenge resource with a token
+3. Order produces a Challenge resource per SAN with a token
        │
        ▼
-5. cert-manager creates a temporary Ingress that serves
-   the token at  http://poolparty.<apex>/.well-known/acme-challenge/<token>
+4. cert-manager (via the AWS SDK + EC2 instance metadata + the
+   instance role's Route 53 policy) writes a TXT record at
+   _acme-challenge.<apex> in the Route 53 hosted zone
        │
        ▼
-6. cert-manager tells LE: "ready, please validate"
+5. cert-manager tells LE: "ready, please validate"
        │
        ▼
-7. LE makes an HTTP request from its servers to
-   http://poolparty.<apex>/.well-known/acme-challenge/<token>
-       │   -- which goes through your DNS, your EIP, ingress-nginx,
-       │      and lands on the temporary challenge Ingress
-       │   -- LE sees the expected token. Match. Domain ownership confirmed.
+6. LE queries DNS for _acme-challenge.<apex> from its own resolvers
+       │   -- Route 53 returns the token cert-manager wrote
+       │   -- LE sees the expected token. Zone ownership confirmed.
        ▼
-8. LE issues a real cert. cert-manager stores it in the named Secret
-   (e.g. graphwise-stack-poolparty-tls).
+7. LE issues the wildcard cert. cert-manager stores it in the
+   wildcard-tls Secret in the cert-manager namespace.
        │
        ▼
-9. ingress-nginx watches Secrets. It hot-reloads its TLS config
-   to use the new cert -- no nginx restart needed.
+8. cert-manager removes the TXT record (cleanup).
        │
        ▼
-10. Browser visits https://poolparty.<apex>/PoolParty/ -- valid cert,
-    handshake succeeds, app loads.
+9. kubernetes-reflector sees the new Secret + its reflection
+   annotations, and copies wildcard-tls into all 5 consuming
+   namespaces (graphwise / graphrag / keycloak /
+   kubernetes-dashboard / monitoring).
+       │
+       ▼
+10. ingress-nginx watches Secrets. Every Ingress with
+    tls.secretName: wildcard-tls picks up the cert.
+       │
+       ▼
+11. Browser visits https://poolparty.<apex>/PoolParty/ -- valid
+    cert (wildcard SAN matches), handshake succeeds, app loads.
 ```
 
-The whole chain takes 30–60 seconds per app. With 13+ apps, the first `cluster-bootstrap.sh` + `reset-helm.sh` run takes 5–10 minutes for all certs to land.
+The whole chain takes ~60–90 seconds total. The wildcard issues once; every Ingress (poolparty, auth, graphrag, dashboard, ...) is covered by the single Secret reflected into its namespace.
 
-**HTTP (port 80) is open** to the world specifically so LE's HTTP-01 challenge can reach the temporary Ingress. The standard `proxy-demo.conf`-style 80→443 redirect runs for everything else, but the `/.well-known/acme-challenge/*` path bypasses that redirect by ingress-nginx convention.
+**Port 80 is still open** for ingress-nginx's plain-HTTP→HTTPS redirect, but DNS-01 doesn't use it — Route 53 handles validation entirely off-band. (Pre-wildcard, when we used HTTP-01, port 80 had to be reachable; with DNS-01 it's purely operator-convenience for `http://...` typos that auto-redirect.)
 
-**To check cert status at any time:** `kubectl get certificate -A`. Every entry should be `READY=True`. Anything stuck in `False` means the challenge failed — usually a DNS issue (the domain doesn't yet point at your EIP) or LE rate-limiting (too many requests on a fresh deploy).
+**To check cert status at any time:** `kubectl get certificate -n cert-manager wildcard-tls`. Should be `READY=True`. Anything stuck in `False` means the DNS-01 challenge failed — usually the EC2 instance role can't write to the Route 53 zone (`kubectl describe order -n cert-manager` will surface the AWS error).
+
+**To verify reflection:** `kubectl get secret wildcard-tls -A` should list it in 6 namespaces (cert-manager + the 5 reflected). Missing rows = reflector pod isn't running (`kubectl get pods -n kube-system -l app.kubernetes.io/name=reflector`).
 
 ---
 
@@ -499,7 +508,7 @@ Steps 5-8 are the same destructive bring-up as a fresh install. Plan accordingly
 
 | Symptom | First command | Why it helps |
 |---|---|---|
-| Browser shows TLS error on any URL | `kubectl get certificate -A` | Find the cert that didn't issue. `False` means HTTP-01 challenge failed (DNS? rate limit? challenge Ingress?). |
+| Browser shows TLS error on any URL | `kubectl get certificate -n cert-manager wildcard-tls` + `kubectl get secret wildcard-tls -A` | `False` means DNS-01 challenge failed (EC2 instance role can't write to Route 53? rate limit?). Missing reflected Secret = reflector pod not running. |
 | Browser hangs on any URL | `dig +short <host>` from your laptop | Confirm DNS resolves to your EIP. If wrong, fix DNS first. |
 | `dig` returns the EIP but request times out | `kubectl get pod -n ingress-nginx` | ingress-nginx pod must be Running. If not, KIND is broken. |
 | ingress-nginx is up but request times out | `kubectl get ingress -A` | Confirm an Ingress exists for the Host you're hitting. If missing, the chart didn't render that piece. |

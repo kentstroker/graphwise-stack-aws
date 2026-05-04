@@ -21,11 +21,11 @@ What this module does **not** do:
 - **DNS** — when the EIP is pre-allocated, you create the two A
   records up front in SETUP §6 (the IP is already known). Slow
   path: email Kent the EIP from the `terraform apply` outputs after
-  the fact and he adds them in GoDaddy.
+  the fact and he runs the AWS CLI command from the route53_dns_records output.
 - License file placement — the three Graphwise license binaries are
   scp'd in by hand after the instance is up.
 - Let's Encrypt cert issuance — handled by cert-manager via
-  ingress-nginx HTTP-01 challenge during `cluster-bootstrap.sh`.
+  cert-manager DNS-01 wildcard challenge against Route 53 during `cluster-bootstrap.sh`.
 
 The module is intentionally small-scope: everything that can be
 automated cleanly is; everything with a human-in-the-loop dependency
@@ -182,7 +182,7 @@ When `apply` completes you'll see outputs (abridged):
 Outputs:
 elastic_ip            = "54.149.12.34"
 eip_mode              = "existing (allocation_id=eipalloc-0123abc...)"
-godaddy_dns_records   = <<-EOT
+route53_dns_records   = <<-EOT
                           Add these two A records ...
                         EOT
 instance_id           = "i-0abcdef0123456789"
@@ -194,7 +194,7 @@ bootstrap_log_hint    = "ssh ... 'sudo tail -f /var/log/bootstrap.log'"
 
 `eip_mode` confirms whether you're on the persistent
 (`existing_eip_allocation_id` set) path or the fresh-EIP path. If
-DNS was pre-set per SETUP §6, the `godaddy_dns_records` block is
+DNS was pre-set per SETUP §6, the `route53_dns_records` block is
 just confirmation; otherwise it's the post-apply checklist of records
 to create.
 
@@ -287,7 +287,7 @@ dig +short <sub>.<base> poolparty.<sub>.<base>
 If both resolve, skip to §3.
 
 **Slow path (no pre-allocation):** Terraform allocated a fresh EIP
-this apply; the `godaddy_dns_records` output prints what to add.
+this apply; the `route53_dns_records` output prints what to add.
 Template for the email to Kent:
 
 > Hi Kent,

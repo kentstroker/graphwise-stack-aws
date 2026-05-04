@@ -6,13 +6,12 @@ metadata:
   labels:
     {{- include "console.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:
     - hosts:
         - {{ required "ingress.host must be set (the apex hostname)" .Values.ingress.host | quote }}
-      secretName: {{ include "console.tlsSecretName" . }}
+      secretName: wildcard-tls
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:

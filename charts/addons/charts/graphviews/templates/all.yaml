@@ -50,12 +50,11 @@ metadata:
   name: {{ include "gv.fullname" . }}
   labels: {{- include "gv.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:
     - hosts: [{{ include "gv.host" . | quote }}]
-      secretName: {{ include "gv.fullname" . }}-tls
+      secretName: wildcard-tls
   rules:
     - host: {{ include "gv.host" . | quote }}
       http:

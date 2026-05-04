@@ -90,12 +90,11 @@ metadata:
   name: {{ include "sw.fullname" . }}
   labels: {{- include "sw.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:
     - hosts: [{{ include "sw.host" . | quote }}]
-      secretName: {{ include "sw.fullname" . }}-tls
+      secretName: wildcard-tls
   rules:
     - host: {{ include "sw.host" . | quote }}
       http:

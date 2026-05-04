@@ -28,13 +28,12 @@ metadata:
   labels:
     {{- include "graphwise-stack.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: nginx
   tls:
     - hosts:
         - {{ include "graphwise-stack.authHost" . | quote }}
-      secretName: {{ .Values.keycloak.name }}-tls
+      secretName: wildcard-tls
   rules:
     - host: {{ include "graphwise-stack.authHost" . | quote }}
       http:

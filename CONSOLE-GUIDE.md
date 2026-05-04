@@ -568,11 +568,15 @@ helm upgrade graphrag ./charts/vendor/graphrag -n graphrag -f charts/vendor/grap
    (`kubectl -n keycloak get jobs` — it self-deletes on success).
    If the user really is missing, follow [CLAUDE.md](CLAUDE.md)
    §"Bootstrap admin user" to create it manually with `kcadm`.
-4. **Cert stuck `READY=False`** →
-   `kubectl describe certificate -A | grep -A3 -E
-   'Status:|Message:'`. Usually DNS hasn't propagated to the EIP
-   yet, or the HTTP-01 challenge can't reach :80 (security group /
-   IP changed).
+4. **Wildcard cert stuck `READY=False`** →
+   `kubectl describe certificate -n cert-manager wildcard-tls | tail -30`. Usually
+   the DNS-01 challenge failed because the EC2 instance role can't write
+   to the Route 53 hosted zone (`kubectl describe order -n cert-manager`
+   surfaces the AWS error), or LE rate limit hit on rapid reissues.
+4a. **App Ingress shows browser TLS error but wildcard cert is Ready** →
+   reflector hasn't mirrored the Secret. Check
+   `kubectl get secret wildcard-tls -A` (should show 6 namespaces) and
+   `kubectl get pods -n kube-system -l app.kubernetes.io/name=reflector`.
 5. **`ImagePullBackOff` on graphrag pods** → the `graphwise`
    image-pull secret didn't get created. Check
    `~/.ontotext/maven-{user,pass}` then re-run

@@ -63,7 +63,7 @@ laptop-zero through ready-for-`terraform-apply`. At a glance:
 - A subdomain plan (`<sub>.<base>` apex + `*.<sub>.<base>` wildcard
   records) on a domain you control. Graphwise SEs use Kent's
   `semantic-proof.com` zone; everyone else uses their own DNS
-  provider (GoDaddy / Route53 / Cloudflare / Namecheap — all fine).
+  provider (Route 53 (DNS hosting must be in the same AWS account)).
 - **Graphwise-issued credentials and license material** — all four
   required for a full deploy; request from Graphwise:
   - Maven registry username + password (pulls private GraphRAG
@@ -175,7 +175,7 @@ terraform apply
 ```
 
 Output includes the EIP, an `ssh` command line, and the
-`godaddy_dns_records` block (the two A-records to add). The
+`route53_dns_records` block (the two A-records to add). The
 cloud-init script takes 2–3 minutes after `apply` returns; tail it
 with:
 
@@ -242,7 +242,7 @@ dig +short <sub>.<base> poolparty.<sub>.<base>
 Both should return your EIP. If they do, skip ahead to §3.
 
 **Slow path (no pre-allocation):** Terraform allocated a fresh EIP
-during §1; the `godaddy_dns_records` output prints the exact host /
+during §1; the `route53_dns_records` output prints the exact host /
 value pairs to add. Two records, both pointing at the freshly
 allocated EIP:
 
@@ -250,7 +250,7 @@ allocated EIP:
 > - **A record:** `*.<sub>.<base>` → EIP, TTL 5 min
 
 Graphwise field SEs: email Kent the values from the output and he
-adds them in GoDaddy. Self-managed: add them yourself.
+runs the AWS CLI command from the route53_dns_records output. Self-managed: add them yourself.
 
 Wait for propagation — usually under 5 minutes:
 
@@ -446,7 +446,7 @@ invoke `cluster-bootstrap.sh` from a non-login context, set it
 explicitly: `GRAPHWISE_APEX=<sub>.<base> ./scripts/cluster-bootstrap.sh`.
 
 Takes ~5–6 minutes the first time (image pulls + helm waits + LE
-HTTP-01 cert issuance for the three observability hosts).
+DNS-01 wildcard cert issuance).
 
 Idempotent — safe to re-run.
 
@@ -824,7 +824,7 @@ ingress-nginx is the single public entrypoint (host ports 80 and 443
 are mapped from the host into the KIND control-plane container by
 [infra/kind/kind-config.yaml](infra/kind/kind-config.yaml)). Each
 app's Ingress carries its own host + LE cert; cert-manager issues
-each cert via HTTP-01 against ingress-nginx.
+the wildcard cert via DNS-01 against Route 53.
 
 The wildcard A-record (`*.<sub>.<base>`) is required so every
 per-app subdomain resolves to the same EIP without a per-app DNS
@@ -834,7 +834,7 @@ change.
 
 cert-manager + Let's Encrypt prod ClusterIssuer. Each Ingress with a
 `tls.hosts`/`tls.secretName` block gets a Certificate object, which
-cert-manager issues via HTTP-01 challenge through ingress-nginx. No
+cert-manager issues the wildcard cert via DNS-01 against Route 53. No
 manual certbot, no in-repo `letsencrypt/` state directory, no
 nginx-reload deploy hooks.
 

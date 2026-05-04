@@ -133,42 +133,50 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
     --wait --timeout 5m
 
 # ---------------------------------------------------------------------------
-# cert-manager + ClusterIssuer (Let's Encrypt prod, HTTP-01 via ingress-nginx)
+# cert-manager + ClusterIssuer (Let's Encrypt prod, DNS-01 via Route 53)
 # ---------------------------------------------------------------------------
+: "${ROUTE53_ZONE_ID:?ROUTE53_ZONE_ID must be set (cloud-init writes it to /etc/profile.d/graphwise.sh; source the file or open a new login shell). Get it once with: aws route53 list-hosted-zones --query 'HostedZones[?Name==\`<base_domain>.\`].Id' --output text | sed 's|/hostedzone/||'}"
+: "${AWS_REGION:?AWS_REGION must be set (cloud-init writes it to /etc/profile.d/graphwise.sh)}"
+
 helm upgrade --install cert-manager jetstack/cert-manager \
     --namespace cert-manager \
     --version "$CERT_MANAGER_VERSION" \
     --set crds.enabled=true \
     --wait --timeout 5m
 
-# Single ClusterIssuer: letsencrypt-prod.
+# Single ClusterIssuer: letsencrypt-prod via DNS-01 (Route 53 solver).
+#
+# Why DNS-01 and not HTTP-01:
+#   - HTTP-01 only proves ownership of the exact hostname being challenged.
+#     LE refuses to issue a wildcard cert from an HTTP-01 challenge -- you
+#     must use DNS-01 for any *.<host> identifier.
+#   - With wildcards, ONE cert covers all 15 app subdomains under
+#     <sub>.<base>, vs HTTP-01's "one cert per hostname" pattern. That
+#     collapses LE's 5/identifier/168h cap from "5 deploys/week per
+#     subdomain" (because the cap is per-identifier-set hash, and our
+#     identifier-set was changing per Ingress) to "5 wildcard deploys/
+#     week per <sub>.<base>" -- effectively unlimited at our pace.
 #
 # Why prod-only and not staging-as-default-with-prod-flip:
-#
 #   In-cluster JVM clients (PoolParty -> Keycloak, graphrag-conversation
 #   -> Keycloak) call HTTPS endpoints across pods. The JVM truststore
-#   contains the standard set of publicly-trusted root CAs (ISRG Root
-#   X1 et al). LE STAGING certs chain to "Pretend Pear X1" which is NOT
-#   in any default truststore, so every in-cluster HTTPS call fails the
-#   handshake. PoolParty hangs forever waiting on Keycloak's
-#   uma2-configuration; conversation can't validate JWTs.
+#   contains publicly-trusted root CAs only. LE STAGING certs chain to
+#   "Pretend Pear X1" which is NOT in any default truststore, so every
+#   in-cluster HTTPS handshake fails. We tried staging-as-default;
+#   PoolParty hung forever in startup-probe loops waiting on Keycloak.
 #
-#   Browsers can override an untrusted cert via "Advanced -> Proceed";
-#   JVMs can't (without rebuilding the truststore in every image, which
-#   we don't control). So staging-as-default broke the actual stack.
+# How the Route 53 solver authenticates:
+#   cert-manager pod -> AWS SDK -> IMDSv2 (EC2 instance metadata) ->
+#   EC2 instance role -> route53:ChangeResourceRecordSets on the
+#   single hosted zone defined in terraform.tfvars (var.route53_zone_id).
+#   No AWS access key Secret needs to live in the cluster. The role's
+#   Route 53 policy is scoped to one hostedzone ARN, so even an
+#   exfiltrated role token can only edit DNS for this one zone.
 #
-# Trade-off: LE prod's 5-cert/identifier/168h rate limit caps fresh
-# deploys at ~5/week per exact subdomain. Mitigations:
-#   - Prefer `helm upgrade` (no cert reissue) over `reset-helm.sh`
-#     (deletes + reissues).
-#   - When you DO need a fresh deploy and you're near the cap, rotate
-#     the subdomain (stroker -> kent -> demo). 50/week/registered-
-#     domain is the next ceiling -- ~3 fresh deploys/week across all
-#     subdomains of semantic-proof.com.
-#
-# References ingress-nginx by class name. cert-manager polls LE when a
-# Certificate is created (via Ingress tls.secretName) and HTTP-01-
-# challenges via a temporary Ingress.
+#   Required: aws_instance.iam_instance_profile attached (handled by
+#   Terraform; see infra/terraform/main.tf "IAM role + instance profile").
+#   Required: http_put_response_hop_limit >= 2 in metadata_options so
+#   pods can reach IMDSv2 through the kube-proxy. Set in Terraform.
 kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -181,9 +189,58 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:
-      - http01:
-          ingress:
-            class: nginx
+      - dns01:
+          route53:
+            region: ${AWS_REGION}
+            hostedZoneID: ${ROUTE53_ZONE_ID}
+EOF
+
+# ---------------------------------------------------------------------------
+# kubernetes-reflector (mirrors the wildcard TLS Secret across namespaces)
+# ---------------------------------------------------------------------------
+# The wildcard Certificate is created ONCE in the cert-manager namespace
+# (single LE Order, single rate-limit hit, single Secret). Every consuming
+# namespace (graphwise, graphrag, keycloak, kubernetes-dashboard,
+# monitoring) needs its own copy because Ingress.spec.tls.secretName is
+# always resolved in the Ingress's own namespace.
+#
+# Reflector watches Secrets bearing reflection annotations and copies
+# them into every listed target namespace -- and re-syncs on cert-manager
+# renewal so pods always see fresh cert+key without redeploy.
+helm repo add emberstack https://emberstack.github.io/helm-charts 2>&1 || true
+helm repo update emberstack 2>&1 | grep -v "^$" || true
+helm upgrade --install reflector emberstack/reflector \
+    --namespace kube-system \
+    --wait --timeout 3m
+
+# ---------------------------------------------------------------------------
+# Wildcard TLS Certificate (LE prod via DNS-01)
+# ---------------------------------------------------------------------------
+# Two SANs cover everything: the apex (<sub>.<base>) for the Console
+# landing page, and the wildcard (*.<sub>.<base>) for every app
+# subdomain. cert-manager issues ONE Certificate, produces ONE Secret
+# in the cert-manager namespace, and reflector mirrors that Secret
+# into every namespace listed in the secretTemplate annotations.
+kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-tls
+  namespace: cert-manager
+spec:
+  secretName: wildcard-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "${GRAPHWISE_APEX}"
+    - "*.${GRAPHWISE_APEX}"
+  secretTemplate:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "graphwise,graphrag,keycloak,kubernetes-dashboard,monitoring"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "graphwise,graphrag,keycloak,kubernetes-dashboard,monitoring"
 EOF
 
 # ---------------------------------------------------------------------------
@@ -375,14 +432,13 @@ metadata:
   name: kubernetes-dashboard
   namespace: kubernetes-dashboard
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
     nginx.ingress.kubernetes.io/proxy-body-size: 100m
 spec:
   ingressClassName: nginx
   tls:
     - hosts: ["dashboard.${GRAPHWISE_APEX}"]
-      secretName: dashboard-tls
+      secretName: wildcard-tls
   rules:
     - host: "dashboard.${GRAPHWISE_APEX}"
       http:
@@ -404,7 +460,6 @@ metadata:
   name: prometheus
   namespace: monitoring
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
     nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
@@ -412,7 +467,7 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts: ["prometheus.${GRAPHWISE_APEX}"]
-      secretName: prometheus-tls
+      secretName: wildcard-tls
   rules:
     - host: "prometheus.${GRAPHWISE_APEX}"
       http:
@@ -438,13 +493,11 @@ kind: Ingress
 metadata:
   name: grafana
   namespace: monitoring
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: nginx
   tls:
     - hosts: ["grafana.${GRAPHWISE_APEX}"]
-      secretName: grafana-tls
+      secretName: wildcard-tls
   rules:
     - host: "grafana.${GRAPHWISE_APEX}"
       http:

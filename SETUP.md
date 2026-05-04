@@ -22,8 +22,9 @@ you will have:
   needed — AWS now grants foundation-model access by default).
 - Terraform installed and on `PATH`.
 - An EC2 key pair downloaded and `chmod 400`'d.
-- A GoDaddy (or other DNS-provider) plan for two A-records
-  (`<sub>.<base>` + wildcard).
+- A base domain whose DNS is hosted in Route 53 in this same AWS
+  account (registered through Route 53 is simplest). cert-manager
+  needs zone-write access for DNS-01 wildcard cert issuance.
 - Graphwise Maven registry credentials and license files in hand.
 
 When you're done here, jump to [infra/README.md](infra/README.md)
@@ -858,22 +859,26 @@ end of §11 and the §4 actor table for who needs to fix what.
 
 ## 6. Domain and DNS setup
 
-The stack needs a base domain you control, plus the ability to add
-two A-records under it (one apex, one wildcard).
+The stack needs a base domain whose DNS is hosted in **Route 53 in this same AWS account**. cert-manager writes `_acme-challenge` TXT records into the hosted zone for DNS-01 wildcard cert issuance, authenticated via the EC2 instance role (Phase 2 wiring) — this only works if the zone lives in the same account.
 
 ### Pick a base domain
 
-- **Graphwise field SEs:** Kent owns `semantic-proof.com` — email
-  him with the subdomain you want and the EIP from `terraform apply`,
-  he adds the records via the GoDaddy console. You don't need a
-  GoDaddy account.
-- **Everyone else:** any domain you control with any DNS provider.
-  This guide uses GoDaddy because that's what Graphwise uses; the
-  steps are equivalent on Route53 / Cloudflare / Namecheap.
+- **Graphwise field SEs:** Kent owns `semantic-demo.com` — registered through Route 53, hosted zone is in the Graphwise demo AWS account. Email him with the subdomain you want; he adds the records via the AWS Console. (`semantic-proof.com` was retired in May 2026; if you see references to it in older notes, that's why.)
+- **Everyone else:** any domain you control whose DNS is hosted in Route 53 in the same AWS account that runs this stack. Two paths to get there:
+  - **Register via Route 53.** Route 53 → Registered domains → Register domain. Hosted zone is auto-created on registration; nameservers are already authoritative on AWS, no delegation step.
+  - **Use an existing domain.** Create a Route 53 hosted zone for it; copy the 4 NS records AWS assigns into your registrar's nameserver settings; wait 1-24 hours for NS propagation.
 
-If you don't have a domain yet, GoDaddy or any registrar works. Pick
-something short — every per-app subdomain is `<app>.<sub>.<base>`,
-so a long base domain becomes painful.
+If you don't have a domain yet, registering through Route 53 is the simplest path (no NS-delegation step). Pick something short — every per-app subdomain is `<app>.<sub>.<base>`, so a long base domain becomes painful.
+
+### Capture the hosted zone ID
+
+`terraform.tfvars` needs the hosted zone ID (looks like `Z01234567ABCDEFGHIJK`). Get it once:
+
+```bash
+aws route53 list-hosted-zones --query 'HostedZones[?Name==`<your-base-domain>.`].Id' --output text | sed 's|/hostedzone/||'
+```
+
+The trailing dot in the query is required — Route 53 stores zone names with a trailing dot. Save the output for `route53_zone_id` in `terraform.tfvars`.
 
 ### Pick a subdomain
 
@@ -896,7 +901,7 @@ Convention: lowercase, no dots, hyphens OK. Examples: `scott`,
 > Terraform then only **associates** the existing EIP with the
 > instance — destroy detaches but does not release. The IP stays
 > stable across destroy/apply cycles, your DNS records are
-> set-and-forget, and cert-manager's HTTP-01 challenge succeeds on
+> set-and-forget, and cert-manager's DNS-01 wildcard challenge succeeds on
 > the very first apply because DNS already resolves.
 
 You need to capture **two values** from this step:
@@ -955,28 +960,26 @@ aws ec2 release-address --allocation-id eipalloc-0123abc... --region <your-regio
 
 ### Add the DNS records (now that you have the IP)
 
-Two A-records, both pointing at the **Public IPv4** you captured
-above:
+Two A-records in the Route 53 hosted zone, both pointing at the **Public IPv4** you captured above:
 
 | Name | Type | Points to | TTL |
 |---|---|---|---|
-| `<sub>.<base>` | A | `<your-elastic-ip>` | 5 min |
-| `*.<sub>.<base>` | A | `<your-elastic-ip>` | 5 min |
+| `<sub>.<base>` | A | `<your-elastic-ip>` | 300s |
+| `*.<sub>.<base>` | A | `<your-elastic-ip>` | 300s |
 
-The wildcard is critical — without it, only the apex resolves and
-every per-app subdomain (`poolparty`, `auth`, `graphrag`, …)
-returns NXDOMAIN.
+The wildcard is critical — without it, only the apex resolves and every per-app subdomain (`poolparty`, `auth`, `graphrag`, …) returns NXDOMAIN.
 
-Add them **now**, before `terraform apply`. By the time the
-instance is up and the cluster is bootstrapping, propagation will
-already be done — cert-manager's HTTP-01 challenge succeeds on the
-first try, no manual retries.
+Add them **now**, before `terraform apply`. Route 53 propagation is near-instant (AWS is the authoritative nameserver), so cert-manager's DNS-01 challenge succeeds on the first try once the cluster comes up.
 
-- **Graphwise field SEs:** email Kent the subdomain + the IPv4
-  address; he adds the records via the GoDaddy console.
-- **Self-managed domain:** add the records yourself in your
-  registrar's DNS console (GoDaddy / Route53 / Cloudflare /
-  Namecheap — equivalent steps everywhere).
+Single AWS CLI command to UPSERT both records (idempotent — safe to re-run):
+
+```bash
+ZONE_ID=$(aws route53 list-hosted-zones --query 'HostedZones[?Name==`<your-base-domain>.`].Id' --output text | sed 's|/hostedzone/||') ; aws route53 change-resource-record-sets --hosted-zone-id $ZONE_ID --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"<your-subdomain>.<your-base-domain>\",\"Type\":\"A\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"<your-elastic-ip>\"}]}},{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"*.<your-subdomain>.<your-base-domain>\",\"Type\":\"A\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"<your-elastic-ip>\"}]}}]}"
+```
+
+(Console alternative: Route 53 → Hosted zones → click your zone → Create record → twice, once for the apex name and once for `*` prefix.)
+
+- **Graphwise field SEs:** email Kent the subdomain + the IPv4 address; he runs the AWS CLI command above.
 
 Verify propagation before continuing:
 
@@ -984,13 +987,9 @@ Verify propagation before continuing:
 dig +short <sub>.<base> poolparty.<sub>.<base>
 ```
 
-Both should return your EIP within 5 minutes.
+Both should return your EIP within ~30s.
 
-> **If you skip pre-allocation** and let Terraform allocate a fresh
-> EIP each apply, you don't have the IP at this point and DNS has
-> to wait until after `terraform apply`. The post-apply runbook in
-> [infra/README.md](infra/README.md) walks the slow path. Fast path
-> (this section) is strongly recommended.
+> **If you skip EIP pre-allocation** and let Terraform allocate a fresh EIP each apply, you don't have the IP at this point and DNS has to wait until after `terraform apply`. The post-apply runbook in [infra/README.md](infra/README.md) walks the slow path. Fast path (this section) is strongly recommended.
 
 ---
 
@@ -1470,7 +1469,7 @@ At this point you have:
   manager / scratch file.
 - An EC2 key pair `.pem` `chmod 400`'d.
 - A subdomain plan (`<sub>.<base>` apex + `*.<sub>.<base>` wildcard
-  records) you'll add to GoDaddy after `terraform apply`.
+  records) you'll add to Route 53 after `terraform apply`.
 - Your laptop's public IP for `admin_cidr`.
 - A pre-allocated Elastic IP — Allocation ID (for `terraform.tfvars`)
   and Public IPv4 (already in your DNS A records).

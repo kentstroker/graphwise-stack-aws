@@ -6,7 +6,6 @@ metadata:
   labels:
     {{- include "graphdb.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
     {{- if .Values.basicAuth.enabled }}
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: {{ include "graphdb.fullname" . }}-basic-auth
@@ -20,7 +19,7 @@ spec:
   tls:
     - hosts:
         - {{ include "graphdb.ingressHost" . | quote }}
-      secretName: {{ include "graphdb.tlsSecretName" . }}
+      secretName: wildcard-tls
   rules:
     - host: {{ include "graphdb.ingressHost" . | quote }}
       http:
