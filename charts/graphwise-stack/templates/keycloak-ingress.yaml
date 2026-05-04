@@ -28,7 +28,7 @@ metadata:
   labels:
     {{- include "graphwise-stack.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default "letsencrypt-staging" | quote }}
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default "letsencrypt-prod" | quote }}
 spec:
   ingressClassName: nginx
   tls:

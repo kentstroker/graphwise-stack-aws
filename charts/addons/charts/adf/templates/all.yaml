@@ -85,7 +85,7 @@ metadata:
   name: {{ include "adf.fullname" . }}
   labels: {{- include "adf.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-staging" | quote }}
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-prod" | quote }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:

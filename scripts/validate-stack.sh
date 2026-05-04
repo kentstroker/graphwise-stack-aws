@@ -221,48 +221,32 @@ check_job_completed keycloak keycloak-authz-import   "authz-import    (per-clien
 # --------------------------------------------------------------------
 section "TLS Certificates (cert-manager)"
 
-# 8a. Both ClusterIssuers should exist + Ready (cluster-bootstrap.sh
-# installs both -- letsencrypt-staging is the default, letsencrypt-prod
-# is the customer-demo-time flip target).
-for issuer in letsencrypt-staging letsencrypt-prod; do
-    status=$(kubectl get clusterissuer "$issuer" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
-    if [ "$status" = "True" ]; then
-        check_pass "ClusterIssuer ${BOLD}$issuer${RESET} Ready=True"
-    elif [ -z "$status" ]; then
-        check_fail "ClusterIssuer $issuer MISSING" "cluster-bootstrap.sh should have created both; re-run it"
-    else
-        check_fail "ClusterIssuer $issuer Ready=$status (expected True)" \
-                   "kubectl describe clusterissuer $issuer"
-    fi
-done
-
-# 8b. Which issuer is each Certificate currently bound to? In a healthy
-# stack they're all the same -- mixed state means a switch-cert-issuer.sh
-# run was interrupted or someone hand-patched some Ingresses.
-ISSUER_COUNTS=$(kubectl get certificate -A -o jsonpath='{range .items[*]}{.spec.issuerRef.name}{"\n"}{end}' 2>/dev/null | sort | uniq -c | awk '{ print $2"="$1 }')
-ISSUER_IN_USE=$(kubectl get certificate -A -o jsonpath='{.items[0].spec.issuerRef.name}' 2>/dev/null)
-distinct_issuers=$(echo "$ISSUER_COUNTS" | grep -c '=' || true)
-if [ -z "$ISSUER_IN_USE" ]; then
-    check_warn "active issuer: (no Certificates yet)" "wait for cert-manager + ingress-shim to create them"
-elif [ "$distinct_issuers" -gt 1 ]; then
-    check_fail "mixed issuers in use: $(echo "$ISSUER_COUNTS" | tr '\n' ' ')" \
-               "expected one consistent issuer; re-run scripts/switch-cert-issuer.sh <staging|prod> --yes"
-elif [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
-    check_pass "active issuer: ${BOLD}letsencrypt-staging${RESET} ${DIM}(default; iteration-friendly, browsers warn 'Not Secure' until LE staging root CA is trusted -- see SETUP §3, or flip via ./scripts/switch-cert-issuer.sh prod)${RESET}"
-elif [ "$ISSUER_IN_USE" = "letsencrypt-prod" ]; then
-    check_pass "active issuer: ${BOLD}letsencrypt-prod${RESET} ${DIM}(real browser-trusted certs; subject to LE 5-cert/identifier/168h rate limit)${RESET}"
+# 8a. letsencrypt-prod ClusterIssuer must be Ready (the only one we
+# install -- staging is unsupported because the JVM truststore in
+# PoolParty / graphrag-conversation can't validate the staging chain).
+status=$(kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+if [ "$status" = "True" ]; then
+    check_pass "ClusterIssuer ${BOLD}letsencrypt-prod${RESET} Ready=True"
+elif [ -z "$status" ]; then
+    check_fail "ClusterIssuer letsencrypt-prod MISSING" "cluster-bootstrap.sh should have created it; re-run it"
 else
-    check_warn "active issuer: $ISSUER_IN_USE (unrecognized)" "expected letsencrypt-staging or letsencrypt-prod"
+    check_fail "ClusterIssuer letsencrypt-prod Ready=$status (expected True)" \
+               "kubectl describe clusterissuer letsencrypt-prod"
 fi
 
-# Set CURL_TLS_FLAG once, here, so EVERY subsequent curl in this script
-# (OIDC discovery in section 9, HTTPS reachability in section 10) honors
-# the staging-cert exception. Without this, OIDC checks silently fail
-# TLS verification and report all 3 realms as broken when the stack
-# is actually healthy.
-CURL_TLS_FLAG=""
-if [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
-    CURL_TLS_FLAG="-k"
+# 8b. Sanity: every Certificate must reference letsencrypt-prod. Any
+# leftover staging-issued cert (from an older deploy that pre-dates
+# the prod-only switch) won't be trusted by in-cluster JVM clients
+# and is a deploy-blocker.
+ISSUER_COUNTS=$(kubectl get certificate -A -o jsonpath='{range .items[*]}{.spec.issuerRef.name}{"\n"}{end}' 2>/dev/null | sort | uniq -c | awk '{ print $2"="$1 }')
+non_prod=$(echo "$ISSUER_COUNTS" | grep -v '^letsencrypt-prod=' | grep -c '=' || true)
+if [ "$(echo "$ISSUER_COUNTS" | grep -c '=')" = "0" ]; then
+    check_warn "no Certificates yet" "wait for cert-manager + ingress-shim to create them"
+elif [ "$non_prod" -gt 0 ]; then
+    check_fail "non-prod issuers in use: $(echo "$ISSUER_COUNTS" | tr '\n' ' ')" \
+               "delete the stale Certificates so cert-manager re-issues against letsencrypt-prod"
+else
+    check_pass "all Certificates issued by ${BOLD}letsencrypt-prod${RESET}"
 fi
 
 # 8c. Per-Certificate readiness + issuer + age table.
@@ -307,7 +291,7 @@ fi
 # --------------------------------------------------------------------
 section "Keycloak OIDC issuer match (Spring Security strict-equality)"
 for realm in master poolparty graphrag; do
-    issuer=$(curl $CURL_TLS_FLAG -sS --max-time 10 "https://auth.$APEX/realms/$realm/.well-known/openid-configuration" 2>/dev/null | jq -r .issuer 2>/dev/null)
+    issuer=$(curl -sS --max-time 10 "https://auth.$APEX/realms/$realm/.well-known/openid-configuration" 2>/dev/null | jq -r .issuer 2>/dev/null)
     expected="https://auth.$APEX/realms/$realm"
     if [ "$issuer" = "$expected" ]; then
         check_pass "$realm realm: $issuer"
@@ -321,17 +305,7 @@ done
 # --------------------------------------------------------------------
 # 10. HTTPS reachability sweep
 # --------------------------------------------------------------------
-# ISSUER_IN_USE + CURL_TLS_FLAG were both set in section 8. When
-# letsencrypt-staging is active the cert chain isn't browser-trusted
-# (no ISRG root in the LE staging chain), so curl without -k would
-# report the entire stack as broken even when it's healthy.
-if [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
-    section "HTTPS reachability (every app URL)  ${YELLOW}[staging certs detected -- TLS verification skipped]${RESET}"
-    printf '  %s%s%s\n' "$DIM" "Browser visits will show 'Not Secure' warnings. Trust the LE staging root CA per" "$RESET"
-    printf '  %s%s%s\n\n' "$DIM" "SETUP §3, OR flip to prod via scripts/switch-cert-issuer.sh prod before a demo." "$RESET"
-else
-    section "HTTPS reachability (every app URL)"
-fi
+section "HTTPS reachability (every app URL)"
 
 # (host-suffix, expected-codes-regex, label)
 endpoints=(
@@ -357,7 +331,7 @@ fi
 for entry in "${endpoints[@]}"; do
     host="${entry%%:*}"; rest="${entry#*:}"
     expected_re="${rest%%:*}"; label="${rest#*:}"
-    code=$(curl $CURL_TLS_FLAG -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$host/" 2>/dev/null)
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$host/" 2>/dev/null)
     if [[ "$code" =~ ^($expected_re)$ ]]; then
         check_pass "https://$host/  -> $code  $DIM($label)$RESET"
     elif [ "$code" = "000" ]; then

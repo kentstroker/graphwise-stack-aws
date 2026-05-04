@@ -147,18 +147,16 @@ else
 fi
 
 # --------------------------------------------------------------------
-# 3. cert-manager ClusterIssuers (both staging + prod)
+# 3. cert-manager ClusterIssuer (letsencrypt-prod, the only one)
 # --------------------------------------------------------------------
-section "Cert-manager ClusterIssuers"
-for issuer in letsencrypt-staging letsencrypt-prod; do
-    status=$(kubectl get clusterissuer "$issuer" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
-    if [ "$status" = "True" ]; then
-        check_pass "$issuer ClusterIssuer Ready"
-    else
-        check_fail "$issuer ClusterIssuer NOT Ready (status=${status:-missing})" \
-                   "kubectl describe clusterissuer $issuer"
-    fi
-done
+section "Cert-manager ClusterIssuer"
+status=$(kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+if [ "$status" = "True" ]; then
+    check_pass "letsencrypt-prod ClusterIssuer Ready"
+else
+    check_fail "letsencrypt-prod ClusterIssuer NOT Ready (status=${status:-missing})" \
+               "kubectl describe clusterissuer letsencrypt-prod"
+fi
 
 # --------------------------------------------------------------------
 # (Image-pull secrets check is intentionally NOT here.)

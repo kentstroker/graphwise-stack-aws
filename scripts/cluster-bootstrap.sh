@@ -141,45 +141,35 @@ helm upgrade --install cert-manager jetstack/cert-manager \
     --set crds.enabled=true \
     --wait --timeout 5m
 
-# Two ClusterIssuers shipped:
+# Single ClusterIssuer: letsencrypt-prod.
 #
-#   letsencrypt-staging  -- DEFAULT during stack iteration. LE staging
-#                           server has 30,000-cert/week limits (effectively
-#                           unlimited for our pace). Certs aren't trusted by
-#                           browsers (no ISRG root in trust stores), so URLs
-#                           show "Not Secure" warnings -- fine for SE-internal
-#                           validation, NOT fine for putting a prospect in
-#                           front of the URL.
+# Why prod-only and not staging-as-default-with-prod-flip:
 #
-#   letsencrypt-prod     -- USE FOR CUSTOMER DEMOS. Real LE prod certs,
-#                           browsers trust them. Subject to LE rate limits:
-#                           5 certs per exact identifier per 168h. Multiple
-#                           fresh-deploy cycles in a week WILL hit the cap.
+#   In-cluster JVM clients (PoolParty -> Keycloak, graphrag-conversation
+#   -> Keycloak) call HTTPS endpoints across pods. The JVM truststore
+#   contains the standard set of publicly-trusted root CAs (ISRG Root
+#   X1 et al). LE STAGING certs chain to "Pretend Pear X1" which is NOT
+#   in any default truststore, so every in-cluster HTTPS call fails the
+#   handshake. PoolParty hangs forever waiting on Keycloak's
+#   uma2-configuration; conversation can't validate JWTs.
 #
-# Operators flip between the two via `scripts/switch-cert-issuer.sh
-# <staging|prod>` -- it patches every Ingress's annotation + deletes the
-# old Certificate resources so cert-manager re-issues with the new issuer.
-# See CLAUDE.md "Cert issuer toggle" for the full operator workflow.
+#   Browsers can override an untrusted cert via "Advanced -> Proceed";
+#   JVMs can't (without rebuilding the truststore in every image, which
+#   we don't control). So staging-as-default broke the actual stack.
 #
-# Both ClusterIssuers reference ingress-nginx by class name.
-# cert-manager polls the ACME server when a Certificate is created (via
-# Ingress tls.secretName) and HTTP-01-challenges via a temporary Ingress.
+# Trade-off: LE prod's 5-cert/identifier/168h rate limit caps fresh
+# deploys at ~5/week per exact subdomain. Mitigations:
+#   - Prefer `helm upgrade` (no cert reissue) over `reset-helm.sh`
+#     (deletes + reissues).
+#   - When you DO need a fresh deploy and you're near the cap, rotate
+#     the subdomain (stroker -> kent -> demo). 50/week/registered-
+#     domain is the next ceiling -- ~3 fresh deploys/week across all
+#     subdomains of semantic-proof.com.
+#
+# References ingress-nginx by class name. cert-manager polls LE when a
+# Certificate is created (via Ingress tls.secretName) and HTTP-01-
+# challenges via a temporary Ingress.
 kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-staging
-spec:
-  acme:
-    server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: ${LE_EMAIL}
-    privateKeySecretRef:
-      name: letsencrypt-staging-account-key
-    solvers:
-      - http01:
-          ingress:
-            class: nginx
----
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -346,17 +336,6 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
     --wait --timeout 10m
 
 # ---------------------------------------------------------------------------
-# ClusterIssuer to use for the observability Ingresses below
-# ---------------------------------------------------------------------------
-# Default to letsencrypt-staging (matches the chart-side default in
-# umbrella values.yaml `global.clusterIssuer`). Override per deploy via
-# env var: GRAPHWISE_CLUSTER_ISSUER=letsencrypt-prod ./scripts/cluster-bootstrap.sh
-# When you flip later via scripts/switch-cert-issuer.sh, it patches these
-# Ingresses too -- you don't need to re-run cluster-bootstrap to flip.
-GRAPHWISE_CLUSTER_ISSUER="${GRAPHWISE_CLUSTER_ISSUER:-letsencrypt-staging}"
-echo "Observability Ingresses will use ClusterIssuer: $GRAPHWISE_CLUSTER_ISSUER"
-
-# ---------------------------------------------------------------------------
 # Basic-auth secret for the Prometheus ingress
 # ---------------------------------------------------------------------------
 # Only Prometheus needs this -- the Dashboard's bearer-token and
@@ -396,7 +375,7 @@ metadata:
   name: kubernetes-dashboard
   namespace: kubernetes-dashboard
   annotations:
-    cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
     nginx.ingress.kubernetes.io/proxy-body-size: 100m
 spec:
@@ -425,7 +404,7 @@ metadata:
   name: prometheus
   namespace: monitoring
   annotations:
-    cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
     nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
@@ -460,7 +439,7 @@ metadata:
   name: grafana
   namespace: monitoring
   annotations:
-    cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: nginx
   tls:

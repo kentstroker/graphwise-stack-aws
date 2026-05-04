@@ -50,7 +50,7 @@ metadata:
   name: {{ include "gv.fullname" . }}
   labels: {{- include "gv.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-staging" | quote }}
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-prod" | quote }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:

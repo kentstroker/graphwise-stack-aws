@@ -60,7 +60,7 @@ Day-2 essentials:
 - **Wipe and reinstall:** `./scripts/reset-helm.sh --yes <sub>` (deletes every PVC; data loss). Add `--skip-graphrag` for the umbrella-only path.
 - **Non-destructive chart edit:** `helm upgrade …` against either the `graphwise-stack` or `graphrag` release.
 - **Never run unscoped `terraform apply` post-provision** — read [infra/README.md → Safety](infra/README.md#safety-never-unscoped-terraform-apply-after-first-provision) before any `apply` after the initial one.
-- **TLS certs default to `letsencrypt-staging`** (rate-limit-free for iteration; browsers warn "Not Secure"). Flip to real browser-trusted certs right before a customer demo: `./scripts/switch-cert-issuer.sh prod`. Flip back to staging post-demo: `./scripts/switch-cert-issuer.sh staging`. See [CLAUDE.md → Cert issuer toggle](CLAUDE.md) for rationale.
+- **TLS certs use `letsencrypt-prod` only.** Staging was tried as default and reverted — JVM clients (PoolParty → Keycloak) can't validate the staging chain, breaking the stack. LE prod's rate limit is 5 certs/identifier/168h; mitigations (rotate subdomain, prefer `helm upgrade` over `reset-helm`) in [CLAUDE.md → Why letsencrypt-prod only](CLAUDE.md).
 
 ## Repo layout
 

@@ -335,51 +335,6 @@ Want at least rsync 3.x. If you'd rather not install it, `scp` is
 the documented fallback in DEPLOY §3.5 — fine for one-off file
 drops, painful for multi-GB transfers (no resume, no compression).
 
-### Trust the Let's Encrypt staging root CA (recommended)
-
-The stack ships with `letsencrypt-staging` as the default
-ClusterIssuer (see [CLAUDE.md → Cert issuer toggle](CLAUDE.md) for
-why). Staging certs aren't browser-trusted out of the box, so:
-
-- Top-level page navigation works after a one-time "Advanced →
-  Proceed" click-through.
-- **XHR/fetch calls from the loaded page silently fail with status
-  `0`** — Chrome/Safari don't extend the cert exception to
-  subresource requests. The Kubernetes Dashboard is the most visible
-  victim (login-form fails with `Http failure response for
-  api/v1/csrftoken/login: 0 Unknown Error`); GraphRAG's chatbot, ADF,
-  and Semantic Workbench all hit the same wall on their first XHR.
-
-Trust the LE staging root CA at the OS level and every staging cert
-the stack mints "just works":
-
-**macOS:**
-
-```bash
-curl -o /tmp/lestg.pem https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem && sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/lestg.pem
-```
-
-Restart your browser. Verify with:
-
-```bash
-echo | openssl s_client -connect dashboard.<sub>.<base>:443 -servername dashboard.<sub>.<base> 2>/dev/null | openssl x509 -noout -issuer
-# Should print: issuer=C=US, O=(STAGING) Let's Encrypt, CN=(STAGING) Pretend Pear X1
-```
-
-**Windows** (PowerShell as Administrator):
-
-```powershell
-Invoke-WebRequest -Uri https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem -OutFile $env:TEMP\lestg.pem; Import-Certificate -FilePath $env:TEMP\lestg.pem -CertStoreLocation Cert:\LocalMachine\Root
-```
-
-Restart your browser.
-
-If you'd rather not trust a non-public root, the alternative is to
-flip the whole stack to `letsencrypt-prod` right before each demo
-via `./scripts/switch-cert-issuer.sh prod` — see
-[CLAUDE.md → Cert issuer toggle](CLAUDE.md). Be aware of LE prod's
-5-cert/identifier/168h rate limit.
-
 ### Clone the graphwise-stack-aws repo to your laptop
 
 You need this repo on your laptop disk to run `terraform apply`,

@@ -40,19 +40,12 @@ global:
   subdomain: "stroker"
   baseDomain: "semantic-proof.com"
 
-  # cert-manager ClusterIssuer used by every Ingress's TLS cert. Default
-  # is letsencrypt-staging -- LE staging certs aren't browser-trusted
-  # (you'll see "Not Secure" warnings) but the staging server has
-  # effectively unlimited rate limits, which matters when iterating on
-  # the stack. Flip to letsencrypt-prod right before a customer demo
-  # via `scripts/switch-cert-issuer.sh prod` (NOT a values edit + helm
-  # upgrade -- the script also patches existing Ingresses + deletes old
-  # Certificate resources so cert-manager re-issues with the new
-  # issuer). LE prod has 5 cert/identifier/168h rate limits; multiple
-  # fresh deploys in a week WILL hit them.
-  #
-  # See CLAUDE.md "Cert issuer toggle" for the full operator workflow.
-  clusterIssuer: letsencrypt-staging
+  # cert-manager ClusterIssuer used by every Ingress's TLS cert. Only
+  # letsencrypt-prod is supported -- staging certs aren't trusted by the
+  # JVM truststore in PoolParty / graphrag-conversation, breaking every
+  # in-cluster HTTPS call to Keycloak. See CLAUDE.md "Why letsencrypt-
+  # prod only" for the full rationale + LE rate-limit mitigations.
+  clusterIssuer: letsencrypt-prod
 
   # Image pull secret name for the Graphwise private registry.
   # Created by scripts/cluster-bootstrap.sh in the namespaces that

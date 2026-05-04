@@ -184,8 +184,8 @@ You never run certbot. You never copy `.pem` files anywhere. cert-manager does i
 **The cast:**
 
 - **cert-manager** — a controller running in the `cert-manager` namespace. Watches Ingress objects and Certificate resources.
-- **ClusterIssuer** — a recipe for getting certs. We have **two**: `letsencrypt-staging` (default — rate-limit-free but browsers warn "Not Secure") and `letsencrypt-prod` (real browser-trusted certs, but 5/identifier/168h rate limit). Operators flip between them via `scripts/switch-cert-issuer.sh staging|prod`. Default is staging because we deploy/destroy frequently during iteration; flip to prod right before showing a prospect.
-- **ingress-shim** — a sub-component of cert-manager. Watches every Ingress: if it has both an annotation `cert-manager.io/cluster-issuer: letsencrypt-<staging|prod>` AND a `tls:` block listing hosts and a Secret name, ingress-shim auto-creates a Certificate resource for those hosts.
+- **ClusterIssuer** — a recipe for getting certs. We use **only `letsencrypt-prod`** (real browser-trusted certs, subject to LE rate limits — 5 certs/identifier/168h). LE staging was tried and reverted: its certs aren't trusted by JVM truststores in PoolParty / graphrag-conversation, breaking every in-cluster HTTPS call to Keycloak. See [CLAUDE.md → Why letsencrypt-prod only](CLAUDE.md) for the rate-limit math + iteration mitigations.
+- **ingress-shim** — a sub-component of cert-manager. Watches every Ingress: if it has both an annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` AND a `tls:` block listing hosts and a Secret name, ingress-shim auto-creates a Certificate resource for those hosts.
 - **HTTP-01 challenge** — Let's Encrypt's way of proving you own the domain: it makes an HTTP request to `http://<your-domain>/.well-known/acme-challenge/<random-token>` and expects a specific response.
 
 **The dance, end-to-end** (happens on first install for each app, and on cert renewal ~60 days later):
