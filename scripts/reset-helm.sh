@@ -16,7 +16,7 @@
 #
 # Does delete:
 #   - helm release graphwise-stack in namespace graphwise
-#   - all PVCs in namespaces graphwise, keycloak, graphrag (data loss)
+#   - all PVCs in namespaces graphwise, graphdb, keycloak, graphrag (data loss)
 #   - any leftover Secrets/ConfigMaps from the umbrella's templates/
 #
 # Side-effect: re-renders the apex landing page ConfigMap
@@ -184,16 +184,25 @@ fi
 # up but immediately fail with "secret not found" -- ~10 minutes
 # wasted on a Helm install that crashloops out the gate. Catch it
 # before we do anything destructive.
-echo "Pre-flight: checking license Secrets in '$UMBRELLA_NAMESPACE' namespace..."
+echo "Pre-flight: checking license Secrets..."
 missing_licenses=0
+# graphwise namespace: poolparty / graphdb-embedded / unifiedviews mount these.
 for secret in poolparty-license graphdb-license unifiedviews-license; do
     if ! kubectl -n "$UMBRELLA_NAMESPACE" get secret "$secret" >/dev/null 2>&1; then
-        echo "  ERROR: missing Secret '$secret' in namespace '$UMBRELLA_NAMESPACE'" >&2
+        echo "  ERROR: missing Secret '$UMBRELLA_NAMESPACE/$secret'" >&2
         missing_licenses=1
     else
-        echo "  OK:    $secret"
+        echo "  OK:    $UMBRELLA_NAMESPACE/$secret"
     fi
 done
+# graphdb namespace: graphdb-projects mounts a second copy of graphdb-license.
+# install-licenses.sh creates it there too if the namespace exists.
+if ! kubectl -n graphdb get secret graphdb-license >/dev/null 2>&1; then
+    echo "  ERROR: missing Secret 'graphdb/graphdb-license'" >&2
+    missing_licenses=1
+else
+    echo "  OK:    graphdb/graphdb-license"
+fi
 if [[ $missing_licenses -ne 0 ]]; then
     cat >&2 <<'PREFLIGHT'
 
@@ -243,7 +252,7 @@ cat <<WARNING
 ${BOLD:-}=========================================================================
 About to RESET Helm releases for subdomain '$SUB.$BASE'.${RESET:-}
 
-This is DESTRUCTIVE: every PVC in graphwise / keycloak / graphrag
+This is DESTRUCTIVE: every PVC in graphwise / graphdb / keycloak / graphrag
 will be deleted (Postgres data, Keycloak data, ES indices, GraphDB
 repos, n8n workflows). The wildcard TLS cert is NOT affected -- the
 cert lives in cert-manager namespace and survives.
@@ -279,7 +288,7 @@ WARNING
 echo "Reset plan:"
 echo "  - helm uninstall $GRAPHRAG_RELEASE -n $GRAPHRAG_NAMESPACE  (graphrag pods first)"
 echo "  - helm uninstall $UMBRELLA_RELEASE -n $UMBRELLA_NAMESPACE  (umbrella second)"
-echo "  - kubectl delete pvc --all in: graphwise, keycloak, graphrag"
+echo "  - kubectl delete pvc --all in: graphwise, graphdb, keycloak, graphrag"
 if [[ $SKIP_GRAPHRAG -eq 1 ]]; then
     echo "  - regenerate $UMBRELLA_VALUES (graphrag overlay skipped)"
     echo "  - helm dependency update on umbrella chart"
@@ -337,8 +346,8 @@ fi
 # ---------------------------------------------------------------------
 # Helm uninstall deliberately does NOT delete PVCs (StatefulSet behavior).
 # For a troubleshooting reset we want a blank slate.
-echo "Deleting PVCs in graphwise, keycloak, graphrag namespaces..."
-for ns in graphwise keycloak graphrag; do
+echo "Deleting PVCs in graphwise, graphdb, keycloak, graphrag namespaces..."
+for ns in graphwise graphdb keycloak graphrag; do
     if kubectl get namespace "$ns" >/dev/null 2>&1; then
         kubectl delete pvc --all -n "$ns" --wait=false --ignore-not-found || true
     fi
@@ -351,7 +360,7 @@ echo "Waiting for PVCs to terminate..."
 deadline=$(( $(date +%s) + 60 ))
 while :; do
     leftover=0
-    for ns in graphwise keycloak graphrag; do
+    for ns in graphwise graphdb keycloak graphrag; do
         if kubectl get namespace "$ns" >/dev/null 2>&1; then
             count=$(kubectl get pvc -n "$ns" --no-headers 2>/dev/null | wc -l)
             leftover=$(( leftover + count ))

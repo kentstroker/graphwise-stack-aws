@@ -2,6 +2,17 @@
 # projects) under different release names; values below are defaults
 # suitable for either, with per-instance overrides via -f values-*.yaml.
 
+# Optional namespace override. When empty, every resource lands in
+# the Helm release namespace (umbrella default: graphwise). Set to
+# a non-empty string to deploy this GraphDB instance into a separate
+# namespace -- used by the umbrella's graphdb-projects alias to land
+# in `graphdb` so it's logically separated from the embedded GraphDB
+# (which stays in `graphwise` because PoolParty needs in-namespace
+# bare-name resolution to its Service). Cross-namespace clients
+# reach Services via <svc>.<ns> -- works transparently. The namespace
+# must already exist (cluster-bootstrap.sh creates it).
+namespace: ""
+
 image:
   repository: ontotext/graphdb
   tag: "11.3.3"

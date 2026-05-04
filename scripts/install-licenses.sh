@@ -51,19 +51,30 @@ if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
 fi
 
 create_or_replace() {
-    local secret_name="$1"
-    local key_name="$2"
-    local file_path="$3"
+    local ns="$1"
+    local secret_name="$2"
+    local key_name="$3"
+    local file_path="$4"
 
-    kubectl -n "$NAMESPACE" delete secret "$secret_name" --ignore-not-found
-    kubectl -n "$NAMESPACE" create secret generic "$secret_name" \
+    kubectl -n "$ns" delete secret "$secret_name" --ignore-not-found
+    kubectl -n "$ns" create secret generic "$secret_name" \
         --from-file="$key_name=$file_path"
-    echo "  ✓ $secret_name (key=$key_name)"
+    echo "  ✓ $ns/$secret_name (key=$key_name)"
 }
 
-create_or_replace poolparty-license    poolparty.key       "$LICENSES_DIR/poolparty.key"
-create_or_replace graphdb-license      graphdb.license     "$LICENSES_DIR/graphdb.license"
-create_or_replace unifiedviews-license uv-license.key      "$LICENSES_DIR/uv-license.key"
+create_or_replace "$NAMESPACE" poolparty-license    poolparty.key       "$LICENSES_DIR/poolparty.key"
+create_or_replace "$NAMESPACE" graphdb-license      graphdb.license     "$LICENSES_DIR/graphdb.license"
+create_or_replace "$NAMESPACE" unifiedviews-license uv-license.key      "$LICENSES_DIR/uv-license.key"
+
+# graphdb-projects lives in its own namespace `graphdb` (split out from
+# graphwise for logical separation -- see charts/graphwise-stack/values.yaml
+# graphdb-projects.namespace). The graphdb-projects pod mounts
+# graphdb-license from its own namespace, so we install a second copy
+# there. Same license file, two namespaces -- no extra license entitlement
+# consumed (Ontotext licenses by hardware, not by Secret count).
+if kubectl get namespace graphdb >/dev/null 2>&1; then
+    create_or_replace graphdb graphdb-license graphdb.license "$LICENSES_DIR/graphdb.license"
+fi
 
 echo
 echo "License Secrets installed. Next: helm install the umbrella chart."

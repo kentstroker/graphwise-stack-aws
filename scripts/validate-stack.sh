@@ -104,7 +104,7 @@ fi
 # --------------------------------------------------------------------
 # 2. Workload pod health
 # --------------------------------------------------------------------
-section "Workload pods (graphwise / keycloak / graphrag)"
+section "Workload pods (graphwise / graphdb / keycloak / graphrag)"
 
 check_namespace_ready() {
     local ns="$1" label="$2"
@@ -129,8 +129,9 @@ check_namespace_ready() {
     fi
 }
 
-check_namespace_ready graphwise "graphwise namespace (PoolParty / GraphDB ×2 / addons / console)"
-check_namespace_ready keycloak  "keycloak namespace  (Keycloak + Postgres + bootstrap Jobs)"
+check_namespace_ready graphwise "graphwise namespace  (PoolParty / GraphDB embedded / addons / console)"
+check_namespace_ready graphdb   "graphdb namespace    (GraphDB projects -- standalone Workbench)"
+check_namespace_ready keycloak  "keycloak namespace   (Keycloak + Postgres + bootstrap Jobs)"
 if [ "$GRAPHRAG_INSTALLED" = "yes" ]; then
     check_namespace_ready graphrag "graphrag namespace  (chatbot / conversation / components / workflows)"
 else
@@ -139,16 +140,22 @@ else
 fi
 
 # --------------------------------------------------------------------
-# 3. License Secrets (graphwise namespace)
+# 3. License Secrets
 # --------------------------------------------------------------------
 section "License Secrets"
 for s in poolparty-license graphdb-license unifiedviews-license; do
     if kubectl get secret -n graphwise "$s" >/dev/null 2>&1; then
-        check_pass "$s  (graphwise namespace)"
+        check_pass "graphwise/$s"
     else
-        check_fail "$s MISSING" "Run scripts/install-licenses.sh; ensure files/licenses/* are populated"
+        check_fail "graphwise/$s MISSING" "Run scripts/install-licenses.sh; ensure files/licenses/* are populated"
     fi
 done
+# graphdb-projects mounts a second copy of graphdb-license in its own ns.
+if kubectl get secret -n graphdb graphdb-license >/dev/null 2>&1; then
+    check_pass "graphdb/graphdb-license  (graphdb-projects mounts this)"
+else
+    check_fail "graphdb/graphdb-license MISSING" "Run scripts/install-licenses.sh; it auto-installs the second copy when the graphdb namespace exists"
+fi
 
 # --------------------------------------------------------------------
 # 4. Image-pull secret (created by reset-helm.sh, NOT cluster-bootstrap.sh)
@@ -167,14 +174,17 @@ done
 # 5. GraphDB rename validation (catches alias-collision regression)
 # --------------------------------------------------------------------
 section "GraphDB subchart fullname (alias collision regression test)"
-for variant in embedded projects; do
+# Embedded lives in graphwise (PoolParty needs in-namespace bare-name
+# resolution to it); projects lives in graphdb (logical separation).
+for entry in "graphwise:embedded" "graphdb:projects"; do
+    ns="${entry%%:*}"; variant="${entry##*:}"
     name="graphwise-stack-graphdb-$variant"
-    if kubectl get statefulset -n graphwise "$name" >/dev/null 2>&1 && \
-       kubectl get svc -n graphwise "$name" >/dev/null 2>&1; then
-        check_pass "$name  (StatefulSet + Service)"
+    if kubectl get statefulset -n "$ns" "$name" >/dev/null 2>&1 && \
+       kubectl get svc -n "$ns" "$name" >/dev/null 2>&1; then
+        check_pass "$ns/$name  (StatefulSet + Service)"
     else
-        check_fail "$name MISSING (StatefulSet or Service)" \
-                   "graphdb fullname helper may have regressed -- see CLAUDE.md GraphDB pattern"
+        check_fail "$ns/$name MISSING (StatefulSet or Service)" \
+                   "graphdb fullname helper or namespace override may have regressed -- see CLAUDE.md"
     fi
 done
 
@@ -259,7 +269,7 @@ fi
 # in-namespace). Without this, Ingress TLS fails with "Secret not
 # found" and ingress-nginx serves a self-signed default cert.
 section "Wildcard Secret reflection (kubernetes-reflector)"
-reflect_targets=(graphwise graphrag keycloak kubernetes-dashboard monitoring)
+reflect_targets=(graphwise graphdb graphrag keycloak kubernetes-dashboard monitoring)
 for ns in "${reflect_targets[@]}"; do
     if kubectl get secret -n "$ns" wildcard-tls >/dev/null 2>&1; then
         check_pass "wildcard-tls present in '${BOLD}${ns}${RESET}' namespace"

@@ -249,6 +249,18 @@ graphdb-embedded:
 
 graphdb-projects:
   enabled: true
+  # Namespace override -- graphdb-projects lives in its own namespace
+  # `graphdb` for logical separation from the embedded GraphDB (which
+  # stays in `graphwise` because PoolParty needs in-namespace bare-name
+  # Service resolution to it). Cross-namespace Service access works
+  # transparently via <svc>.<ns> -- PoolParty / UnifiedViews / any
+  # external client reaches it via either the public Ingress URL
+  # (https://graphdb-projects.<apex>/) or the in-cluster Service URL
+  # (http://graphwise-stack-graphdb-projects.graphdb:7200/).
+  # The `graphdb` namespace is created by scripts/cluster-bootstrap.sh
+  # and the `graphdb-license` Secret is installed there too by
+  # scripts/install-licenses.sh.
+  namespace: graphdb
   externalUrl: ""
   ingress:
     host: ""

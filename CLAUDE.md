@@ -180,14 +180,18 @@ The `KeycloakRealmImport` CR ALSO drops the per-client `.authorizationSettings` 
 
 Idempotent, generic across clients (any future client with `authorizationSettings` is auto-handled). Container is `alpine:3.20` + apk-add `bash curl jq` — same pattern as the bootstrap-admin Job.
 
-### GraphDB subchart fullname pattern (alias-aware)
+### GraphDB subchart fullname pattern (alias-aware) + namespace split
 
 `charts/graphdb/` is installed twice in the umbrella as subchart aliases (`graphdb-embedded`, `graphdb-projects`) to give two independent GraphDB instances. The fullname helper in `charts/graphdb/templates/_helpers.tpl` uses `printf "%s-%s" .Release.Name .Chart.Name` so the aliases produce distinct resource names:
 
-- `graphwise-stack-graphdb-embedded` (Service, StatefulSet, Ingress, TLS Secret)
-- `graphwise-stack-graphdb-projects` (same set)
+- `graphwise-stack-graphdb-embedded` (Service, StatefulSet, Ingress, TLS Secret) — lives in `graphwise` namespace.
+- `graphwise-stack-graphdb-projects` (same set) — lives in **`graphdb` namespace** (split out for logical separation).
 
-If you ever change the helper, **don't drop the `.Chart.Name` part** — both aliases share `.Release.Name` (the parent umbrella's release name), so a `.Release.Name`-only fullname collapses both into the same `graphwise-stack` and the second alias silently overwrites the first in the rendered manifest. PoolParty's `internalUrl` in `charts/poolparty/values.yaml` points at the prefixed `http://graphwise-stack-graphdb-embedded:7200`; if you rename the helper output pattern, update PoolParty's URL in lockstep.
+**Namespace split.** `charts/graphdb/values.yaml` exposes a `namespace` value that defaults to empty (falls back to release namespace). Every template's `metadata.namespace` reads `{{ .Values.namespace | default .Release.Namespace }}`. The umbrella sets `graphdb-projects.namespace: graphdb` so its resources land there; the embedded alias leaves it empty so it inherits `graphwise` (the release namespace). Why split: graphdb-embedded MUST stay in `graphwise` because PoolParty's `internalUrl` in `charts/poolparty/values.yaml` uses bare-name service resolution (`http://graphwise-stack-graphdb-embedded:7200`) — bare names only resolve in-namespace. graphdb-projects has no in-cluster client requiring bare-name resolution; user-facing access goes through the public Ingress; PoolParty / UnifiedViews configure it as a remote endpoint at user level (UI-driven), using either the public URL or the cross-namespace Service URL `http://graphwise-stack-graphdb-projects.graphdb:7200`.
+
+The `graphdb` namespace is created by `cluster-bootstrap.sh`. The `graphdb-license` Secret is installed there too by `install-licenses.sh` (one license file → two namespaces; Ontotext licenses by hardware, not Secret count). The wildcard-tls Secret is mirrored into `graphdb` by reflector (annotations on the Cert in `cluster-bootstrap.sh` list `graphdb` as a target).
+
+If you ever change the fullname helper, **don't drop the `.Chart.Name` part** — both aliases share `.Release.Name` (the parent umbrella's release name), so a `.Release.Name`-only fullname collapses both into the same `graphwise-stack` and the second alias silently overwrites the first in the rendered manifest. PoolParty's `internalUrl` in `charts/poolparty/values.yaml` points at the prefixed `http://graphwise-stack-graphdb-embedded:7200`; if you rename the helper output pattern, update PoolParty's URL in lockstep.
 
 ### Console landing page — Helm `tpl` pattern
 
