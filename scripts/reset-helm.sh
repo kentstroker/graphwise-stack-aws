@@ -47,6 +47,14 @@
 
 set -euo pipefail
 
+# Colors (disabled when stdout is not a TTY -- pipes/files stay clean).
+# Used by the destructive-confirmation prompt block below.
+if [ -t 1 ]; then
+    BOLD=$'\033[1m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
+else
+    BOLD=""; YELLOW=""; RESET=""
+fi
+
 # ---------------------------------------------------------------------
 # Argument parsing -- accept --yes anywhere on the command line, then
 # positional <subdomain> [base_domain]. Earlier version only honored
@@ -205,7 +213,70 @@ fi
 # ---------------------------------------------------------------------
 # Confirm
 # ---------------------------------------------------------------------
-echo "About to reset Helm releases for subdomain '$SUB.$BASE':"
+# Two layers of confirmation, because reset-helm wipes PVCs and most
+# operators run it more aggressively than they need to:
+#
+#   Layer 1 (NEW, always shown even with --yes): a "do you actually
+#   need to reset, or do you want a non-destructive helm upgrade
+#   instead?" warning, with the exact upgrade commands to copy/paste
+#   if so.
+#
+#   Layer 2 (existing, suppressed by --yes): "type 'reset' to proceed"
+#   to confirm the destructive intent.
+#
+# What reset-helm DOES wipe: every PVC in graphwise / keycloak /
+#   graphrag (Postgres data, Keycloak data, ES indices, GraphDB
+#   repos, n8n workflows -- everything stateful in those namespaces).
+#
+# What reset-helm DOES NOT wipe (and you don't need to fear losing):
+#   - The wildcard-tls Certificate + Secret in cert-manager ns
+#     (managed by cert-manager, untouched by Helm uninstalls).
+#   - The reflected wildcard-tls Secrets in the 5 consuming
+#     namespaces (managed by reflector; kubectl delete pvc doesn't
+#     touch Secrets).
+#   - The 3 license Secrets in graphwise (preserved by uninstall;
+#     re-created by install-licenses.sh if missing).
+#   - LE rate-limit budget: reset-helm never reissues the wildcard
+#     cert. Re-running this is free from LE's perspective.
+cat <<WARNING
+
+${BOLD:-}=========================================================================
+About to RESET Helm releases for subdomain '$SUB.$BASE'.${RESET:-}
+
+This is DESTRUCTIVE: every PVC in graphwise / keycloak / graphrag
+will be deleted (Postgres data, Keycloak data, ES indices, GraphDB
+repos, n8n workflows). The wildcard TLS cert is NOT affected -- the
+cert lives in cert-manager namespace and survives.
+
+${YELLOW:-}If you only want to roll out a chart change (template edit, values
+tweak, image bump), you almost certainly want \`helm upgrade\` instead --
+it preserves all data and is non-destructive.${RESET:-}
+
+  Non-destructive upgrade (data preserved):
+
+      helm upgrade $UMBRELLA_RELEASE $UMBRELLA_CHART_DIR \\
+          -n $UMBRELLA_NAMESPACE -f $UMBRELLA_VALUES \\
+          --timeout $HELM_TIMEOUT
+
+WARNING
+if [[ $SKIP_GRAPHRAG -ne 1 ]]; then
+    cat <<WARNING
+      helm upgrade $GRAPHRAG_RELEASE $GRAPHRAG_CHART_DIR \\
+          -n $GRAPHRAG_NAMESPACE \\
+          -f $GRAPHRAG_CHART_DIR/values-graphwise.yaml \\
+          -f $GRAPHRAG_VALUES \\
+          --timeout $HELM_TIMEOUT
+
+WARNING
+fi
+cat <<WARNING
+  When you DO need reset (initial deploy, base_domain change, schema
+  migration that needs a clean DB, recovering from a half-broken
+  previous deploy):
+
+WARNING
+
+echo "Reset plan:"
 echo "  - helm uninstall $GRAPHRAG_RELEASE -n $GRAPHRAG_NAMESPACE  (graphrag pods first)"
 echo "  - helm uninstall $UMBRELLA_RELEASE -n $UMBRELLA_NAMESPACE  (umbrella second)"
 echo "  - kubectl delete pvc --all in: graphwise, keycloak, graphrag"
@@ -220,9 +291,21 @@ else
 fi
 echo "  - timeout per release: $HELM_TIMEOUT"
 echo
-echo "DATA LOSS: every PVC in those three namespaces will be deleted."
+echo "${BOLD:-}DATA LOSS: every PVC in those three namespaces will be deleted.${RESET:-}"
 echo
 
+# Layer 1: always-on "do you really want this?" question.
+if [[ $ASSUME_YES -ne 1 ]]; then
+    read -r -p "Reset is destructive. Did you mean 'helm upgrade' instead? [y to abort and use upgrade / N to continue with reset]: " upgrade_instead
+    case "$upgrade_instead" in
+        y|Y|yes|Yes|YES)
+            echo "Aborted. Run the helm upgrade command(s) above instead."
+            exit 0
+            ;;
+    esac
+fi
+
+# Layer 2: existing destructive-confirmation gate.
 if [[ $ASSUME_YES -ne 1 ]]; then
     read -r -p "Type 'reset' to proceed: " confirm
     if [[ "$confirm" != "reset" ]]; then
