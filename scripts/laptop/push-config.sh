@@ -96,6 +96,20 @@ USAGE
     exit 2
 fi
 
+# PyYAML is required for the n8n-encryption-key splice + cert summary.
+# Fail fast with a clear fix rather than letting a python traceback
+# surface mid-run.
+if ! python3 -c "import yaml" >/dev/null 2>&1; then
+    cat >&2 <<DEPS
+${RED}ERROR:${RESET} python3 module 'yaml' (PyYAML) not found on this laptop.
+Install once with:
+    pip3 install --user pyyaml
+        # or, on Homebrew Python:  /opt/homebrew/bin/pip3 install pyyaml
+        # or, on system Python:    sudo pip3 install pyyaml
+DEPS
+    exit 2
+fi
+
 # ---------------------------------------------------------------------
 # Stage files locally into a temp dir; the tar gets built from there.
 # ---------------------------------------------------------------------

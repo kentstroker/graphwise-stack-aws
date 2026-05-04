@@ -7,7 +7,26 @@
 #   ~/Downloads/graphwise-config-<UTC-timestamp>/
 #       payload.tgz                  (the tarball as it arrived; keep
 #                                     for re-extract / archival)
-#       graphwise-secrets.yaml
+#       graphwise-secrets.yaml       (single source of truth for
+#                                     operator secrets: maven, Bedrock,
+#                                     n8n license, n8n encryption key)
+#       chart-values.yaml            (the EC2's actual
+#                                     charts/graphwise-stack/values.yaml
+#                                     -- captured to detect drift from
+#                                     the git baseline)
+#       chart-values.diff            (only present if the EC2 file
+#                                     differs from the git-tracked
+#                                     baseline -- review for any
+#                                     operator-supplied overrides
+#                                     beyond Bedrock/n8n license,
+#                                     which are auto-migrated)
+#       dashboard-kubeconfig.yaml    (cluster-bootstrap.sh's auto-
+#                                     generated kubeconfig with the
+#                                     dashboard-admin token; saves
+#                                     a separate scp post-deploy.
+#                                     NOT pushed back -- token is
+#                                     tied to THIS cluster's signing
+#                                     key)
 #       licenses/
 #         poolparty.key
 #         graphdb.license
@@ -18,6 +37,12 @@
 #                                     the next deploy -- cert-manager
 #                                     sees a valid Secret in place and
 #                                     skips the LE issuance call)
+#
+# Auto-migration: Bedrock + n8n license values still living in
+# chart-values.yaml (pre-overlay-arch deployments) are spliced into
+# the snapshot's graphwise-secrets.yaml automatically. The operator's
+# subsequent push-config.sh writes the merged overlay to the new
+# EC2's ~/graphwise-secrets.yaml -- no manual migration step.
 #
 # Why one tarball: each scp is a fresh SSH connection (handshake
 # latency, partial-failure mode per file). One tarball + one SSH means
@@ -42,6 +67,8 @@
 #   ./scripts/laptop/pull-config.sh --skip-secrets
 #   ./scripts/laptop/pull-config.sh --skip-licenses
 #   ./scripts/laptop/pull-config.sh --skip-cert
+#   ./scripts/laptop/pull-config.sh --skip-chart-values
+#   ./scripts/laptop/pull-config.sh --skip-dashboard
 #
 # Exit codes:
 #   0 -- everything pulled (or selectively skipped per flags)
@@ -61,12 +88,16 @@ DOWNLOAD_DIR="$HOME/Downloads"
 SKIP_SECRETS=no
 SKIP_LICENSES=no
 SKIP_CERT=no
+SKIP_CHART_VALUES=no
+SKIP_DASHBOARD=no
 while [ $# -gt 0 ]; do
     case "$1" in
-        --download-dir)  DOWNLOAD_DIR="$2"; shift 2 ;;
-        --skip-secrets)  SKIP_SECRETS=yes; shift ;;
-        --skip-licenses) SKIP_LICENSES=yes; shift ;;
-        --skip-cert)     SKIP_CERT=yes; shift ;;
+        --download-dir)        DOWNLOAD_DIR="$2"; shift 2 ;;
+        --skip-secrets)        SKIP_SECRETS=yes; shift ;;
+        --skip-licenses)       SKIP_LICENSES=yes; shift ;;
+        --skip-cert)           SKIP_CERT=yes; shift ;;
+        --skip-chart-values)   SKIP_CHART_VALUES=yes; shift ;;
+        --skip-dashboard)      SKIP_DASHBOARD=yes; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -90,6 +121,19 @@ USAGE
     exit 2
 fi
 
+# PyYAML is required for the auto-migration + cert summary. Fail fast
+# with a clear fix rather than letting a python traceback surface mid-run.
+if ! python3 -c "import yaml" >/dev/null 2>&1; then
+    cat >&2 <<DEPS
+${RED}ERROR:${RESET} python3 module 'yaml' (PyYAML) not found on this laptop.
+Install once with:
+    pip3 install --user pyyaml
+        # or, on Homebrew Python:  /opt/homebrew/bin/pip3 install pyyaml
+        # or, on system Python:    sudo pip3 install pyyaml
+DEPS
+    exit 2
+fi
+
 # ---------------------------------------------------------------------
 # Create the dated snapshot folder.
 # ---------------------------------------------------------------------
@@ -107,12 +151,15 @@ echo
 WANT_SECRETS=$([ "$SKIP_SECRETS" = "yes" ] && echo 0 || echo 1)
 WANT_LICENSES=$([ "$SKIP_LICENSES" = "yes" ] && echo 0 || echo 1)
 WANT_CERT=$([ "$SKIP_CERT" = "yes" ] && echo 0 || echo 1)
+WANT_CHART_VALUES=$([ "$SKIP_CHART_VALUES" = "yes" ] && echo 0 || echo 1)
+WANT_DASHBOARD=$([ "$SKIP_DASHBOARD" = "yes" ] && echo 0 || echo 1)
 
 REMOTE_BUILD=$(cat <<REMOTE
 set -euo pipefail
 RDIR=\$(mktemp -d /tmp/graphwise-pull.XXXXXX)
 trap "rm -rf \"\$RDIR\"" EXIT
 
+# Phase 1: secrets overlay (single source of truth, post-refactor)
 if [ "$WANT_SECRETS" = "1" ]; then
     if [ -f "\$HOME/graphwise-secrets.yaml" ]; then
         cp -p "\$HOME/graphwise-secrets.yaml" "\$RDIR/graphwise-secrets.yaml"
@@ -122,6 +169,7 @@ if [ "$WANT_SECRETS" = "1" ]; then
     fi
 fi
 
+# Phase 2: license files (vendor blobs)
 if [ "$WANT_LICENSES" = "1" ]; then
     mkdir -p "\$RDIR/licenses"
     for f in poolparty.key graphdb.license uv-license.key; do
@@ -134,7 +182,11 @@ if [ "$WANT_LICENSES" = "1" ]; then
     done
 fi
 
+# Phase 3: live wildcard cert (kubectl get secret -o yaml)
+# Lands inside licenses/ so push-config.sh's existing --licenses-dir
+# logic picks it up unchanged.
 if [ "$WANT_CERT" = "1" ]; then
+    mkdir -p "\$RDIR/licenses"
     if kubectl get secret -n cert-manager wildcard-tls >/dev/null 2>&1; then
         kubectl get secret -n cert-manager wildcard-tls -o yaml | python3 -c "
 import sys, yaml
@@ -154,10 +206,49 @@ for k in list(lab.keys()):
         del lab[k]
 if not lab: m.pop('labels', None)
 print(yaml.safe_dump(d, default_flow_style=False, sort_keys=False))
-" > "\$RDIR/wildcard-tls.yaml"
-        echo "PRESENT:wildcard-tls.yaml" >&2
+" > "\$RDIR/licenses/wildcard-tls.yaml"
+        echo "PRESENT:licenses/wildcard-tls.yaml" >&2
     else
-        echo "MISSING:wildcard-tls.yaml (no Secret in cert-manager ns)" >&2
+        echo "MISSING:licenses/wildcard-tls.yaml (no Secret in cert-manager ns)" >&2
+    fi
+fi
+
+# Phase 4: chart values.yaml + diff vs git baseline
+# Pre-overlay-arch operators kept Bedrock + n8n license in
+# charts/graphwise-stack/values.yaml directly. Capture both the
+# operator's actual file AND a diff against the git baseline so:
+#   (a) auto-migration on the laptop side can splice Bedrock/n8n
+#       license into the snapshot's graphwise-secrets.yaml
+#   (b) any OTHER operator drift gets surfaced via chart-values.diff
+#       for human review.
+if [ "$WANT_CHART_VALUES" = "1" ]; then
+    if [ -f "\$HOME/graphwise-stack-aws/charts/graphwise-stack/values.yaml" ]; then
+        cp -p "\$HOME/graphwise-stack-aws/charts/graphwise-stack/values.yaml" "\$RDIR/chart-values.yaml"
+        echo "PRESENT:chart-values.yaml" >&2
+        if (cd "\$HOME/graphwise-stack-aws" && git diff --no-color HEAD -- charts/graphwise-stack/values.yaml > "\$RDIR/chart-values.diff" 2>/dev/null); then
+            if [ -s "\$RDIR/chart-values.diff" ]; then
+                echo "PRESENT:chart-values.diff (operator drift detected)" >&2
+            else
+                rm -f "\$RDIR/chart-values.diff"
+            fi
+        fi
+    else
+        echo "MISSING:chart-values.yaml" >&2
+    fi
+fi
+
+# Phase 5: dashboard kubeconfig (cluster-bootstrap.sh writes it)
+# Captured for convenience -- the bearer token is tied to THIS
+# cluster's signing key, so this file is NOT pushed back on a
+# fresh deploy. push-config.sh ignores it. Saves a separate scp
+# post-deploy when you want the dashboard token in your snapshot
+# folder for upload to the K8s Dashboard UI.
+if [ "$WANT_DASHBOARD" = "1" ]; then
+    if [ -f "\$HOME/dashboard-kubeconfig.yaml" ]; then
+        cp -p "\$HOME/dashboard-kubeconfig.yaml" "\$RDIR/dashboard-kubeconfig.yaml"
+        echo "PRESENT:dashboard-kubeconfig.yaml" >&2
+    else
+        echo "MISSING:dashboard-kubeconfig.yaml (cluster-bootstrap.sh hasn't run yet?)" >&2
     fi
 fi
 
@@ -218,6 +309,73 @@ find "$SNAPSHOT_DIR" -type d -exec chmod 700 {} +
 
 # List what landed.
 ( cd "$SNAPSHOT_DIR" && find . -type f -not -name payload.tgz | sed 's|^\./|  ✓ |' )
+
+# ---------------------------------------------------------------------
+# Auto-migrate Bedrock + n8n license from chart-values.yaml into the
+# snapshot's graphwise-secrets.yaml, IF the chart values has them
+# filled and the overlay has empty placeholders. Bridges the
+# pre-overlay-arch -> post-overlay-arch migration without manual
+# operator work. Any OTHER chart-values drift is surfaced via
+# chart-values.diff for human review.
+# ---------------------------------------------------------------------
+chart_values="$SNAPSHOT_DIR/chart-values.yaml"
+overlay_file="$SNAPSHOT_DIR/graphwise-secrets.yaml"
+if [ -f "$chart_values" ] && [ -f "$overlay_file" ]; then
+    echo
+    echo "${BOLD}Auto-migration check (chart-values.yaml -> graphwise-secrets.yaml):${RESET}"
+    migrated=$(CHART_VALUES="$chart_values" OVERLAY_FILE="$overlay_file" python3 <<'PY'
+import os, sys, yaml
+chart = yaml.safe_load(open(os.environ['CHART_VALUES'])) or {}
+ovl   = yaml.safe_load(open(os.environ['OVERLAY_FILE'])) or {}
+chart_gs = (chart.get('graphrag-secrets') or {})
+ovl_gs   = ovl.setdefault('graphrag-secrets', {})
+
+migrated = []
+
+# Bedrock awsCredentials.{region,accessKeyId,secretAccessKey}
+chart_aws = (chart_gs.get('awsCredentials') or {})
+ovl_aws   = ovl_gs.setdefault('awsCredentials', {})
+for k in ('region', 'accessKeyId', 'secretAccessKey'):
+    chart_v = (chart_aws.get(k) or '').strip() if isinstance(chart_aws.get(k), str) else chart_aws.get(k)
+    ovl_v   = (ovl_aws.get(k) or '').strip()   if isinstance(ovl_aws.get(k), str)   else ovl_aws.get(k)
+    if chart_v and not ovl_v:
+        ovl_aws[k] = chart_v
+        migrated.append(f'graphrag-secrets.awsCredentials.{k}')
+
+# n8nLicense.activationKey
+chart_n8n = (chart_gs.get('n8nLicense') or {})
+ovl_n8n   = ovl_gs.setdefault('n8nLicense', {})
+chart_v = (chart_n8n.get('activationKey') or '').strip()
+ovl_v   = (ovl_n8n.get('activationKey') or '').strip()
+if chart_v and not ovl_v:
+    ovl_n8n['activationKey'] = chart_v
+    migrated.append('graphrag-secrets.n8nLicense.activationKey')
+
+if migrated:
+    with open(os.environ['OVERLAY_FILE'], 'w') as f:
+        yaml.safe_dump(ovl, f, default_flow_style=False, sort_keys=False)
+
+print('\n'.join(migrated))
+PY
+)
+    if [ -n "$migrated" ]; then
+        printf '  %s✓%s migrated %d field(s) from chart-values.yaml into graphwise-secrets.yaml:\n' \
+               "$GREEN" "$RESET" "$(echo "$migrated" | wc -l | tr -d ' ')"
+        echo "$migrated" | sed 's|^|       |'
+    else
+        printf '  %s✓%s no fields needed migration (overlay already has values, or chart-values empty)\n' "$GREEN" "$RESET"
+    fi
+
+    # Surface any OTHER chart-values drift the operator should review.
+    if [ -s "$SNAPSHOT_DIR/chart-values.diff" ]; then
+        diff_lines=$(grep -cE '^[+-][^+-]' "$SNAPSHOT_DIR/chart-values.diff" 2>/dev/null || echo 0)
+        printf '  %s⚠%s chart-values.yaml has additional drift vs git baseline (%d changed line(s))\n' \
+               "$YELLOW" "$RESET" "$diff_lines"
+        echo "      Review: cat \"$SNAPSHOT_DIR/chart-values.diff\""
+        echo "      Bedrock + n8n license were auto-migrated above; any OTHER edits"
+        echo "      (custom passwords, log levels, etc.) need manual handling."
+    fi
+fi
 
 # Cert summary (parse from the snapshot copy).
 cert_local="$SNAPSHOT_DIR/licenses/wildcard-tls.yaml"
