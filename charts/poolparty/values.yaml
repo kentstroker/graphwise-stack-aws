@@ -30,8 +30,18 @@ externalUrl: ""
 graphdb:
   internalUrl: "http://graphwise-stack-graphdb-embedded:7200"
 
+# Same release-prefix rename pattern as graphdb above. The
+# poolparty-elasticsearch subchart's Service is rendered by the umbrella
+# as `graphwise-stack-poolparty-elasticsearch` (release name +
+# subchart name). The bare `poolparty-elasticsearch` Service does NOT
+# exist as a result, so PoolParty's GraphSearch / Extractor flows
+# would fail at runtime with UnknownHostException -- caught when
+# graphrag-components hit the same DNS-resolution wall on its own
+# elasticUrl. Both consumers updated together. If you ever rename
+# the umbrella release away from `graphwise-stack`, update this URL
+# in lockstep.
 elasticsearch:
-  internalUrl: "http://poolparty-elasticsearch:9200"
+  internalUrl: "http://graphwise-stack-poolparty-elasticsearch:9200"
   type: ELASTICSEARCH
   username: ""
   password: ""
