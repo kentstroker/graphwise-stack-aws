@@ -285,6 +285,36 @@ does **not** work against this stack's strict `admin_cidr` — see
 [SETUP §9](SETUP.md#9-optional-ec2-instance-connect)
 for why.)
 
+**Preferred path — one push command from your laptop.** Keep canonical
+copies of your secrets file (`~/graphwise-secrets.yaml`) and the three
+license files (`~/graphwise-licenses/{poolparty.key,graphdb.license,uv-license.key}`)
+on your laptop, gitignored. After every `terraform apply`, push them all
+in one shot:
+
+```bash
+# On laptop -- pushes secrets YAML + 3 license files in one go
+./scripts/laptop/push-secrets.sh
+```
+
+The script splices the FRESH `n8nEncryption.key` from the new EC2 into
+your local secrets copy before push (the local one is from a destroyed
+n8n DB and useless on the new one). License files land at
+`~/graphwise-stack-aws/files/licenses/` on the EC2 — exactly where
+`install-licenses.sh` looks for them. Missing files are warned + skipped,
+not fatal.
+
+Bootstrap the laptop side once:
+
+```bash
+# On laptop -- one-time setup (after first manual edit of the EC2 secrets file)
+scp -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-secrets.yaml ~/
+mkdir -p ~/graphwise-licenses
+mv ~/Downloads/poolparty.key ~/Downloads/graphdb.license ~/Downloads/uv-license.key ~/graphwise-licenses/
+```
+
+**Manual fallback** — if you'd rather edit on the EC2 and scp licenses
+ad-hoc, or you don't want the push helper:
+
 ```bash
 # On EC2 (from the SSH session above)
 cd ~/graphwise-stack-aws
@@ -293,9 +323,6 @@ cd ~/graphwise-stack-aws
 # Fill in maven.user/maven.pass + the awsCredentials + n8nLicense blocks.
 # DO NOT touch n8nEncryption.key.
 $EDITOR ~/graphwise-secrets.yaml
-
-# OR (preferred -- keeps your laptop as source of truth across destroys):
-# from your laptop, scripts/laptop/push-secrets.sh pushes a saved copy.
 
 # Drop Graphwise license files via scp from your laptop:
 mkdir -p files/licenses

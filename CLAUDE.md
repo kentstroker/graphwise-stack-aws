@@ -21,7 +21,7 @@ No application source code is in this repo. Only:
 - `charts/{poolparty,graphdb,addons,console,poolparty-elasticsearch,keycloak-realms}/` — per-app sub-charts
 - `charts/vendor/graphrag*/` — vendored GraphRAG charts (chatbot, conversation, components, workflows) — installed as a separate Helm release
 - Helper scripts under `scripts/`: `cluster-bootstrap.sh`, `cluster-resume.sh`, `cluster-stop.sh`, `reset-helm.sh`, `render-values.sh`, `install-licenses.sh`, `extract-poolparty-realm.sh`, `validate-bootstrap.sh`, `validate-stack.sh`
-- Laptop-side helpers under `scripts/laptop/`: `push-to-ec2.sh`, `pull-from-ec2.sh`
+- Laptop-side helpers under `scripts/laptop/`: `push-to-ec2.sh`, `pull-from-ec2.sh`, `push-secrets.sh` (one-shot push of `~/graphwise-secrets.yaml` + the three license files from `~/graphwise-licenses/` — preserves operator material across destroy/apply cycles)
 - Vendor license files under `files/licenses/` (gitignored)
 
 Changes are usually to a chart's `values.yaml` / `templates/`, the umbrella's `templates/`, or `scripts/render-values.sh`.
