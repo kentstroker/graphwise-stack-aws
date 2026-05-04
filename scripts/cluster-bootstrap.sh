@@ -12,7 +12,7 @@
 #      filled in (Graphwise registry creds for the GraphRAG private
 #      images). cloud-init writes a placeholder version on first boot;
 #      operator fills in real values OR scp's their saved copy via
-#      scripts/laptop/push-secrets.sh. NOT consumed by this script
+#      scripts/laptop/push-config.sh. NOT consumed by this script
 #      directly -- consumed by scripts/reset-helm.sh when it creates
 #      the docker-registry pull Secret. Listed here as a prereq so the
 #      operator knows to fill it in before reset-helm.sh runs.
@@ -222,7 +222,7 @@ helm upgrade --install reflector emberstack/reflector \
 # of a saved cert from a prior deployment to skip an LE issuance call
 # ---------------------------------------------------------------------------
 # If ~/wildcard-tls-saved.yaml exists (placed by
-# scripts/laptop/push-secrets.sh from a prior pull-secrets.sh capture),
+# scripts/laptop/push-config.sh from a prior pull-config.sh capture),
 # validate it and apply the Secret BEFORE creating the Certificate.
 # cert-manager checks the Secret on Certificate reconcile -- if the
 # cert covers all the spec'd SANs and isn't expired (within 1/3-of-

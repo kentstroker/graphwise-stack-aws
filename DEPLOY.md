@@ -291,10 +291,10 @@ re-push after every `terraform destroy/apply`. The pair:
 
 ```bash
 # Before terraform destroy: capture deployment state to your laptop.
-./scripts/laptop/pull-secrets.sh
+./scripts/laptop/pull-config.sh
 
 # After terraform apply: restore everything in one shot.
-./scripts/laptop/push-secrets.sh
+./scripts/laptop/push-config.sh
 ```
 
 What's captured (laptop paths shown):
@@ -302,9 +302,9 @@ What's captured (laptop paths shown):
 - `~/graphwise-licenses/{poolparty.key, graphdb.license, uv-license.key}` — vendor license files
 - `~/graphwise-licenses/wildcard-tls.yaml` — the live LE wildcard TLS cert as a Secret YAML
 
-The cert is the headline: `pull-secrets.sh` extracts it from
+The cert is the headline: `pull-config.sh` extracts it from
 `kubectl get secret -n cert-manager wildcard-tls -o yaml`,
-`push-secrets.sh` re-pushes it to `~/wildcard-tls-saved.yaml` on the
+`push-config.sh` re-pushes it to `~/wildcard-tls-saved.yaml` on the
 new EC2, and `cluster-bootstrap.sh` detects + applies it before
 creating the Certificate resource. cert-manager sees a valid cert in
 place and **skips the LE issuance call entirely** — saves a per-week
@@ -328,8 +328,8 @@ mv ~/Downloads/poolparty.key ~/Downloads/graphdb.license ~/Downloads/uv-license.
 $EDITOR ~/graphwise-secrets.yaml   # template at infra/terraform/user-data.sh.tpl
 ```
 
-Subsequently the cycle is fully automatic: `pull-secrets.sh` before
-each destroy, `push-secrets.sh` after each apply.
+Subsequently the cycle is fully automatic: `pull-config.sh` before
+each destroy, `push-config.sh` after each apply.
 
 **Manual fallback** — if you'd rather edit on the EC2 and scp licenses
 ad-hoc, or you don't want the push helper:

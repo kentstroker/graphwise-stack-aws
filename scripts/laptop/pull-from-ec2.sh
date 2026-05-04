@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# pull-from-ec2.sh -- DEPRECATED. Use scripts/laptop/pull-secrets.sh
+# pull-from-ec2.sh -- DEPRECATED. Use scripts/laptop/pull-config.sh
 # instead.
 #
-# pull-secrets.sh is the symmetric counterpart to push-secrets.sh and
+# pull-config.sh is the symmetric counterpart to push-config.sh and
 # captures the modern operator-state set:
 #   - ~/graphwise-secrets.yaml       (single-file secrets overlay)
 #   - ~/graphwise-licenses/*         (license files in canonical

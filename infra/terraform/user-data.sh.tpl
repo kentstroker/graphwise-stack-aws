@@ -264,7 +264,7 @@ cat > "$SECRETS_FILE" <<EOF
 #
 # Convenience: keep a copy of this file on your LAPTOP (gitignored).
 # After each terraform destroy/apply cycle, push it back via:
-#   scripts/laptop/push-secrets.sh
+#   scripts/laptop/push-config.sh
 # That preserves your secrets across rebuilds without re-typing.
 
 # Maven registry credentials for maven.ontotext.com (private GraphRAG

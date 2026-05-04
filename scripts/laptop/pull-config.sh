@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pull-secrets.sh -- one ssh, one tar pipeline. Pulls every operator-
+# pull-config.sh -- one ssh, one tar pipeline. Pulls every operator-
 # supplied artifact + the live LE wildcard cert off the EC2 as a single
 # tarball; extracts to canonical paths on your laptop.
 #
@@ -17,7 +17,7 @@
 #   3. The cluster's live wildcard TLS cert (kubectl get secret -n
 #      cert-manager wildcard-tls -o yaml)        -> ~/graphwise-licenses/wildcard-tls.yaml
 #      With kubectl-managed metadata stripped (resourceVersion, uid,
-#      ownerReferences, controller annotations) so push-secrets.sh's
+#      ownerReferences, controller annotations) so push-config.sh's
 #      kubectl apply restores cleanly. cluster-bootstrap.sh detects
 #      the saved cert on the next deploy and applies the Secret
 #      BEFORE creating the Certificate resource -- cert-manager sees
@@ -33,12 +33,12 @@
 #   GRAPHWISE_USER   ec2-user (default)
 #
 # Usage:
-#   ./scripts/laptop/pull-secrets.sh
-#   ./scripts/laptop/pull-secrets.sh --secrets-file ~/path/to/secrets.yaml
-#   ./scripts/laptop/pull-secrets.sh --licenses-dir ~/path/to/licenses
-#   ./scripts/laptop/pull-secrets.sh --skip-secrets
-#   ./scripts/laptop/pull-secrets.sh --skip-licenses
-#   ./scripts/laptop/pull-secrets.sh --skip-cert
+#   ./scripts/laptop/pull-config.sh
+#   ./scripts/laptop/pull-config.sh --secrets-file ~/path/to/secrets.yaml
+#   ./scripts/laptop/pull-config.sh --licenses-dir ~/path/to/licenses
+#   ./scripts/laptop/pull-config.sh --skip-secrets
+#   ./scripts/laptop/pull-config.sh --skip-licenses
+#   ./scripts/laptop/pull-config.sh --skip-cert
 #
 # Exit codes:
 #   0 -- everything pulled (or selectively skipped per flags)
@@ -248,4 +248,4 @@ fi
 
 echo
 echo "After next ${BOLD}terraform apply${RESET}, restore everything in one shot:"
-echo "  ./scripts/laptop/push-secrets.sh"
+echo "  ./scripts/laptop/push-config.sh"

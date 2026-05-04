@@ -430,7 +430,7 @@ file** on the EC2 host: `~/graphwise-secrets.yaml` (auto-created by
 Terraform cloud-init with placeholders, gitignored, never tracked).
 `reset-helm.sh` reads it for the maven creds and passes it to Helm
 via `-f` for the rest. Keep a copy on your laptop and re-push via
-`scripts/laptop/push-secrets.sh` after every `terraform destroy/apply`
+`scripts/laptop/push-config.sh` after every `terraform destroy/apply`
 cycle so secrets survive rebuilds without re-typing.
 
 | Secret | Placeholder | What you provide | Source |

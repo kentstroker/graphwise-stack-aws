@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# push-secrets.sh -- one ssh, one tar pipeline. Pushes every operator-
+# push-config.sh -- one ssh, one tar pipeline. Pushes every operator-
 # supplied artifact + (optionally) a saved LE wildcard cert to the EC2
 # host as a single tarball; a remote bash snippet extracts to canonical
 # paths.
@@ -18,7 +18,7 @@
 #      ~/graphwise-licenses/uv-license.key
 #
 #   3. ~/graphwise-licenses/wildcard-tls.yaml  -> EC2:~/wildcard-tls-saved.yaml
-#      Saved LE wildcard cert from a prior pull-secrets.sh.
+#      Saved LE wildcard cert from a prior pull-config.sh.
 #      cluster-bootstrap.sh detects + restores it (cert-manager sees
 #      a valid Secret in place and skips LE issuance -- saves a
 #      per-week LE rate-limit slot).
@@ -37,13 +37,13 @@
 #   GRAPHWISE_USER   ec2-user (default)
 #
 # Usage:
-#   ./scripts/laptop/push-secrets.sh
-#   ./scripts/laptop/push-secrets.sh --secrets-file ~/path/to/secrets.yaml
-#   ./scripts/laptop/push-secrets.sh --licenses-dir ~/path/to/licenses
-#   ./scripts/laptop/push-secrets.sh --skip-secrets
-#   ./scripts/laptop/push-secrets.sh --skip-licenses
-#   ./scripts/laptop/push-secrets.sh --skip-cert
-#   ./scripts/laptop/push-secrets.sh --keep-local-encryption-key
+#   ./scripts/laptop/push-config.sh
+#   ./scripts/laptop/push-config.sh --secrets-file ~/path/to/secrets.yaml
+#   ./scripts/laptop/push-config.sh --licenses-dir ~/path/to/licenses
+#   ./scripts/laptop/push-config.sh --skip-secrets
+#   ./scripts/laptop/push-config.sh --skip-licenses
+#   ./scripts/laptop/push-config.sh --skip-cert
+#   ./scripts/laptop/push-config.sh --keep-local-encryption-key
 #
 # Exit codes:
 #   0 -- all selected items pushed
