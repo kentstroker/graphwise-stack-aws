@@ -118,7 +118,7 @@ maven:
   pass: ""                  # FILL IN: Graphwise maven password
 
 graphrag-secrets:
-  awsCredentials:           # SETUP §4b graphrag-bedrock IAM user
+  awsCredentials:           # SETUP step 4b graphrag-bedrock IAM user
     region: "us-west-2"
     accessKeyId: ""         # FILL IN: AKIA...
     secretAccessKey: ""     # FILL IN
@@ -141,7 +141,7 @@ Graphwise stack bootstrapped $(date -u +%Y-%m-%dT%H:%M:%SZ).
 Apex: $HOSTNAME_FQDN
 KIND cluster 'graphwise' is up:  kubectl get nodes
 
-Next: ~/graphwise-stack-aws/DEPLOY.md from §3
+Next: ~/graphwise-stack-aws/DEPLOY.md from step 3
 (or scripts/laptop/push-config.sh from your laptop).
 EOF
 chown "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/NEXT_STEPS.txt"
