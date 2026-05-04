@@ -296,7 +296,7 @@ What's still manual, in order:
     #     scp it to your laptop and upload via the Dashboard's
     #     Kubeconfig login option (the token-field paste handler is
     #     broken in Chrome/Safari):
-    #       scp -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
+    #       scp -i \$GRAPHWISE_KEY \$GRAPHWISE_USER@\$GRAPHWISE_HOST:~/dashboard-kubeconfig.yaml ~/Downloads/
     #     Then https://dashboard.$HOSTNAME_FQDN/ -> Kubeconfig radio
     #     -> Choose file -> Sign In.
 
