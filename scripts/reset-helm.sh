@@ -454,19 +454,48 @@ helm dependency update "$UMBRELLA_CHART_DIR"
 # ---------------------------------------------------------------------
 # The graphrag release pulls private images from maven.ontotext.com.
 # It needs a `graphwise` Secret of type kubernetes.io/dockerconfigjson
-# in the graphrag namespace. We also create it in the graphwise
-# namespace because the umbrella's global.imagePullSecrets
-# references it (most umbrella images are public on Docker Hub so
-# the secret existing is a no-op for them, but it keeps the
-# imagePullSecrets reference from being an orphan).
+# in graphrag + graphwise namespaces.
 #
-# Moved here from cluster-bootstrap.sh -- this is the script that
-# actually installs the chart that consumes it. If maven creds aren't
-# on disk, we WARN and continue: the umbrella installs fine without
-# them; only the graphrag release's pods will ImagePullBackOff.
-if [[ -f "$HOME/.ontotext/maven-user" && -f "$HOME/.ontotext/maven-pass" ]]; then
+# Source-of-truth precedence:
+#   1. ~/graphwise-secrets.yaml top-level `maven:` block (preferred --
+#      consolidates with Bedrock + n8n creds in one operator-managed
+#      file; written by Terraform cloud-init).
+#   2. ~/.ontotext/maven-user + maven-pass plain-text files (legacy --
+#      kept for backward compat with operators who already have these).
+#
+# If neither source has values, WARN and continue. The umbrella
+# installs fine without the secret; only graphrag pods will
+# ImagePullBackOff.
+MAVEN_USER=""
+MAVEN_PASS=""
+if [[ -f "$SECRETS_OVERLAY" ]]; then
+    # Parse YAML via Python (always present on AL2023; PyYAML in stdlib
+    # via system packages). Empty/missing values -> empty strings.
+    yaml_creds=$(python3 -c "
+import sys, yaml
+try:
+    with open('$SECRETS_OVERLAY') as f:
+        d = yaml.safe_load(f) or {}
+    m = d.get('maven') or {}
+    print((m.get('user') or '').strip())
+    print((m.get('pass') or '').strip())
+except Exception as e:
+    print('', file=sys.stderr)
+    print('')
+    print('')
+" 2>/dev/null)
+    MAVEN_USER=$(echo "$yaml_creds" | sed -n '1p')
+    MAVEN_PASS=$(echo "$yaml_creds" | sed -n '2p')
+fi
+# Fallback to legacy plain-text files if the YAML didn't have them.
+if [[ -z "$MAVEN_USER" && -f "$HOME/.ontotext/maven-user" ]]; then
     MAVEN_USER=$(tr -d '[:space:]' < "$HOME/.ontotext/maven-user")
+fi
+if [[ -z "$MAVEN_PASS" && -f "$HOME/.ontotext/maven-pass" ]]; then
     MAVEN_PASS=$(tr -d '[:space:]' < "$HOME/.ontotext/maven-pass")
+fi
+
+if [[ -n "$MAVEN_USER" && -n "$MAVEN_PASS" ]]; then
     for ns in "$UMBRELLA_NAMESPACE" "$GRAPHRAG_NAMESPACE"; do
         kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
         kubectl -n "$ns" delete secret graphwise --ignore-not-found
@@ -477,12 +506,11 @@ if [[ -f "$HOME/.ontotext/maven-user" && -f "$HOME/.ontotext/maven-pass" ]]; the
     done
     echo "Created 'graphwise' image-pull secret in: $UMBRELLA_NAMESPACE, $GRAPHRAG_NAMESPACE"
 else
-    echo "WARNING: ~/.ontotext/maven-user and/or maven-pass not found."
-    echo "         Skipping image-pull secret. The umbrella release will"
-    echo "         install fine, but graphrag pods (chatbot, conversation,"
-    echo "         components, workflows) will ImagePullBackOff until you"
-    echo "         drop the maven creds and re-run this script (or run:"
-    echo "         kubectl -n $GRAPHRAG_NAMESPACE create secret docker-registry graphwise ...)"
+    echo "WARNING: maven creds not found (checked ~/graphwise-secrets.yaml"
+    echo "         maven.user/maven.pass and ~/.ontotext/maven-{user,pass})."
+    echo "         Skipping image-pull secret. Umbrella installs fine; graphrag"
+    echo "         pods (chatbot, conversation, components, workflows) will"
+    echo "         ImagePullBackOff until you fill in maven creds + re-run."
 fi
 
 # Build the -f flag list. Auto-include the secrets overlay only if it

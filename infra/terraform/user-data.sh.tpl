@@ -250,12 +250,30 @@ INNER
 # ---------------------------------------------------------------------------
 SECRETS_FILE="/home/$TARGET_USER/graphwise-secrets.yaml"
 cat > "$SECRETS_FILE" <<EOF
-# Auto-generated overlay for the graphwise-stack umbrella chart.
-# Materialized by Terraform's user-data on first boot. EC2-local; never
-# committed to git. Consumed by scripts/reset-helm.sh via an extra -f flag.
+# All operator-supplied secrets for one graphwise-stack deployment.
+# Materialized by Terraform cloud-init on first boot. EC2-local;
+# never committed to git. Consumed by:
+#   - scripts/reset-helm.sh   (passed to Helm via -f; reads the
+#                              top-level 'maven:' block to create
+#                              the docker-registry pull Secret)
+#   - any future script that needs operator creds (single source
+#                              of truth)
 #
-# Edit awsCredentials and n8nLicense before a full deploy.
-# DO NOT edit n8nEncryption.key after first n8n boot.
+# Edit the four operator-fillable values; leave n8nEncryption.key
+# alone (rotating it makes every saved n8n credential unreadable).
+#
+# Convenience: keep a copy of this file on your LAPTOP (gitignored).
+# After each terraform destroy/apply cycle, push it back via:
+#   scripts/laptop/push-secrets.sh
+# That preserves your secrets across rebuilds without re-typing.
+
+# Maven registry credentials for maven.ontotext.com (private GraphRAG
+# images). reset-helm.sh reads these to create the 'graphwise'
+# docker-registry Secret in graphwise + graphrag namespaces.
+# Helm sees this as an unknown top-level key and ignores it.
+maven:
+  user: ""                    # FILL IN: Graphwise maven user
+  pass: ""                    # FILL IN: Graphwise maven password
 
 graphrag-secrets:
   # AWS Bedrock credentials for the graphrag-components pod.

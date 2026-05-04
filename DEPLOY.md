@@ -289,11 +289,13 @@ for why.)
 # On EC2 (from the SSH session above)
 cd ~/graphwise-stack-aws
 
-# Maven registry creds for the GraphRAG images
-mkdir -p ~/.ontotext
-echo '<maven-username>' > ~/.ontotext/maven-user
-echo '<maven-password>' > ~/.ontotext/maven-pass
-chmod 600 ~/.ontotext/*
+# Edit the secrets overlay (cloud-init pre-created it with placeholders).
+# Fill in maven.user/maven.pass + the awsCredentials + n8nLicense blocks.
+# DO NOT touch n8nEncryption.key.
+$EDITOR ~/graphwise-secrets.yaml
+
+# OR (preferred -- keeps your laptop as source of truth across destroys):
+# from your laptop, scripts/laptop/push-secrets.sh pushes a saved copy.
 
 # Drop Graphwise license files via scp from your laptop:
 mkdir -p files/licenses

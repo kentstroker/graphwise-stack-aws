@@ -8,10 +8,14 @@
 #      Cert-manager will retry HTTP-01 challenges until DNS resolves,
 #      so this script does NOT block on DNS -- but no Certificate will
 #      go Ready until DNS is correct.
-#   3. ~/.ontotext/maven-user and maven-pass exist, with the Graphwise
-#      registry credentials. (Optional -- the image-pull secret step is
-#      skipped if these files are absent. Charts that need it will fail
-#      at install time with ImagePullBackOff until you add them.)
+#   3. ~/graphwise-secrets.yaml exists with maven.user/maven.pass
+#      filled in (Graphwise registry creds for the GraphRAG private
+#      images). cloud-init writes a placeholder version on first boot;
+#      operator fills in real values OR scp's their saved copy via
+#      scripts/laptop/push-secrets.sh. NOT consumed by this script
+#      directly -- consumed by scripts/reset-helm.sh when it creates
+#      the docker-registry pull Secret. Listed here as a prereq so the
+#      operator knows to fill it in before reset-helm.sh runs.
 #
 # Required env:
 #   LE_EMAIL        -- email address for the Let's Encrypt ACME account.

@@ -216,10 +216,8 @@ aws ec2-instance-connect ssh --instance-id <your-instance-id> --private-key-file
 ```bash
 # EC2
 cd ~/graphwise-stack-aws
-mkdir -p ~/.ontotext files/licenses
-echo '<maven-username>' > ~/.ontotext/maven-user
-echo '<maven-password>' > ~/.ontotext/maven-pass
-chmod 600 ~/.ontotext/*
+mkdir -p files/licenses
+$EDITOR ~/graphwise-secrets.yaml   # fill in maven.user, maven.pass + the graphrag-secrets blocks
 ```
 
 In another terminal on your laptop:
