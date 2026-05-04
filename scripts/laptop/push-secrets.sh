@@ -1,48 +1,35 @@
 #!/usr/bin/env bash
-# push-secrets.sh -- copy your locally-saved operator-supplied artifacts
-# (secrets YAML + license files) to the EC2 host, in the locations
-# reset-helm.sh + install-licenses.sh expect them. Reuse pattern: keep
-# canonical copies on your laptop (gitignored), re-push after every
-# `terraform destroy && terraform apply` cycle. That preserves all
-# operator-supplied material across rebuilds without re-typing or
-# re-downloading from Graphwise.
+# push-secrets.sh -- one ssh, one tar pipeline. Pushes every operator-
+# supplied artifact + (optionally) a saved LE wildcard cert to the EC2
+# host as a single tarball; a remote bash snippet extracts to canonical
+# paths.
 #
-# What's pushed:
+# Why one tarball: each scp is a fresh SSH connection (handshake
+# latency, partial-failure mode per file). One tarball + one SSH means
+# atomic-or-nothing: either all files arrive or none do.
 #
-#   1. ~/graphwise-secrets.yaml  (single-file secrets: maven, Bedrock,
-#                                  n8n license, n8n encryption key) ->
-#                                 EC2:~/graphwise-secrets.yaml
+# What's pushed (canonical local paths):
+#
+#   1. ~/graphwise-secrets.yaml      -> EC2:~/graphwise-secrets.yaml
+#      Single-file secrets: maven, Bedrock, n8n license, n8n encryption.
 #
 #   2. ~/graphwise-licenses/poolparty.key      ->
-#      ~/graphwise-licenses/graphdb.license      EC2:~/graphwise-stack-aws/files/licenses/
+#      ~/graphwise-licenses/graphdb.license       EC2:~/graphwise-stack-aws/files/licenses/
 #      ~/graphwise-licenses/uv-license.key
 #
-#      Filenames are required (install-licenses.sh looks for these
-#      exact names). Missing files are warned + skipped, not fatal --
-#      lets operators push partial sets during initial onboarding.
+#   3. ~/graphwise-licenses/wildcard-tls.yaml  -> EC2:~/wildcard-tls-saved.yaml
+#      Saved LE wildcard cert from a prior pull-secrets.sh.
+#      cluster-bootstrap.sh detects + restores it (cert-manager sees
+#      a valid Secret in place and skips LE issuance -- saves a
+#      per-week LE rate-limit slot).
 #
-#   3. ~/graphwise-licenses/wildcard-tls.yaml  (saved by pull-secrets.sh
-#      from a prior deployment's live wildcard cert) ->
-#                                 EC2:~/wildcard-tls-saved.yaml
+# Missing files are warned + skipped, not fatal.
 #
-#      cluster-bootstrap.sh detects this file and applies the Secret
-#      BEFORE creating the wildcard Certificate resource. cert-manager
-#      sees a valid cert in place and skips the LE issuance call --
-#      saves a per-week LE rate-limit slot. Cert is validated for
-#      expiry + SAN match before restore; if it fails, cert-manager
-#      issues fresh as normal.
-#
-#      Optional: if you don't have a saved cert yet (first deploy on
-#      this domain), this is just skipped.
-#
-# Important n8nEncryption note: cloud-init wrote a fresh
-# n8nEncryption.key into the EC2's ~/graphwise-secrets.yaml. By default
-# this script preserves THAT key (splices it into your local copy
-# before push), so the new n8n DB is encryptable with the key it was
-# given on first boot. Your local copy's old key is from the
-# PREVIOUS deployment and is useless against the new n8n DB.
-# Override with --keep-local-encryption-key only if you know you're
-# restoring against the same n8n DB the old key encrypted.
+# n8nEncryption.key handling: by default we read the FRESH key from
+# the EC2's pre-existing ~/graphwise-secrets.yaml (cloud-init wrote it)
+# and splice it into a temp copy of your local secrets file before
+# tarring. The local file's old key is from a destroyed n8n DB and
+# is useless on the new one. --keep-local-encryption-key overrides.
 #
 # Required env (or pass via flags):
 #   GRAPHWISE_KEY    path to .pem
@@ -53,13 +40,14 @@
 #   ./scripts/laptop/push-secrets.sh
 #   ./scripts/laptop/push-secrets.sh --secrets-file ~/path/to/secrets.yaml
 #   ./scripts/laptop/push-secrets.sh --licenses-dir ~/path/to/licenses
-#   ./scripts/laptop/push-secrets.sh --skip-licenses          (only push the secrets file)
-#   ./scripts/laptop/push-secrets.sh --skip-secrets           (only push licenses)
+#   ./scripts/laptop/push-secrets.sh --skip-secrets
+#   ./scripts/laptop/push-secrets.sh --skip-licenses
+#   ./scripts/laptop/push-secrets.sh --skip-cert
 #   ./scripts/laptop/push-secrets.sh --keep-local-encryption-key
 #
 # Exit codes:
-#   0 -- everything pushed (or selectively skipped per flags)
-#   1 -- ssh / scp / merge failure
+#   0 -- all selected items pushed
+#   1 -- ssh / tar / merge failure
 #   2 -- usage / missing local file / missing env
 
 set -euo pipefail
@@ -89,8 +77,7 @@ while [ $# -gt 0 ]; do
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         -*) echo "${RED}Unknown flag: $1${RESET}" >&2; exit 2 ;;
-        *)  # legacy positional: treat as secrets file path
-            SECRETS_FILE="$1"; shift ;;
+        *)  SECRETS_FILE="$1"; shift ;;   # legacy positional
     esac
 done
 
@@ -110,136 +97,76 @@ USAGE
 fi
 
 # ---------------------------------------------------------------------
-# Phase 1: ~/graphwise-secrets.yaml
+# Stage files locally into a temp dir; the tar gets built from there.
 # ---------------------------------------------------------------------
+STAGE=$(mktemp -d -t graphwise-push.XXXXXX)
+trap 'rm -rf "$STAGE"' EXIT
+
+echo "${BOLD}Staging payload locally...${RESET}"
+
+# Phase 1: secrets file (with optional fresh-encryption-key splice)
 if [ "$SKIP_SECRETS" != "yes" ]; then
     if [ ! -f "$SECRETS_FILE" ]; then
         cat >&2 <<USAGE
 ${RED}ERROR:${RESET} secrets file not found: $SECRETS_FILE
-
-Create one by either:
-  (a) Pulling the EC2 copy down first time you push this:
-      scp -i \$GRAPHWISE_KEY \$GRAPHWISE_USER@\$GRAPHWISE_HOST:~/graphwise-secrets.yaml ~/
-  (b) Copy charts/graphwise-stack/values.yaml's graphrag-secrets block
-      into a new file at \$HOME/graphwise-secrets.yaml and add a
-      maven: block at the top -- see infra/terraform/user-data.sh.tpl
-      for the full template.
-
-Or pass --skip-secrets if you only want to push licenses this run.
+Create one (see DEPLOY §3) or pass --skip-secrets.
 USAGE
         exit 2
     fi
-
-    echo "${BOLD}== Secrets ==${RESET}"
-    echo "Local file:  $SECRETS_FILE"
-    echo "Remote path: $USR@$HOST:~/graphwise-secrets.yaml"
-
-    # n8nEncryption.key handling: splice the fresh remote key into a temp
-    # copy of the local file before push, so we don't carry the old key
-    # from a destroyed n8n DB onto the new one.
     if [ "$KEEP_LOCAL_ENCRYPTION_KEY" = "no" ]; then
-        echo "Reading fresh n8nEncryption.key from remote..."
-        REMOTE_KEY=$(ssh -i "$KEY" "$USR@$HOST" 'python3 -c "
+        echo "  reading fresh n8nEncryption.key from remote..."
+        REMOTE_KEY=$(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USR@$HOST" 'python3 -c "
 import yaml
 with open(\"/home/ec2-user/graphwise-secrets.yaml\") as f:
     d = yaml.safe_load(f) or {}
 print(((d.get(\"graphrag-secrets\") or {}).get(\"n8nEncryption\") or {}).get(\"key\") or \"\")
-"' 2>/dev/null)
+"' 2>/dev/null) || REMOTE_KEY=""
         if [ -z "$REMOTE_KEY" ]; then
-            echo "${RED}ERROR:${RESET} couldn't read n8nEncryption.key from remote ~/graphwise-secrets.yaml" >&2
-            echo "Is the EC2 cloud-init complete? Verify with:" >&2
-            echo "  ssh -i \$GRAPHWISE_KEY \$GRAPHWISE_USER@\$GRAPHWISE_HOST 'cat ~/graphwise-secrets.yaml'" >&2
+            echo "${RED}ERROR:${RESET} couldn't read remote n8nEncryption.key (cloud-init not complete?)" >&2
             exit 1
         fi
-        printf '%s✓ remote n8nEncryption.key (first 8): %s...%s\n' "$GREEN" "${REMOTE_KEY:0:8}" "$RESET"
-
-        TMP_FILE=$(mktemp -t graphwise-secrets.XXXXXX.yaml)
-        trap 'rm -f "$TMP_FILE"' EXIT
+        printf '  %s✓%s remote key (first 8): %s...\n' "$GREEN" "$RESET" "${REMOTE_KEY:0:8}"
         REMOTE_KEY="$REMOTE_KEY" python3 -c "
-import os, yaml, sys
+import os, yaml
 with open('$SECRETS_FILE') as f:
     d = yaml.safe_load(f) or {}
 gs = d.setdefault('graphrag-secrets', {})
 gs.setdefault('n8nEncryption', {})['key'] = os.environ['REMOTE_KEY']
-with open('$TMP_FILE', 'w') as f:
+with open('$STAGE/graphwise-secrets.yaml', 'w') as f:
     yaml.safe_dump(d, f, default_flow_style=False, sort_keys=False)
 "
-        PUSH_FILE="$TMP_FILE"
-        echo "${DIM}Spliced fresh remote key into temp copy; your local file is unchanged.${RESET}"
     else
-        echo "${YELLOW}--keep-local-encryption-key:${RESET} pushing local file as-is."
-        PUSH_FILE="$SECRETS_FILE"
+        cp "$SECRETS_FILE" "$STAGE/graphwise-secrets.yaml"
     fi
-
-    scp -i "$KEY" "$PUSH_FILE" "$USR@$HOST:~/graphwise-secrets.yaml" >/dev/null
-    printf '%s✓ pushed%s ~/graphwise-secrets.yaml\n' "$GREEN" "$RESET"
-    echo
+    chmod 600 "$STAGE/graphwise-secrets.yaml"
+    printf '  %s✓%s staged graphwise-secrets.yaml\n' "$GREEN" "$RESET"
 fi
 
-# ---------------------------------------------------------------------
-# Phase 2: license files -> ~/graphwise-stack-aws/files/licenses/
-# ---------------------------------------------------------------------
+# Phase 2: license files
 if [ "$SKIP_LICENSES" != "yes" ]; then
-    echo "${BOLD}== License files ==${RESET}"
     if [ ! -d "$LICENSES_DIR" ]; then
-        cat >&2 <<USAGE
-${YELLOW}WARNING:${RESET} licenses directory not found: $LICENSES_DIR
-
-Skipping license push. To create the directory:
-    mkdir -p $LICENSES_DIR
-    # then drop your three vendor files into it with these EXACT names:
-    #   $LICENSES_DIR/poolparty.key
-    #   $LICENSES_DIR/graphdb.license
-    #   $LICENSES_DIR/uv-license.key
-
-(Or pass --skip-licenses to suppress this warning.)
-USAGE
+        printf '  %s⚠%s licenses dir missing (%s) -- skipping\n' "$YELLOW" "$RESET" "$LICENSES_DIR"
     else
-        echo "Local dir:    $LICENSES_DIR"
-        echo "Remote path:  $USR@$HOST:~/graphwise-stack-aws/files/licenses/"
-
-        # Ensure the remote dir exists. graphwise-stack-aws is cloned by
-        # cloud-init, so it should already; safeguard against fresh-deploy
-        # timing or unusual layouts.
-        ssh -i "$KEY" "$USR@$HOST" 'mkdir -p ~/graphwise-stack-aws/files/licenses && chmod 700 ~/graphwise-stack-aws/files/licenses' >/dev/null
-
-        pushed=0
-        skipped=()
+        mkdir -p "$STAGE/licenses"
         for f in poolparty.key graphdb.license uv-license.key; do
             if [ -f "$LICENSES_DIR/$f" ]; then
-                scp -i "$KEY" "$LICENSES_DIR/$f" \
-                    "$USR@$HOST:~/graphwise-stack-aws/files/licenses/$f" >/dev/null
-                printf '  %s✓%s pushed %s\n' "$GREEN" "$RESET" "$f"
-                pushed=$((pushed + 1))
+                cp "$LICENSES_DIR/$f" "$STAGE/licenses/$f"
+                chmod 600 "$STAGE/licenses/$f"
+                printf '  %s✓%s staged licenses/%s\n' "$GREEN" "$RESET" "$f"
             else
-                skipped+=("$f")
+                printf '  %s⚠%s skipped licenses/%s (not found locally)\n' "$YELLOW" "$RESET" "$f"
             fi
         done
-        if [ ${#skipped[@]} -gt 0 ]; then
-            echo
-            printf '  %s⚠%s skipped (not in %s):\n' "$YELLOW" "$RESET" "$LICENSES_DIR"
-            for f in "${skipped[@]}"; do
-                echo "       $f"
-            done
-        fi
-        echo
-        printf '%s✓ pushed %d/%d license file(s)%s\n' "$GREEN" "$pushed" "3" "$RESET"
-        echo
     fi
 fi
 
-# ---------------------------------------------------------------------
-# Phase 3: saved wildcard cert -> EC2:~/wildcard-tls-saved.yaml
-# ---------------------------------------------------------------------
+# Phase 3: saved wildcard cert
 if [ "$SKIP_CERT" != "yes" ]; then
-    echo "${BOLD}== Wildcard TLS cert (saved from prior deployment) ==${RESET}"
     cert_local="$LICENSES_DIR/wildcard-tls.yaml"
     if [ ! -f "$cert_local" ]; then
-        printf '  %s⚠%s no saved cert at %s -- skipping (cluster-bootstrap.sh will let cert-manager issue fresh from LE)\n' "$YELLOW" "$RESET" "$cert_local"
+        printf '  %s⚠%s no saved cert at %s -- skipping (cert-manager will issue fresh)\n' "$YELLOW" "$RESET" "$cert_local"
     else
-        # Print summary of what we're about to push, including expiry,
-        # so the operator sees whether restore will save an LE rate-limit
-        # slot or whether cert-manager will renew it shortly anyway.
+        # Print expiry summary so the operator sees days remaining.
         cert_pem=$(python3 -c "
 import yaml, base64
 with open('$cert_local') as f:
@@ -247,34 +174,84 @@ with open('$cert_local') as f:
 print(base64.b64decode(d['data']['tls.crt']).decode())
 " 2>/dev/null)
         if [ -z "$cert_pem" ]; then
-            printf '  %s⚠%s could not decode cert from %s -- skipping push\n' "$YELLOW" "$RESET" "$cert_local"
+            printf '  %s⚠%s could not decode saved cert -- skipping\n' "$YELLOW" "$RESET"
         else
-            sans=$(echo "$cert_pem" | openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://; s/^ //' | tr '\n' ' ')
             not_after=$(echo "$cert_pem" | openssl x509 -noout -enddate 2>/dev/null | sed 's/notAfter=//')
             not_after_epoch=$(date -j -f "%b %d %T %Y %Z" "$not_after" +%s 2>/dev/null || date -d "$not_after" +%s 2>/dev/null || echo 0)
             now_epoch=$(date +%s)
             days_remaining=$(( (not_after_epoch - now_epoch) / 86400 ))
-            printf '  %sLocal:%s     %s\n' "$DIM" "$RESET" "$cert_local"
-            printf '  %sRemote:%s    %s@%s:~/wildcard-tls-saved.yaml\n' "$DIM" "$RESET" "$USR" "$HOST"
-            printf '  %sSANs:%s      %s\n' "$DIM" "$RESET" "$sans"
-            printf '  %sNot After:%s %s (%s days remaining)\n' "$DIM" "$RESET" "$not_after" "$days_remaining"
+            cp "$cert_local" "$STAGE/wildcard-tls.yaml"
+            chmod 600 "$STAGE/wildcard-tls.yaml"
+            printf '  %s✓%s staged wildcard-tls.yaml (%s days remaining)\n' "$GREEN" "$RESET" "$days_remaining"
             if [ "$days_remaining" -lt 30 ]; then
-                printf '  %s⚠ cert expiring within 30 days -- cluster-bootstrap will restore it but cert-manager will renew shortly%s\n' "$YELLOW" "$RESET"
+                printf '  %s⚠%s cert expiring within 30 days -- cluster-bootstrap will accept it but cert-manager will renew shortly\n' "$YELLOW" "$RESET"
             fi
-            scp -i "$KEY" "$cert_local" "$USR@$HOST:~/wildcard-tls-saved.yaml" >/dev/null
-            printf '%s✓ pushed%s wildcard-tls-saved.yaml (cluster-bootstrap will detect + restore before LE issuance)\n' "$GREEN" "$RESET"
         fi
     fi
-    echo
 fi
 
 # ---------------------------------------------------------------------
-# Verify hint
+# Stream the tarball through one SSH; remote bash snippet extracts.
 # ---------------------------------------------------------------------
-echo "Verify on EC2:"
-echo "  ssh -i \$GRAPHWISE_KEY \$GRAPHWISE_USER@\$GRAPHWISE_HOST 'ls -la ~/graphwise-secrets.yaml ~/wildcard-tls-saved.yaml ~/graphwise-stack-aws/files/licenses/ 2>/dev/null'"
+staged=$(find "$STAGE" -type f | wc -l | tr -d ' ')
+if [ "$staged" = "0" ]; then
+    echo "${YELLOW}Nothing to push (everything skipped or missing).${RESET}"
+    exit 0
+fi
+
 echo
-echo "Then on EC2 (in this order):"
-echo "  ./scripts/cluster-bootstrap.sh   # auto-restores wildcard cert if pushed; saves an LE rate-limit slot"
+echo "${BOLD}Pushing tarball ($staged file(s)) to $USR@$HOST in one ssh...${RESET}"
+
+# Remote snippet: untar payload, move files to canonical paths,
+# chmod tightly, emit per-file 'PLACED:<path>' lines on stderr so
+# we can replay them locally.
+REMOTE_EXTRACT='
+set -euo pipefail
+RDIR=$(mktemp -d /tmp/graphwise-push.XXXXXX)
+trap "rm -rf \"$RDIR\"" EXIT
+tar -xzf - -C "$RDIR"
+mkdir -p "$HOME/graphwise-stack-aws/files/licenses"
+chmod 700 "$HOME/graphwise-stack-aws/files/licenses"
+if [ -f "$RDIR/graphwise-secrets.yaml" ]; then
+    install -m 0600 "$RDIR/graphwise-secrets.yaml" "$HOME/graphwise-secrets.yaml"
+    echo "PLACED:~/graphwise-secrets.yaml" >&2
+fi
+if [ -d "$RDIR/licenses" ]; then
+    for f in "$RDIR"/licenses/*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        install -m 0600 "$f" "$HOME/graphwise-stack-aws/files/licenses/$name"
+        echo "PLACED:~/graphwise-stack-aws/files/licenses/$name" >&2
+    done
+fi
+if [ -f "$RDIR/wildcard-tls.yaml" ]; then
+    install -m 0600 "$RDIR/wildcard-tls.yaml" "$HOME/wildcard-tls-saved.yaml"
+    echo "PLACED:~/wildcard-tls-saved.yaml" >&2
+fi
+'
+
+INVENTORY=$(mktemp -t graphwise-push-inv.XXXXXX)
+trap 'rm -rf "$STAGE" "$INVENTORY"' EXIT
+
+if ! tar -czf - -C "$STAGE" . | \
+     ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USR@$HOST" \
+         "bash -s" 2> "$INVENTORY"; then
+    echo "${RED}ERROR: remote extract failed. Inventory so far:${RESET}" >&2
+    cat "$INVENTORY" >&2
+    exit 1
+fi <<<"$REMOTE_EXTRACT"
+
+# Replay placement inventory.
+echo
+while IFS= read -r line; do
+    case "$line" in
+        PLACED:*) printf '  %s✓%s placed %s\n' "$GREEN" "$RESET" "${line#PLACED:}" ;;
+        *)        printf '  %s\n' "$line" ;;
+    esac
+done < "$INVENTORY"
+
+echo
+echo "${BOLD}Then on EC2 (in this order):${RESET}"
+echo "  ./scripts/cluster-bootstrap.sh   # auto-restores wildcard cert if pushed"
 echo "  ./scripts/install-licenses.sh    # turns license files into K8s Secrets"
 echo "  ./scripts/reset-helm.sh stroker  # picks up secrets via -f overlay"

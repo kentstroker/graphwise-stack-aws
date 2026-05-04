@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# pull-secrets.sh -- symmetric counterpart to scripts/laptop/push-secrets.sh.
-# Pulls every operator-supplied artifact + the live LE wildcard cert
-# off the EC2 to canonical paths on your laptop, ready for re-push to a
-# fresh deployment after `terraform destroy/apply`.
+# pull-secrets.sh -- one ssh, one tar pipeline. Pulls every operator-
+# supplied artifact + the live LE wildcard cert off the EC2 as a single
+# tarball; extracts to canonical paths on your laptop.
 #
-# What's pulled:
+# Why one tarball: each scp is a fresh SSH connection (handshake
+# latency, partial-failure mode per file). One tarball + one SSH means
+# atomic-or-nothing: either all files arrive or none do.
+#
+# What's pulled (canonical local paths):
 #
 #   1. EC2:~/graphwise-secrets.yaml              -> ~/graphwise-secrets.yaml
-#      (single-file secrets: maven, Bedrock, n8n license, n8n encryption key)
 #
 #   2. EC2:~/graphwise-stack-aws/files/licenses/{poolparty.key,
 #         graphdb.license,uv-license.key}        -> ~/graphwise-licenses/
@@ -15,11 +17,12 @@
 #   3. The cluster's live wildcard TLS cert (kubectl get secret -n
 #      cert-manager wildcard-tls -o yaml)        -> ~/graphwise-licenses/wildcard-tls.yaml
 #      With kubectl-managed metadata stripped (resourceVersion, uid,
-#      creationTimestamp, managedFields, ownerReferences) so a future
-#      kubectl apply restores cleanly. push-secrets.sh re-pushes this
-#      file to the new EC2; cluster-bootstrap.sh detects + restores
-#      it (cert-manager sees a valid cert in place and skips the LE
-#      issuance call -- saves a per-week LE rate-limit slot).
+#      ownerReferences, controller annotations) so push-secrets.sh's
+#      kubectl apply restores cleanly. cluster-bootstrap.sh detects
+#      the saved cert on the next deploy and applies the Secret
+#      BEFORE creating the Certificate resource -- cert-manager sees
+#      a valid cert in place and skips LE issuance entirely (saves
+#      a per-week LE rate-limit slot).
 #
 # Existing local files are backed up to <path>.bak-<UTC-timestamp>
 # before being overwritten -- nothing destructive without a trail.
@@ -33,13 +36,13 @@
 #   ./scripts/laptop/pull-secrets.sh
 #   ./scripts/laptop/pull-secrets.sh --secrets-file ~/path/to/secrets.yaml
 #   ./scripts/laptop/pull-secrets.sh --licenses-dir ~/path/to/licenses
-#   ./scripts/laptop/pull-secrets.sh --skip-cert            (don't pull the wildcard cert)
 #   ./scripts/laptop/pull-secrets.sh --skip-secrets
 #   ./scripts/laptop/pull-secrets.sh --skip-licenses
+#   ./scripts/laptop/pull-secrets.sh --skip-cert
 #
 # Exit codes:
 #   0 -- everything pulled (or selectively skipped per flags)
-#   1 -- ssh / scp / kubectl failure
+#   1 -- ssh / tar / kubectl failure
 #   2 -- usage / missing env
 
 set -euo pipefail
@@ -88,7 +91,6 @@ fi
 
 mkdir -p "$LICENSES_DIR"
 
-# Helper: back up an existing file before overwrite.
 backup_if_exists() {
     local path="$1"
     if [ -f "$path" ]; then
@@ -100,127 +102,150 @@ backup_if_exists() {
 }
 
 # ---------------------------------------------------------------------
-# Phase 1: ~/graphwise-secrets.yaml
+# Build the remote snippet: stage selected files into a temp dir + emit
+# tar.gz on stdout. PRESENT/MISSING inventory on stderr.
 # ---------------------------------------------------------------------
-if [ "$SKIP_SECRETS" != "yes" ]; then
-    echo "${BOLD}== Secrets ==${RESET}"
-    echo "Remote path: $USR@$HOST:~/graphwise-secrets.yaml"
-    echo "Local file:  $SECRETS_FILE"
-    backup_if_exists "$SECRETS_FILE"
-    if scp -i "$KEY" "$USR@$HOST:~/graphwise-secrets.yaml" "$SECRETS_FILE" >/dev/null 2>&1; then
-        printf '%s✓ pulled%s ~/graphwise-secrets.yaml\n' "$GREEN" "$RESET"
+WANT_SECRETS=$([ "$SKIP_SECRETS" = "yes" ] && echo 0 || echo 1)
+WANT_LICENSES=$([ "$SKIP_LICENSES" = "yes" ] && echo 0 || echo 1)
+WANT_CERT=$([ "$SKIP_CERT" = "yes" ] && echo 0 || echo 1)
+
+REMOTE_BUILD=$(cat <<REMOTE
+set -euo pipefail
+RDIR=\$(mktemp -d /tmp/graphwise-pull.XXXXXX)
+trap "rm -rf \"\$RDIR\"" EXIT
+
+if [ "$WANT_SECRETS" = "1" ]; then
+    if [ -f "\$HOME/graphwise-secrets.yaml" ]; then
+        cp -p "\$HOME/graphwise-secrets.yaml" "\$RDIR/graphwise-secrets.yaml"
+        echo "PRESENT:~/graphwise-secrets.yaml" >&2
     else
-        echo "${RED}✗ pull failed${RESET} (file missing on host? cloud-init not complete?)" >&2
-        exit 1
+        echo "MISSING:~/graphwise-secrets.yaml" >&2
     fi
-    echo
 fi
 
-# ---------------------------------------------------------------------
-# Phase 2: license files (graphwise-stack-aws/files/licenses/)
-# ---------------------------------------------------------------------
-if [ "$SKIP_LICENSES" != "yes" ]; then
-    echo "${BOLD}== License files ==${RESET}"
-    echo "Remote path: $USR@$HOST:~/graphwise-stack-aws/files/licenses/"
-    echo "Local dir:   $LICENSES_DIR"
-    pulled=0
-    skipped=()
+if [ "$WANT_LICENSES" = "1" ]; then
+    mkdir -p "\$RDIR/licenses"
     for f in poolparty.key graphdb.license uv-license.key; do
-        local_path="$LICENSES_DIR/$f"
-        backup_if_exists "$local_path"
-        if scp -i "$KEY" "$USR@$HOST:~/graphwise-stack-aws/files/licenses/$f" "$local_path" >/dev/null 2>&1; then
-            printf '  %s✓%s pulled %s\n' "$GREEN" "$RESET" "$f"
-            pulled=$((pulled + 1))
+        if [ -f "\$HOME/graphwise-stack-aws/files/licenses/\$f" ]; then
+            cp -p "\$HOME/graphwise-stack-aws/files/licenses/\$f" "\$RDIR/licenses/\$f"
+            echo "PRESENT:licenses/\$f" >&2
         else
-            # Restore the backup we just made (the scp failed; don't leave a missing file behind)
-            ts_glob="$local_path.bak-"*
-            for bak in $ts_glob; do
-                [ -f "$bak" ] && mv "$bak" "$local_path" && break
-            done 2>/dev/null
-            skipped+=("$f")
+            echo "MISSING:licenses/\$f" >&2
         fi
     done
-    if [ ${#skipped[@]} -gt 0 ]; then
-        printf '  %s⚠%s skipped (not on host):\n' "$YELLOW" "$RESET"
-        for f in "${skipped[@]}"; do
-            echo "       $f"
-        done
-    fi
-    printf '%s✓ pulled %d/%d license file(s)%s\n' "$GREEN" "$pulled" "3" "$RESET"
-    echo
 fi
 
-# ---------------------------------------------------------------------
-# Phase 3: wildcard TLS cert (live from the cluster)
-# ---------------------------------------------------------------------
-if [ "$SKIP_CERT" != "yes" ]; then
-    echo "${BOLD}== Wildcard TLS cert ==${RESET}"
-    cert_local="$LICENSES_DIR/wildcard-tls.yaml"
-    echo "Remote: kubectl get secret -n cert-manager wildcard-tls -o yaml"
-    echo "Local:  $cert_local"
-    backup_if_exists "$cert_local"
-
-    # Pull as YAML, strip kubectl-managed metadata so re-apply is clean.
-    cert_yaml=$(ssh -i "$KEY" "$USR@$HOST" '
-kubectl get secret -n cert-manager wildcard-tls -o yaml 2>/dev/null | python3 -c "
+if [ "$WANT_CERT" = "1" ]; then
+    if kubectl get secret -n cert-manager wildcard-tls >/dev/null 2>&1; then
+        kubectl get secret -n cert-manager wildcard-tls -o yaml | python3 -c "
 import sys, yaml
 d = yaml.safe_load(sys.stdin)
-if not d:
-    sys.exit(2)
-m = d.get(\"metadata\", {})
-for k in (\"resourceVersion\", \"uid\", \"creationTimestamp\", \"managedFields\", \"ownerReferences\", \"selfLink\", \"generation\"):
+m = d.get('metadata', {})
+for k in ('resourceVersion', 'uid', 'creationTimestamp', 'managedFields',
+          'ownerReferences', 'selfLink', 'generation'):
     m.pop(k, None)
-# Drop the cert-manager-controller-set annotations that re-apply would
-# fight with cert-manager over -- it re-adds them on next reconcile.
-ann = m.get(\"annotations\", {}) or {}
+ann = m.get('annotations', {}) or {}
 for k in list(ann.keys()):
-    if k.startswith(\"cert-manager.io/\"):
+    if k.startswith('cert-manager.io/'):
         del ann[k]
-if not ann:
-    m.pop(\"annotations\", None)
-# Drop labels likewise.
-lab = m.get(\"labels\", {}) or {}
+if not ann: m.pop('annotations', None)
+lab = m.get('labels', {}) or {}
 for k in list(lab.keys()):
-    if k.startswith(\"controller.cert-manager.io/\"):
+    if k.startswith('controller.cert-manager.io/'):
         del lab[k]
+if not lab: m.pop('labels', None)
 print(yaml.safe_dump(d, default_flow_style=False, sort_keys=False))
-"
-' 2>/dev/null)
-    if [ -z "$cert_yaml" ]; then
-        echo "${YELLOW}⚠ skipped${RESET} (wildcard-tls Secret not present in cert-manager ns -- has cluster-bootstrap.sh run?)" >&2
-        echo
+" > "\$RDIR/wildcard-tls.yaml"
+        echo "PRESENT:wildcard-tls.yaml" >&2
     else
-        printf '%s' "$cert_yaml" > "$cert_local"
-        # Print cert metadata so the operator sees what they pulled.
-        cert_pem=$(python3 -c "
+        echo "MISSING:wildcard-tls.yaml (no Secret in cert-manager ns)" >&2
+    fi
+fi
+
+tar -czf - -C "\$RDIR" .
+REMOTE
+)
+
+# ---------------------------------------------------------------------
+# One ssh, one tar pipeline. stdout = bytes, stderr = inventory.
+# ---------------------------------------------------------------------
+echo "${BOLD}Pulling tarball from $USR@$HOST in one ssh...${RESET}"
+
+TARBALL=$(mktemp -t graphwise-pull.XXXXXX.tgz)
+INVENTORY=$(mktemp -t graphwise-pull-inv.XXXXXX)
+trap 'rm -f "$TARBALL" "$INVENTORY"' EXIT
+
+if ! ssh -i "$KEY" -o StrictHostKeyChecking=accept-new \
+        "$USR@$HOST" "bash -s" \
+        > "$TARBALL" \
+        2> "$INVENTORY" \
+        <<<"$REMOTE_BUILD"; then
+    echo "${RED}ERROR: remote tar pipeline failed. Inventory so far:${RESET}" >&2
+    cat "$INVENTORY" >&2
+    exit 1
+fi
+
+# Replay remote inventory.
+echo
+while IFS= read -r line; do
+    case "$line" in
+        PRESENT:*) printf '  %s✓%s on host: %s\n' "$GREEN" "$RESET" "${line#PRESENT:}" ;;
+        MISSING:*) printf '  %s⚠%s missing:  %s\n' "$YELLOW" "$RESET" "${line#MISSING:}" ;;
+        *)         printf '  %s\n' "$line" ;;
+    esac
+done < "$INVENTORY"
+
+# ---------------------------------------------------------------------
+# Extract locally to canonical paths (with backup of existing).
+# ---------------------------------------------------------------------
+EXTRACT_DIR=$(mktemp -d -t graphwise-pull-extract.XXXXXX)
+trap 'rm -f "$TARBALL" "$INVENTORY"; rm -rf "$EXTRACT_DIR"' EXIT
+tar -xzf "$TARBALL" -C "$EXTRACT_DIR"
+
+echo
+echo "${BOLD}Extracting to canonical local paths...${RESET}"
+
+if [ -f "$EXTRACT_DIR/graphwise-secrets.yaml" ]; then
+    backup_if_exists "$SECRETS_FILE"
+    install -m 0600 "$EXTRACT_DIR/graphwise-secrets.yaml" "$SECRETS_FILE"
+    printf '  %s✓%s wrote %s\n' "$GREEN" "$RESET" "$SECRETS_FILE"
+fi
+
+if [ -d "$EXTRACT_DIR/licenses" ]; then
+    for f in "$EXTRACT_DIR"/licenses/*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        local_path="$LICENSES_DIR/$name"
+        backup_if_exists "$local_path"
+        install -m 0600 "$f" "$local_path"
+        printf '  %s✓%s wrote %s\n' "$GREEN" "$RESET" "$local_path"
+    done
+fi
+
+if [ -f "$EXTRACT_DIR/wildcard-tls.yaml" ]; then
+    cert_local="$LICENSES_DIR/wildcard-tls.yaml"
+    backup_if_exists "$cert_local"
+    install -m 0600 "$EXTRACT_DIR/wildcard-tls.yaml" "$cert_local"
+    printf '  %s✓%s wrote %s\n' "$GREEN" "$RESET" "$cert_local"
+
+    # Cert summary so the operator sees what they captured.
+    cert_pem=$(python3 -c "
 import yaml, base64
 with open('$cert_local') as f:
     d = yaml.safe_load(f)
 print(base64.b64decode(d['data']['tls.crt']).decode())
-")
+" 2>/dev/null)
+    if [ -n "$cert_pem" ]; then
         sans=$(echo "$cert_pem" | openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://; s/^ //' | tr '\n' ' ')
-        issuer=$(echo "$cert_pem" | openssl x509 -noout -issuer 2>/dev/null | sed 's/issuer=//')
         not_after=$(echo "$cert_pem" | openssl x509 -noout -enddate 2>/dev/null | sed 's/notAfter=//')
-        # Days remaining (cross-platform date math).
         not_after_epoch=$(date -j -f "%b %d %T %Y %Z" "$not_after" +%s 2>/dev/null || date -d "$not_after" +%s 2>/dev/null || echo 0)
         now_epoch=$(date +%s)
         days_remaining=$(( (not_after_epoch - now_epoch) / 86400 ))
-        printf '%s✓ pulled%s wildcard-tls.yaml\n' "$GREEN" "$RESET"
-        printf '  %sIssuer:%s    %s\n' "$DIM" "$RESET" "$issuer"
-        printf '  %sSANs:%s      %s\n' "$DIM" "$RESET" "$sans"
-        printf '  %sNot After:%s %s (%s days remaining)\n' "$DIM" "$RESET" "$not_after" "$days_remaining"
-        if [ "$days_remaining" -lt 30 ]; then
-            printf '  %s⚠ cert expires within 30 days -- restore on a fresh deploy will let cert-manager renew anyway%s\n' "$YELLOW" "$RESET"
-        fi
-        echo
+        printf '       %sSANs:%s      %s\n' "$DIM" "$RESET" "$sans"
+        printf '       %sNot After:%s %s (%s days remaining)\n' "$DIM" "$RESET" "$not_after" "$days_remaining"
     fi
 fi
 
-# ---------------------------------------------------------------------
-# Verify hint
-# ---------------------------------------------------------------------
-echo "Verify locally:"
-echo "  ls -la $SECRETS_FILE $LICENSES_DIR/"
 echo
-echo "After next terraform apply, restore everything in one shot via:"
+echo "After next ${BOLD}terraform apply${RESET}, restore everything in one shot:"
 echo "  ./scripts/laptop/push-secrets.sh"
