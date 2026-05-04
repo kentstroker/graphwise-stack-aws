@@ -1,0 +1,194 @@
+{{- if .Values.graphrag.enabled }}
+{{/*
+Helm post-install/upgrade hook that PATCHes the chatbot-app-client
+in the graphrag realm with the current subdomain/baseDomain values.
+
+Why this exists:
+  KeycloakRealmImport CRs are import-once-only. The Keycloak operator
+  marks status.conditions.Done=True after the first successful
+  import and never re-imports a given CR -- even if the spec
+  changes (which would be the case when the operator fixes a chart
+  template bug or the operator changes the deployment's apex
+  hostname). On the broken first deploy of this stack the realm got
+  imported with redirectUris like `https://graphrag../*` (empty
+  subdomain/baseDomain due to a Helm globals-propagation bug). All
+  subsequent helm upgrades silently no-op'd; the chatbot login
+  failed with "Invalid parameter: redirect_url" and the only fix
+  was to manually delete the realm + CR + helm upgrade.
+
+  This Job replaces that manual recovery. It runs on every helm
+  upgrade and idempotently sets:
+    - chatbot-app-client.redirectUris = the right values
+    - chatbot-app-client.webOrigins   = the right values
+    - conversation-api-client.webOrigins (same)
+  via direct kcadm-style REST API calls, regardless of whether the
+  KeycloakRealmImport CR has re-run.
+
+Auth flow (mirrors keycloak-bootstrap-admin-job.yaml):
+  1. Wait for /realms/graphrag/.well-known/openid-configuration
+     (the graphrag realm must exist before we patch it).
+  2. Get a temp-admin token from master.
+  3. Bind graphrag-realm.realm-admin role to temp-admin so the
+     subsequent admin-API calls against /admin/realms/graphrag/*
+     return 200 instead of 403. (master admin doesn't auto-have
+     cross-realm management; the role must be explicitly bound.)
+  4. Refresh the token (so the new role-binding is in the JWT).
+  5. PUT each client with the corrected config.
+
+Hook semantics:
+  - post-install,post-upgrade: runs on every install + upgrade.
+  - hook-weight: 8 (after bootstrap-admin at 5, before
+    graphrag-vectors-index at 10).
+  - hook-delete-policy: before-hook-creation,hook-succeeded.
+
+Lives in keycloak namespace because that's where Keycloak runs.
+*/}}
+{{- $sub  := required "keycloak-realms.subdomain must be set"  .Values.subdomain  -}}
+{{- $base := required "keycloak-realms.baseDomain must be set" .Values.baseDomain -}}
+{{- $apex := printf "%s.%s" $sub $base -}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: graphrag-realm-patch
+  namespace: {{ .Values.keycloakNamespace | default "keycloak" }}
+  labels:
+    {{- include "keycloak-realms.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "8"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak-realms.labels" . | nindent 8 }}
+        app.kubernetes.io/name: graphrag-realm-patch
+        app.kubernetes.io/component: graphrag-realm-patch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: patch
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KC_SERVER
+              value: "http://{{ .Values.keycloakCRName }}-service.{{ .Values.keycloakNamespace | default "keycloak" }}:8080"
+            - name: TEMP_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloakCRName }}-initial-admin
+                  key: username
+            - name: TEMP_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloakCRName }}-initial-admin
+                  key: password
+            - name: REALM
+              value: {{ .Values.graphrag.realm | quote }}
+            - name: APEX
+              value: {{ $apex | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache bash curl jq >/dev/null
+              exec /bin/bash <<'PATCH_EOF'
+              set -euo pipefail
+
+              get_token() {
+                  curl -sf \
+                      --data-urlencode "client_id=admin-cli" \
+                      --data-urlencode "grant_type=password" \
+                      --data-urlencode "username=$TEMP_ADMIN_USER" \
+                      --data-urlencode "password=$TEMP_ADMIN_PASS" \
+                      "$KC_SERVER/realms/master/protocol/openid-connect/token" \
+                      | jq -r .access_token
+              }
+
+              # 1. Wait for graphrag realm to exist (operator may still be
+              # importing it on first install).
+              echo "Waiting for graphrag realm at $KC_SERVER/realms/$REALM ..."
+              for i in $(seq 1 60); do
+                  if curl -sf -o /dev/null \
+                      "$KC_SERVER/realms/$REALM/.well-known/openid-configuration"; then
+                      echo "  realm '$REALM' present after $i attempt(s)"
+                      break
+                  fi
+                  [ "$i" = "60" ] && { echo "ERROR: realm '$REALM' never appeared (5min)" >&2; exit 1; }
+                  sleep 5
+              done
+
+              # 2. Auth as temp-admin (master).
+              TOKEN=$(get_token)
+              [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] && { echo "ERROR: temp-admin auth failed" >&2; exit 1; }
+
+              # 3. Bind <REALM>-realm.realm-admin role to temp-admin so
+              # /admin/realms/$REALM/* calls return 200 instead of 403.
+              # (master admin doesn't have cross-realm management automatically.)
+              echo "Granting $REALM-realm.realm-admin to temp-admin..."
+              USER_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/master/users?username=$TEMP_ADMIN_USER&exact=true" \
+                  | jq -r '.[0].id')
+              REALM_CLIENT_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/master/clients?clientId=$REALM-realm" \
+                  | jq -r '.[0].id // empty')
+              if [ -z "$REALM_CLIENT_ID" ]; then
+                  echo "ERROR: $REALM-realm client doesn't exist in master (realm import may have failed)" >&2
+                  exit 1
+              fi
+              REALM_ADMIN_ROLE=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/master/clients/$REALM_CLIENT_ID/roles/realm-admin")
+              # Idempotent role-add: POST adds if missing, no-ops if already present.
+              curl -s -o /dev/null -w '  bind realm-admin -> HTTP %{http_code}\n' \
+                  -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                  "$KC_SERVER/admin/realms/master/users/$USER_ID/role-mappings/clients/$REALM_CLIENT_ID" \
+                  -d "[$REALM_ADMIN_ROLE]"
+
+              # 4. Refresh token so the new role binding is in the JWT.
+              TOKEN=$(get_token)
+
+              # 5. PUT chatbot-app-client with corrected redirectUris + webOrigins.
+              echo "Patching chatbot-app-client in $REALM realm..."
+              CHATBOT_UUID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/$REALM/clients?clientId=chatbot-app-client" \
+                  | jq -r '.[0].id // empty')
+              if [ -z "$CHATBOT_UUID" ]; then
+                  echo "ERROR: chatbot-app-client not found in realm $REALM" >&2
+                  exit 1
+              fi
+              curl -s -o /tmp/chatbot.json -w '  GET chatbot client -> HTTP %{http_code}\n' \
+                  -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/$REALM/clients/$CHATBOT_UUID"
+              jq --arg apex "$APEX" '
+                  .redirectUris = ["https://graphrag.\($apex)/*", "https://graphrag.\($apex)/"]
+                  | .webOrigins = ["https://graphrag.\($apex)"]
+              ' /tmp/chatbot.json > /tmp/chatbot.patched.json
+              curl -s -o /dev/null -w '  PUT chatbot client -> HTTP %{http_code}\n' \
+                  -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                  "$KC_SERVER/admin/realms/$REALM/clients/$CHATBOT_UUID" \
+                  --data-binary @/tmp/chatbot.patched.json
+
+              # 6. PUT conversation-api-client webOrigins (no redirectUris -- service-to-service).
+              echo "Patching conversation-api-client in $REALM realm..."
+              CONV_UUID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/$REALM/clients?clientId=conversation-api-client" \
+                  | jq -r '.[0].id // empty')
+              if [ -n "$CONV_UUID" ]; then
+                  curl -s -o /tmp/conv.json \
+                      -H "Authorization: Bearer $TOKEN" \
+                      "$KC_SERVER/admin/realms/$REALM/clients/$CONV_UUID"
+                  jq --arg apex "$APEX" \
+                      '.webOrigins = ["https://graphrag.\($apex)"]' \
+                      /tmp/conv.json > /tmp/conv.patched.json
+                  curl -s -o /dev/null -w '  PUT conv client -> HTTP %{http_code}\n' \
+                      -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                      "$KC_SERVER/admin/realms/$REALM/clients/$CONV_UUID" \
+                      --data-binary @/tmp/conv.patched.json
+              fi
+
+              echo "Done. graphrag realm clients now point at https://graphrag.$APEX"
+              PATCH_EOF
+{{- end }}
