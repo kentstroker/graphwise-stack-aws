@@ -174,7 +174,7 @@ chatbot:
     className: nginx
     host: "${GRAPHRAG_HOST}"
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-prod
+      cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER:-letsencrypt-staging}
     tls:
       enabled: true
       secretName: graphrag-chatbot-tls
@@ -190,7 +190,7 @@ workflows:
     className: nginx
     host: "${GRAPHRAG_HOST}"
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-prod
+      cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER:-letsencrypt-staging}
       nginx.ingress.kubernetes.io/rewrite-target: /\$2
     tls:
       enabled: true

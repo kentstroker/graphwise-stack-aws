@@ -251,7 +251,22 @@ done
 # --------------------------------------------------------------------
 # 10. HTTPS reachability sweep
 # --------------------------------------------------------------------
-section "HTTPS reachability (every app URL)"
+# Detect which ClusterIssuer is in use on the apex Ingress's cert.
+# If letsencrypt-staging, the cert chain isn't browser-trusted (no
+# ISRG root in the LE staging chain), so curl without -k would
+# report the entire stack as broken even when it's healthy. Add -k
+# when staging is detected; print a banner explaining why TLS
+# verification is being skipped.
+ISSUER_IN_USE=$(kubectl get certificate -A -o jsonpath='{.items[0].spec.issuerRef.name}' 2>/dev/null)
+CURL_TLS_FLAG=""
+if [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
+    CURL_TLS_FLAG="-k"
+    section "HTTPS reachability (every app URL)  ${YELLOW}[staging certs detected -- TLS verification skipped]${RESET}"
+    printf '  %s%s%s\n' "$DIM" "Browser visits will show 'Not Secure' warnings. Flip to letsencrypt-prod via" "$RESET"
+    printf '  %s%s%s\n\n' "$DIM" "scripts/switch-cert-issuer.sh prod  before any customer demo." "$RESET"
+else
+    section "HTTPS reachability (every app URL)"
+fi
 
 # (host-suffix, expected-codes-regex, label)
 endpoints=(
@@ -277,7 +292,7 @@ fi
 for entry in "${endpoints[@]}"; do
     host="${entry%%:*}"; rest="${entry#*:}"
     expected_re="${rest%%:*}"; label="${rest#*:}"
-    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$host/" 2>/dev/null)
+    code=$(curl $CURL_TLS_FLAG -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$host/" 2>/dev/null)
     if [[ "$code" =~ ^($expected_re)$ ]]; then
         check_pass "https://$host/  -> $code  $DIM($label)$RESET"
     elif [ "$code" = "000" ]; then

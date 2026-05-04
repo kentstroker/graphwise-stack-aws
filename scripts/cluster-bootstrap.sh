@@ -141,10 +141,45 @@ helm upgrade --install cert-manager jetstack/cert-manager \
     --set crds.enabled=true \
     --wait --timeout 5m
 
-# The ClusterIssuer references ingress-nginx by class name. cert-manager
-# polls the ACME server when a Certificate is created (via Ingress
-# tls.secretName) and HTTP-01-challenges via a temporary Ingress.
+# Two ClusterIssuers shipped:
+#
+#   letsencrypt-staging  -- DEFAULT during stack iteration. LE staging
+#                           server has 30,000-cert/week limits (effectively
+#                           unlimited for our pace). Certs aren't trusted by
+#                           browsers (no ISRG root in trust stores), so URLs
+#                           show "Not Secure" warnings -- fine for SE-internal
+#                           validation, NOT fine for putting a prospect in
+#                           front of the URL.
+#
+#   letsencrypt-prod     -- USE FOR CUSTOMER DEMOS. Real LE prod certs,
+#                           browsers trust them. Subject to LE rate limits:
+#                           5 certs per exact identifier per 168h. Multiple
+#                           fresh-deploy cycles in a week WILL hit the cap.
+#
+# Operators flip between the two via `scripts/switch-cert-issuer.sh
+# <staging|prod>` -- it patches every Ingress's annotation + deletes the
+# old Certificate resources so cert-manager re-issues with the new issuer.
+# See CLAUDE.md "Cert issuer toggle" for the full operator workflow.
+#
+# Both ClusterIssuers reference ingress-nginx by class name.
+# cert-manager polls the ACME server when a Certificate is created (via
+# Ingress tls.secretName) and HTTP-01-challenges via a temporary Ingress.
 kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ${LE_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -311,6 +346,17 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
     --wait --timeout 10m
 
 # ---------------------------------------------------------------------------
+# ClusterIssuer to use for the observability Ingresses below
+# ---------------------------------------------------------------------------
+# Default to letsencrypt-staging (matches the chart-side default in
+# umbrella values.yaml `global.clusterIssuer`). Override per deploy via
+# env var: GRAPHWISE_CLUSTER_ISSUER=letsencrypt-prod ./scripts/cluster-bootstrap.sh
+# When you flip later via scripts/switch-cert-issuer.sh, it patches these
+# Ingresses too -- you don't need to re-run cluster-bootstrap to flip.
+GRAPHWISE_CLUSTER_ISSUER="${GRAPHWISE_CLUSTER_ISSUER:-letsencrypt-staging}"
+echo "Observability Ingresses will use ClusterIssuer: $GRAPHWISE_CLUSTER_ISSUER"
+
+# ---------------------------------------------------------------------------
 # Basic-auth secret for the Prometheus ingress
 # ---------------------------------------------------------------------------
 # Only Prometheus needs this -- the Dashboard's bearer-token and
@@ -350,7 +396,7 @@ metadata:
   name: kubernetes-dashboard
   namespace: kubernetes-dashboard
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER}
     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
     nginx.ingress.kubernetes.io/proxy-body-size: 100m
 spec:
@@ -379,7 +425,7 @@ metadata:
   name: prometheus
   namespace: monitoring
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER}
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: graphwise-basic-auth
     nginx.ingress.kubernetes.io/auth-realm: "Graphwise observability"
@@ -414,7 +460,7 @@ metadata:
   name: grafana
   namespace: monitoring
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: ${GRAPHWISE_CLUSTER_ISSUER}
 spec:
   ingressClassName: nginx
   tls:

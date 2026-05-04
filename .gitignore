@@ -19,6 +19,12 @@
 files/licenses/*.key
 files/licenses/*.license
 
+# scripts/cluster-bootstrap.sh writes files/dash.yaml -- a kubeconfig
+# carrying a long-lived service-account bearer token for the dashboard.
+# Generated per-deployment; never commit.
+files/dash.yaml
+files/.DS_Store
+
 # ---------------------------------------------------------------------------
 # Extracted Keycloak realm exports
 # ---------------------------------------------------------------------------

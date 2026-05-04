@@ -108,7 +108,7 @@ metadata:
   name: {{ include "rdf4j.fullname" . }}
   labels: {{- include "rdf4j.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-staging" | quote }}
     {{- if .Values.basicAuth.enabled }}
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: {{ include "rdf4j.fullname" . }}-basic-auth
