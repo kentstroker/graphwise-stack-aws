@@ -10,7 +10,6 @@ service:
 ingress:
   enabled: true
   className: nginx
-  clusterIssuer: letsencrypt-prod
 basicAuth:
   enabled: true
   htpasswd: "demo:$apr1$1Ub6kYrD$xxG9zJZXPddeN2WT8E/Ro/"

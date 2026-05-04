@@ -240,7 +240,7 @@ If you ever see addons resources missing expected fields after an edit to `chart
 
 ### Why letsencrypt-prod only (no staging)
 
-`cluster-bootstrap.sh` installs exactly one ClusterIssuer: `letsencrypt-prod`. Umbrella `values.yaml` sets `global.clusterIssuer: letsencrypt-prod` and every Ingress template's cascade defaults to the same. There is no staging fallback and no flip script.
+`cluster-bootstrap.sh` installs exactly one ClusterIssuer: `letsencrypt-prod`. Every Ingress template hardcodes `cert-manager.io/cluster-issuer: letsencrypt-prod` as a literal annotation — no `.Values.clusterIssuer` cascade, no `global.clusterIssuer` override, no flip script. There's nothing to toggle to.
 
 **Why staging-as-default broke the stack** (we tried it and reverted):
 

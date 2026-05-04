@@ -17,7 +17,6 @@ service:
 ingress:
   enabled: true
   className: nginx
-  clusterIssuer: letsencrypt-prod
 resources:
   requests:
     cpu: 250m

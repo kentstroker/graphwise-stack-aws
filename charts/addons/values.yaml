@@ -14,8 +14,6 @@ adf:
     clientSecret: "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"
   poolparty:
     internalUrl: "http://poolparty:8081"
-  ingress:
-    clusterIssuer: letsencrypt-prod
 
 semantic-workbench:
   enabled: true
@@ -32,8 +30,6 @@ semantic-workbench:
   license:
     secretName: poolparty-license
     secretKey: poolparty.key
-  ingress:
-    clusterIssuer: letsencrypt-prod
 
 graphviews:
   enabled: true
@@ -44,8 +40,6 @@ graphviews:
   poolparty:
     internalUrl: "http://poolparty:8081"
     superadminPassword: "poolparty"
-  ingress:
-    clusterIssuer: letsencrypt-prod
 
 rdf4j:
   enabled: true
@@ -53,8 +47,6 @@ rdf4j:
     repository: eclipse/rdf4j-workbench
     tag: "5.1.2"
   externalUrl: ""
-  ingress:
-    clusterIssuer: letsencrypt-prod
   basicAuth:
     enabled: true
     htpasswd: "demo:$apr1$1Ub6kYrD$xxG9zJZXPddeN2WT8E/Ro/"
@@ -68,5 +60,3 @@ unifiedviews:
   license:
     secretName: unifiedviews-license
     secretKey: uv-license.key
-  ingress:
-    clusterIssuer: letsencrypt-prod

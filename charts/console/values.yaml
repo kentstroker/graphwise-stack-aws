@@ -20,7 +20,6 @@ ingress:
   className: nginx
   # Apex host — the bare <subdomain>.<base_domain>, no app prefix.
   host: ""
-  clusterIssuer: letsencrypt-prod
   tlsSecretName: ""
 
 resources:

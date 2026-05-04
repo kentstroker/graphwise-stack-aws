@@ -38,14 +38,7 @@ global:
   #   poolparty.<subdomain>.<baseDomain>, auth.<subdomain>.<baseDomain>,
   #   graphrag.<subdomain>.<baseDomain>, ...
   subdomain: "stroker"
-  baseDomain: "semantic-proof.com"
-
-  # cert-manager ClusterIssuer used by every Ingress's TLS cert. Only
-  # letsencrypt-prod is supported -- staging certs aren't trusted by the
-  # JVM truststore in PoolParty / graphrag-conversation, breaking every
-  # in-cluster HTTPS call to Keycloak. See CLAUDE.md "Why letsencrypt-
-  # prod only" for the full rationale + LE rate-limit mitigations.
-  clusterIssuer: letsencrypt-prod
+  baseDomain: "semantic-demo.com"
 
   # Image pull secret name for the Graphwise private registry.
   # Created by scripts/cluster-bootstrap.sh in the namespaces that

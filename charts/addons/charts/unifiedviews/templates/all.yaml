@@ -110,7 +110,7 @@ metadata:
   name: {{ include "uv.fullname" . }}
   labels: {{- include "uv.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-prod" | quote }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:

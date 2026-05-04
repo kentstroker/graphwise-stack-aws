@@ -90,7 +90,7 @@ metadata:
   name: {{ include "sw.fullname" . }}
   labels: {{- include "sw.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | default .Values.ingress.clusterIssuer | default "letsencrypt-prod" | quote }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:

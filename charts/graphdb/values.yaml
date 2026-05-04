@@ -34,7 +34,6 @@ ingress:
   host: ""
   # cert-manager ClusterIssuer that mints the TLS cert. letsencrypt-prod
   # is created by scripts/cluster-bootstrap.sh.
-  clusterIssuer: letsencrypt-prod
   # TLS Secret name — cert-manager populates it. Default per-release:
   # <release>-tls.
   tlsSecretName: ""
