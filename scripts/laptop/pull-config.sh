@@ -1,31 +1,35 @@
 #!/usr/bin/env bash
 # pull-config.sh -- one ssh, one tar pipeline. Pulls every operator-
 # supplied artifact + the live LE wildcard cert off the EC2 as a single
-# tarball; extracts to canonical paths on your laptop.
+# tarball; extracts into a fresh dated folder under ~/Downloads/.
+#
+# Output layout (after a successful pull):
+#   ~/Downloads/graphwise-config-<UTC-timestamp>/
+#       payload.tgz                  (the tarball as it arrived; keep
+#                                     for re-extract / archival)
+#       graphwise-secrets.yaml
+#       licenses/
+#         poolparty.key
+#         graphdb.license
+#         uv-license.key
+#         wildcard-tls.yaml          (live LE wildcard cert as a
+#                                     Secret YAML, ready for
+#                                     push-config.sh to re-apply on
+#                                     the next deploy -- cert-manager
+#                                     sees a valid Secret in place and
+#                                     skips the LE issuance call)
 #
 # Why one tarball: each scp is a fresh SSH connection (handshake
 # latency, partial-failure mode per file). One tarball + one SSH means
-# atomic-or-nothing: either all files arrive or none do.
+# atomic-or-nothing.
 #
-# What's pulled (canonical local paths):
-#
-#   1. EC2:~/graphwise-secrets.yaml              -> ~/graphwise-secrets.yaml
-#
-#   2. EC2:~/graphwise-stack-aws/files/licenses/{poolparty.key,
-#         graphdb.license,uv-license.key}        -> ~/graphwise-licenses/
-#
-#   3. The cluster's live wildcard TLS cert (kubectl get secret -n
-#      cert-manager wildcard-tls -o yaml)        -> ~/graphwise-licenses/wildcard-tls.yaml
-#      With kubectl-managed metadata stripped (resourceVersion, uid,
-#      ownerReferences, controller annotations) so push-config.sh's
-#      kubectl apply restores cleanly. cluster-bootstrap.sh detects
-#      the saved cert on the next deploy and applies the Secret
-#      BEFORE creating the Certificate resource -- cert-manager sees
-#      a valid cert in place and skips LE issuance entirely (saves
-#      a per-week LE rate-limit slot).
-#
-# Existing local files are backed up to <path>.bak-<UTC-timestamp>
-# before being overwritten -- nothing destructive without a trail.
+# Why a dated Downloads folder (vs overwriting canonical paths in $HOME):
+# this is your ARCHIVE of the deployment's state at a given moment.
+# Each pull stands alone -- no .bak-<timestamp> files cluttering $HOME,
+# no risk of clobbering edits you made since the last pull. To use the
+# pulled snapshot for the next deploy, point push-config.sh at the
+# folder via --licenses-dir + --secrets-file (the script prints the
+# exact command).
 #
 # Required env (or pass via flags):
 #   GRAPHWISE_KEY    path to .pem
@@ -34,8 +38,7 @@
 #
 # Usage:
 #   ./scripts/laptop/pull-config.sh
-#   ./scripts/laptop/pull-config.sh --secrets-file ~/path/to/secrets.yaml
-#   ./scripts/laptop/pull-config.sh --licenses-dir ~/path/to/licenses
+#   ./scripts/laptop/pull-config.sh --download-dir ~/path/to/somewhere   (default: ~/Downloads)
 #   ./scripts/laptop/pull-config.sh --skip-secrets
 #   ./scripts/laptop/pull-config.sh --skip-licenses
 #   ./scripts/laptop/pull-config.sh --skip-cert
@@ -54,15 +57,13 @@ else
     GREEN=""; RED=""; YELLOW=""; BOLD=""; DIM=""; RESET=""
 fi
 
-SECRETS_FILE="$HOME/graphwise-secrets.yaml"
-LICENSES_DIR="$HOME/graphwise-licenses"
+DOWNLOAD_DIR="$HOME/Downloads"
 SKIP_SECRETS=no
 SKIP_LICENSES=no
 SKIP_CERT=no
 while [ $# -gt 0 ]; do
     case "$1" in
-        --secrets-file)  SECRETS_FILE="$2"; shift 2 ;;
-        --licenses-dir)  LICENSES_DIR="$2"; shift 2 ;;
+        --download-dir)  DOWNLOAD_DIR="$2"; shift 2 ;;
         --skip-secrets)  SKIP_SECRETS=yes; shift ;;
         --skip-licenses) SKIP_LICENSES=yes; shift ;;
         --skip-cert)     SKIP_CERT=yes; shift ;;
@@ -89,17 +90,15 @@ USAGE
     exit 2
 fi
 
-mkdir -p "$LICENSES_DIR"
-
-backup_if_exists() {
-    local path="$1"
-    if [ -f "$path" ]; then
-        local ts
-        ts=$(date -u +%Y%m%d-%H%M%S)
-        cp -p "$path" "$path.bak-$ts"
-        printf '  %s↻%s backed up existing %s -> %s.bak-%s\n' "$DIM" "$RESET" "$path" "$path" "$ts"
-    fi
-}
+# ---------------------------------------------------------------------
+# Create the dated snapshot folder.
+# ---------------------------------------------------------------------
+TIMESTAMP=$(date -u +%Y%m%d-%H%M%SZ)
+SNAPSHOT_DIR="$DOWNLOAD_DIR/graphwise-config-$TIMESTAMP"
+mkdir -p "$SNAPSHOT_DIR"
+chmod 700 "$SNAPSHOT_DIR"
+echo "${BOLD}Snapshot folder:${RESET} $SNAPSHOT_DIR"
+echo
 
 # ---------------------------------------------------------------------
 # Build the remote snippet: stage selected files into a temp dir + emit
@@ -168,12 +167,13 @@ REMOTE
 
 # ---------------------------------------------------------------------
 # One ssh, one tar pipeline. stdout = bytes, stderr = inventory.
+# Tarball lands directly in the snapshot folder (no temp file in $TMPDIR).
 # ---------------------------------------------------------------------
 echo "${BOLD}Pulling tarball from $USR@$HOST in one ssh...${RESET}"
 
-TARBALL=$(mktemp -t graphwise-pull.XXXXXX.tgz)
+TARBALL="$SNAPSHOT_DIR/payload.tgz"
 INVENTORY=$(mktemp -t graphwise-pull-inv.XXXXXX)
-trap 'rm -f "$TARBALL" "$INVENTORY"' EXIT
+trap 'rm -f "$INVENTORY"' EXIT
 
 if ! ssh -i "$KEY" -o StrictHostKeyChecking=accept-new \
         "$USR@$HOST" "bash -s" \
@@ -182,6 +182,8 @@ if ! ssh -i "$KEY" -o StrictHostKeyChecking=accept-new \
         <<<"$REMOTE_BUILD"; then
     echo "${RED}ERROR: remote tar pipeline failed. Inventory so far:${RESET}" >&2
     cat "$INVENTORY" >&2
+    rm -f "$TARBALL"
+    rmdir "$SNAPSHOT_DIR" 2>/dev/null || true
     exit 1
 fi
 
@@ -196,39 +198,32 @@ while IFS= read -r line; do
 done < "$INVENTORY"
 
 # ---------------------------------------------------------------------
-# Extract locally to canonical paths (with backup of existing).
+# Extract into the snapshot folder. Layout the operator sees:
+#   $SNAPSHOT_DIR/payload.tgz             (kept for archival / re-extract)
+#   $SNAPSHOT_DIR/graphwise-secrets.yaml
+#   $SNAPSHOT_DIR/licenses/poolparty.key
+#   $SNAPSHOT_DIR/licenses/graphdb.license
+#   $SNAPSHOT_DIR/licenses/uv-license.key
+#   $SNAPSHOT_DIR/licenses/wildcard-tls.yaml
+# (Items with --skip-* or missing on host won't appear.)
 # ---------------------------------------------------------------------
-EXTRACT_DIR=$(mktemp -d -t graphwise-pull-extract.XXXXXX)
-trap 'rm -f "$TARBALL" "$INVENTORY"; rm -rf "$EXTRACT_DIR"' EXIT
-tar -xzf "$TARBALL" -C "$EXTRACT_DIR"
-
 echo
-echo "${BOLD}Extracting to canonical local paths...${RESET}"
+echo "${BOLD}Extracting into $SNAPSHOT_DIR ...${RESET}"
+tar -xzf "$TARBALL" -C "$SNAPSHOT_DIR"
 
-if [ -f "$EXTRACT_DIR/graphwise-secrets.yaml" ]; then
-    backup_if_exists "$SECRETS_FILE"
-    install -m 0600 "$EXTRACT_DIR/graphwise-secrets.yaml" "$SECRETS_FILE"
-    printf '  %s✓%s wrote %s\n' "$GREEN" "$RESET" "$SECRETS_FILE"
-fi
+# Tighten perms on extracted files (tar may preserve world-readable bits
+# if the source was loose).
+find "$SNAPSHOT_DIR" -type f -exec chmod 600 {} +
+find "$SNAPSHOT_DIR" -type d -exec chmod 700 {} +
 
-if [ -d "$EXTRACT_DIR/licenses" ]; then
-    for f in "$EXTRACT_DIR"/licenses/*; do
-        [ -f "$f" ] || continue
-        name=$(basename "$f")
-        local_path="$LICENSES_DIR/$name"
-        backup_if_exists "$local_path"
-        install -m 0600 "$f" "$local_path"
-        printf '  %s✓%s wrote %s\n' "$GREEN" "$RESET" "$local_path"
-    done
-fi
+# List what landed.
+( cd "$SNAPSHOT_DIR" && find . -type f -not -name payload.tgz | sed 's|^\./|  ✓ |' )
 
-if [ -f "$EXTRACT_DIR/wildcard-tls.yaml" ]; then
-    cert_local="$LICENSES_DIR/wildcard-tls.yaml"
-    backup_if_exists "$cert_local"
-    install -m 0600 "$EXTRACT_DIR/wildcard-tls.yaml" "$cert_local"
-    printf '  %s✓%s wrote %s\n' "$GREEN" "$RESET" "$cert_local"
-
-    # Cert summary so the operator sees what they captured.
+# Cert summary (parse from the snapshot copy).
+cert_local="$SNAPSHOT_DIR/licenses/wildcard-tls.yaml"
+if [ -f "$cert_local" ]; then
+    echo
+    echo "${BOLD}Wildcard cert summary:${RESET}"
     cert_pem=$(python3 -c "
 import yaml, base64
 with open('$cert_local') as f:
@@ -241,11 +236,19 @@ print(base64.b64decode(d['data']['tls.crt']).decode())
         not_after_epoch=$(date -j -f "%b %d %T %Y %Z" "$not_after" +%s 2>/dev/null || date -d "$not_after" +%s 2>/dev/null || echo 0)
         now_epoch=$(date +%s)
         days_remaining=$(( (not_after_epoch - now_epoch) / 86400 ))
-        printf '       %sSANs:%s      %s\n' "$DIM" "$RESET" "$sans"
-        printf '       %sNot After:%s %s (%s days remaining)\n' "$DIM" "$RESET" "$not_after" "$days_remaining"
+        printf '  %sSANs:%s      %s\n' "$DIM" "$RESET" "$sans"
+        printf '  %sNot After:%s %s (%s days remaining)\n' "$DIM" "$RESET" "$not_after" "$days_remaining"
     fi
 fi
 
 echo
-echo "After next ${BOLD}terraform apply${RESET}, restore everything in one shot:"
-echo "  ./scripts/laptop/push-config.sh"
+echo "${BOLD}Total snapshot size:${RESET} $(du -sh "$SNAPSHOT_DIR" | cut -f1)"
+echo
+echo "${BOLD}Next steps:${RESET}"
+echo "  Inspect the snapshot:"
+echo "    ls -la \"$SNAPSHOT_DIR\""
+echo
+echo "  After the next ${BOLD}terraform apply${RESET}, push this snapshot back:"
+echo "    ./scripts/laptop/push-config.sh \\"
+echo "      --secrets-file \"$SNAPSHOT_DIR/graphwise-secrets.yaml\" \\"
+echo "      --licenses-dir \"$SNAPSHOT_DIR/licenses\""
