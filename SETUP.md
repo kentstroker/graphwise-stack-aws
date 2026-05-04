@@ -999,33 +999,71 @@ You need an SSH key pair to log into the deployed instance.
 Terraform references it by name; AWS holds the public half, you
 hold the private `.pem`.
 
-1. AWS Console → EC2 → Network & Security → **Key Pairs** → Create
-   key pair.
-2. Name it something memorable (e.g. `graphwise-stack`).
-3. Type: **RSA** or **ED25519** — both work. Format: **`.pem`**.
-4. Save the downloaded file somewhere safe — you can never download
-   it again.
+### Create in the AWS Console
 
-Lock it down:
+1. AWS Console → EC2 → Network & Security → **Key Pairs** → **Create
+   key pair** (top-right).
+2. **Name:** `graphwise-stack`. This name MUST match exactly what
+   you'll later put in `terraform.tfvars` as `key_pair_name`. The
+   `terraform output graphwise_env_exports` line also assumes this
+   name (it builds `~/.ssh/<key_pair_name>.pem`); pick something
+   else only if you have a reason.
+3. **Type:** RSA or ED25519 — both work.
+4. **Format:** `.pem` (NOT `.ppk`; `.ppk` is PuTTY's format and
+   doesn't work with the `ssh` and `scp` commands this guide uses).
+5. **Create key pair.** Browser downloads `graphwise-stack.pem` to
+   `~/Downloads/` (or whatever your default is). **You can never
+   download it again** — if you lose it, the only recovery is to
+   create a new key pair, update `terraform.tfvars`, and rebuild.
+
+### Move it into `~/.ssh/` and lock it down
+
+The `~/.ssh/` directory is where every standard tool (`ssh`, `scp`,
+`rsync`, `git`) looks for keys. Putting the file there with the
+right permissions is what makes the rest of this guide's
+single-line commands "just work".
 
 **macOS / Linux:**
 
 ```bash
-mv ~/Downloads/graphwise-stack.pem ~/.ssh/
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+mv ~/Downloads/graphwise-stack.pem ~/.ssh/graphwise-stack.pem
+chmod 400 ~/.ssh/graphwise-stack.pem
+ls -la ~/.ssh/graphwise-stack.pem
+```
+
+The final `ls -la` should show `-r--------` (mode `400`,
+read-only-by-owner). If `ssh` later complains
+`UNPROTECTED PRIVATE KEY FILE`, the chmod didn't take — re-run it.
+
+**Renamed during download?** If your browser saved it as
+something other than `graphwise-stack.pem` (e.g.
+`graphwise-stack (1).pem` after a re-download), rename in the same
+move:
+
+```bash
+mv ~/Downloads/<actual-filename>.pem ~/.ssh/graphwise-stack.pem
 chmod 400 ~/.ssh/graphwise-stack.pem
 ```
 
-**Windows:** PowerShell:
+**Windows** (PowerShell):
 
 ```powershell
-Move-Item ~\Downloads\graphwise-stack.pem ~\.ssh\
+New-Item -ItemType Directory -Force ~\.ssh | Out-Null
+Move-Item ~\Downloads\graphwise-stack.pem ~\.ssh\graphwise-stack.pem
 icacls ~\.ssh\graphwise-stack.pem /inheritance:r
 icacls ~\.ssh\graphwise-stack.pem /grant:r "$($env:USERNAME):(R)"
 ```
 
-The path you note here is what you'll paste into
-`terraform.tfvars` as `key_pair_name` (the name only, not the
-path), and into the `ssh -i <path>` commands later.
+The `icacls` lines strip inherited permissions and grant only your
+user account read access — the Windows equivalent of `chmod 400`.
+
+### What feeds where
+
+| Field | Value | Where it goes |
+|---|---|---|
+| Key pair **name** (in AWS Console) | `graphwise-stack` | `infra/terraform/terraform.tfvars` → `key_pair_name = "graphwise-stack"` |
+| Key file **path** (on your laptop) | `~/.ssh/graphwise-stack.pem` | `GRAPHWISE_KEY` env var (next subsection) — and into `ssh -i <path>` everywhere |
 
 ### Export the deploy environment variables now
 
