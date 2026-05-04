@@ -713,19 +713,30 @@ kubectl get pods -A -w
 ### 9. Verify
 
 ```bash
-# Either laptop or EC2 -- this is just an HTTPS reachability test
-APEX=<your-subdomain>.semantic-proof.com
-for h in $APEX poolparty.$APEX auth.$APEX graphdb.$APEX graphrag.$APEX; do
-  printf '%-50s ' "$h"
-  curl -s -o /dev/null -w 'http=%{http_code}\n' "https://$h/" --max-time 10
-done
+# On EC2
+./scripts/validate-stack.sh
 ```
 
-In a browser:
-- **`https://poolparty.<sub>.semantic-proof.com/PoolParty/`** —
-  PoolParty Thesaurus, login `superadmin / poolparty`.
-- **`https://<sub>.semantic-proof.com/`** — Console landing page with
-  links to every app.
+One-shot post-reset-helm validator. Clears the screen and walks
+helm releases (umbrella + graphrag), every workload pod across
+graphwise / keycloak / graphrag namespaces, license + image-pull
+secrets, the GraphDB rename (catches alias-collision regression),
+staging-data PVCs, the keycloak post-install Jobs (bootstrap-admin
++ authz-import), every cert-manager Certificate, OIDC issuer match
+for all three realms (the historic stack-breaker), and an HTTPS
+reachability sweep against every app URL with per-app expected
+status codes (e.g. UnifiedViews legitimately 404s at `/` since it
+serves at `/UnifiedViews/`).
+
+Color-coded ✓/✗/⚠ per check, total counts, exit 0 (green) or 1
+(any failure). Closing "Where to click next" panel prints the
+apex URL + key login endpoints with credentials so you know where
+to go after the validator passes.
+
+Read-only against the cluster; safe to re-run any time. If a check
+fails, paste the failing line + the hint command's output for
+diagnosis. Detailed troubleshooting in
+[CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) → "If something breaks".
 
 ---
 

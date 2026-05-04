@@ -1,0 +1,336 @@
+#!/usr/bin/env bash
+# validate-stack.sh -- one-shot post-reset-helm health check.
+#
+# Run on the EC2 after `reset-helm.sh` finishes (with or without
+# --skip-graphrag). Walks every workload namespace, helm releases,
+# license + image-pull secrets, GraphDB rename, staging-data PVCs,
+# keycloak post-install Jobs, every Certificate, OIDC issuer match
+# for all three realms, and an HTTPS reachability sweep against
+# every app URL. Prints a clean per-check pass/fail summary, an
+# overall verdict, and a closing "where to click next" panel.
+#
+# Idempotent and safe to re-run any time -- it's read-only against
+# the cluster (just kubectl gets + curl HEAD-equivalents).
+#
+# Required env (auto-set by cloud-init's /etc/profile.d/graphwise.sh):
+#   GRAPHWISE_APEX   the apex hostname, e.g. "stroker.semantic-proof.com"
+#
+# Exit codes:
+#   0 -- all checks passed
+#   1 -- one or more checks failed (details in output)
+
+set -uo pipefail
+
+# Colors (disabled when stdout is not a TTY -- pipes / files stay clean).
+if [ -t 1 ]; then
+    GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'
+    BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+else
+    GREEN=""; RED=""; YELLOW=""; CYAN=""; BOLD=""; DIM=""; RESET=""
+fi
+
+PASS_MARK="${GREEN}✓${RESET}"
+FAIL_MARK="${RED}✗${RESET}"
+WARN_MARK="${YELLOW}⚠${RESET}"
+
+PASS_COUNT=0
+FAIL_COUNT=0
+WARN_COUNT=0
+
+clear
+
+cat <<HEADER
+${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════╗
+║          Graphwise Stack -- Post-reset-helm Validation           ║
+╚══════════════════════════════════════════════════════════════════╝${RESET}
+
+${DIM}Verifies every workload installed by scripts/reset-helm.sh.
+Read-only; safe to re-run anytime.${RESET}
+
+HEADER
+
+# --------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------
+check_pass() { PASS_COUNT=$((PASS_COUNT + 1)); printf '  %s %s\n' "$PASS_MARK" "$1"; }
+check_fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); printf '  %s %s\n' "$FAIL_MARK" "$1"; [ -n "${2:-}" ] && printf '    %s%s%s\n' "$DIM" "$2" "$RESET"; }
+check_warn() { WARN_COUNT=$((WARN_COUNT + 1)); printf '  %s %s\n' "$WARN_MARK" "$1"; [ -n "${2:-}" ] && printf '    %s%s%s\n' "$DIM" "$2" "$RESET"; }
+section()    { printf '\n%s%s%s\n' "$BOLD" "$1" "$RESET"; }
+
+# --------------------------------------------------------------------
+# 0. Apex hostname (required for URL checks below)
+# --------------------------------------------------------------------
+section "Deployment apex"
+APEX="${GRAPHWISE_APEX:-}"
+if [ -z "$APEX" ]; then
+    # Fallback: try to derive from any Ingress with host poolparty.*
+    APEX=$(kubectl get ingress -n graphwise --no-headers 2>/dev/null | awk '/poolparty/ { for (i=1;i<=NF;i++) if ($i ~ /^poolparty\./) { sub(/^poolparty\./,"",$i); print $i; exit } }')
+fi
+if [ -z "$APEX" ]; then
+    check_fail "GRAPHWISE_APEX not set and could not be derived from Ingresses" \
+               "Set: export GRAPHWISE_APEX=<sub>.<base>  -- or source /etc/profile.d/graphwise.sh"
+    echo
+    echo "${RED}${BOLD}ABORT:${RESET} cannot proceed without an apex hostname; URL/issuer checks would be meaningless."
+    exit 1
+fi
+check_pass "apex hostname: ${BOLD}$APEX${RESET}"
+
+# --------------------------------------------------------------------
+# 1. Helm releases
+# --------------------------------------------------------------------
+section "Helm releases"
+GRAPHRAG_INSTALLED=no
+UMBRELLA_STATUS=$(helm list -n graphwise -f '^graphwise-stack$' -o json 2>/dev/null | jq -r '.[0].status // empty' 2>/dev/null)
+if [ "$UMBRELLA_STATUS" = "deployed" ]; then
+    UMBRELLA_REVISION=$(helm list -n graphwise -f '^graphwise-stack$' -o json | jq -r '.[0].revision')
+    check_pass "graphwise-stack release deployed (revision $UMBRELLA_REVISION)"
+elif [ -z "$UMBRELLA_STATUS" ]; then
+    check_fail "graphwise-stack release MISSING in graphwise namespace" "Re-run scripts/reset-helm.sh"
+else
+    check_fail "graphwise-stack release status=$UMBRELLA_STATUS (expected deployed)" "helm status -n graphwise graphwise-stack"
+fi
+
+GRAPHRAG_STATUS=$(helm list -n graphrag -f '^graphrag$' -o json 2>/dev/null | jq -r '.[0].status // empty' 2>/dev/null)
+if [ "$GRAPHRAG_STATUS" = "deployed" ]; then
+    GRAPHRAG_REVISION=$(helm list -n graphrag -f '^graphrag$' -o json | jq -r '.[0].revision')
+    check_pass "graphrag release deployed (revision $GRAPHRAG_REVISION)"
+    GRAPHRAG_INSTALLED=yes
+elif [ -z "$GRAPHRAG_STATUS" ]; then
+    check_warn "graphrag release not present" "umbrella-only deploy (--skip-graphrag); chatbot/conversation/components/workflows pods will not be installed"
+else
+    check_fail "graphrag release status=$GRAPHRAG_STATUS (expected deployed or absent)" "helm status -n graphrag graphrag"
+fi
+
+# --------------------------------------------------------------------
+# 2. Workload pod health
+# --------------------------------------------------------------------
+section "Workload pods (graphwise / keycloak / graphrag)"
+
+check_namespace_ready() {
+    local ns="$1" label="$2"
+    local total ready_count completed_count
+    total=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$total" = "0" ]; then
+        check_warn "$label  (namespace '$ns' has 0 pods)"
+        return
+    fi
+    # A pod is "good" if Running with all containers Ready, OR Completed (Job).
+    ready_count=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '
+        { split($2, r, "/"); if ($3 == "Running" && r[1] == r[2]) ready++ }
+        END { print ready+0 }')
+    completed_count=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '$3 == "Completed" { c++ } END { print c+0 }')
+    local good=$((ready_count + completed_count))
+    if [ "$good" = "$total" ]; then
+        check_pass "$label  ($ready_count Running, $completed_count Completed of $total)"
+    else
+        local bad=$((total - good))
+        check_fail "$label  ($bad pod(s) not Running/Completed)" \
+                   "kubectl get pods -n $ns | grep -vE 'Running|Completed'"
+    fi
+}
+
+check_namespace_ready graphwise "graphwise namespace (PoolParty / GraphDB ×2 / addons / console)"
+check_namespace_ready keycloak  "keycloak namespace  (Keycloak + Postgres + bootstrap Jobs)"
+if [ "$GRAPHRAG_INSTALLED" = "yes" ]; then
+    check_namespace_ready graphrag "graphrag namespace  (chatbot / conversation / components / workflows)"
+else
+    # Even with --skip-graphrag, the umbrella creates n8n Postgres in graphrag ns.
+    check_namespace_ready graphrag "graphrag namespace  (n8n Postgres only -- graphrag release skipped)"
+fi
+
+# --------------------------------------------------------------------
+# 3. License Secrets (graphwise namespace)
+# --------------------------------------------------------------------
+section "License Secrets"
+for s in poolparty-license graphdb-license unifiedviews-license; do
+    if kubectl get secret -n graphwise "$s" >/dev/null 2>&1; then
+        check_pass "$s  (graphwise namespace)"
+    else
+        check_fail "$s MISSING" "Run scripts/install-licenses.sh; ensure files/licenses/* are populated"
+    fi
+done
+
+# --------------------------------------------------------------------
+# 4. Image-pull secret (created by reset-helm.sh, NOT cluster-bootstrap.sh)
+# --------------------------------------------------------------------
+section "Image-pull secret (private GraphRAG registry)"
+for ns in graphwise graphrag; do
+    if kubectl get secret -n "$ns" graphwise >/dev/null 2>&1; then
+        check_pass "graphwise secret present in '$ns' namespace"
+    else
+        check_fail "graphwise secret MISSING in '$ns' namespace" \
+                   "~/.ontotext/maven-{user,pass} present? Re-run reset-helm.sh"
+    fi
+done
+
+# --------------------------------------------------------------------
+# 5. GraphDB rename validation (catches alias-collision regression)
+# --------------------------------------------------------------------
+section "GraphDB subchart fullname (alias collision regression test)"
+for variant in embedded projects; do
+    name="graphwise-stack-graphdb-$variant"
+    if kubectl get statefulset -n graphwise "$name" >/dev/null 2>&1 && \
+       kubectl get svc -n graphwise "$name" >/dev/null 2>&1; then
+        check_pass "$name  (StatefulSet + Service)"
+    else
+        check_fail "$name MISSING (StatefulSet or Service)" \
+                   "graphdb fullname helper may have regressed -- see CLAUDE.md GraphDB pattern"
+    fi
+done
+
+# --------------------------------------------------------------------
+# 6. Staging-data PVCs
+# --------------------------------------------------------------------
+section "Staging-data PVCs (universal ingest path)"
+for ns in graphwise graphrag; do
+    pvc_status=$(kubectl get pvc -n "$ns" staging-data -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [ "$pvc_status" = "Bound" ]; then
+        check_pass "staging-data PVC Bound in '$ns' namespace"
+    elif [ -z "$pvc_status" ]; then
+        check_warn "staging-data PVC missing in '$ns' namespace" \
+                   "If staging.enabled=true in values.yaml, expected Bound -- check umbrella render"
+    else
+        check_fail "staging-data PVC status=$pvc_status in '$ns' namespace" \
+                   "kubectl describe pvc -n $ns staging-data"
+    fi
+done
+
+# --------------------------------------------------------------------
+# 7. Keycloak post-install Jobs
+# --------------------------------------------------------------------
+section "Keycloak post-install Jobs"
+check_job_completed() {
+    local ns="$1" job="$2" label="$3"
+    local succeeded
+    succeeded=$(kubectl get job -n "$ns" "$job" -o jsonpath='{.status.succeeded}' 2>/dev/null)
+    if [ "$succeeded" = "1" ]; then
+        check_pass "$label  ($job in $ns ns: 1/1 Completions)"
+    elif [ -z "$succeeded" ]; then
+        check_warn "$label  ($job in $ns ns: not found)" \
+                   "Job may have been cleaned up by hook-delete-policy after success -- harmless if pods are healthy"
+    else
+        check_fail "$label  ($job in $ns ns: succeeded=$succeeded)" \
+                   "kubectl describe job -n $ns $job; kubectl logs -n $ns job/$job"
+    fi
+}
+check_job_completed keycloak keycloak-bootstrap-admin "bootstrap-admin (master realm poolparty_auth_admin user + admin composite)"
+check_job_completed keycloak keycloak-authz-import   "authz-import    (per-client authorizationSettings re-import)"
+
+# --------------------------------------------------------------------
+# 8. Certificates (cert-manager)
+# --------------------------------------------------------------------
+section "TLS Certificates (cert-manager)"
+total_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+ready_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | awk '$3 == "True" { c++ } END { print c+0 }')
+if [ "$total_certs" = "0" ]; then
+    check_fail "no Certificate resources cluster-wide" "cert-manager + ingress-shim should have created one per Ingress; check cluster-bootstrap.sh ran"
+elif [ "$ready_certs" = "$total_certs" ]; then
+    check_pass "$ready_certs/$total_certs Certificates Ready=True"
+else
+    not_ready=$((total_certs - ready_certs))
+    check_fail "$ready_certs/$total_certs Certificates Ready ($not_ready not yet issued)" \
+               "kubectl get certificate -A | grep -v True"
+fi
+
+# --------------------------------------------------------------------
+# 9. OIDC issuer match (the historic stack-breaker)
+# --------------------------------------------------------------------
+section "Keycloak OIDC issuer match (Spring Security strict-equality)"
+for realm in master poolparty graphrag; do
+    issuer=$(curl -sS --max-time 10 "https://auth.$APEX/realms/$realm/.well-known/openid-configuration" 2>/dev/null | jq -r .issuer 2>/dev/null)
+    expected="https://auth.$APEX/realms/$realm"
+    if [ "$issuer" = "$expected" ]; then
+        check_pass "$realm realm: $issuer"
+    elif [ -z "$issuer" ] || [ "$issuer" = "null" ]; then
+        check_fail "$realm realm: no issuer returned" "curl https://auth.$APEX/realms/$realm/.well-known/openid-configuration"
+    else
+        check_fail "$realm realm: issuer mismatch" "got: $issuer  --  expected: $expected"
+    fi
+done
+
+# --------------------------------------------------------------------
+# 10. HTTPS reachability sweep
+# --------------------------------------------------------------------
+section "HTTPS reachability (every app URL)"
+
+# (host-suffix, expected-codes-regex, label)
+endpoints=(
+    "$APEX:200|301|302:apex (Console landing)"
+    "poolparty.$APEX:200|301|302:PoolParty"
+    "auth.$APEX:200|302:Keycloak"
+    "graphdb.$APEX:401:GraphDB embedded (basic auth)"
+    "graphdb-projects.$APEX:401:GraphDB projects (basic auth)"
+    "adf.$APEX:200|404:ADF (root 404 OK; lives at /ADF/)"
+    "semantic-workbench.$APEX:200|404:Semantic Workbench (root 404 OK; lives at /SemanticWorkbench/)"
+    "graphviews.$APEX:200|404:GraphViews (root 404 OK; lives at /GraphViews/)"
+    "rdf4j.$APEX:401:RDF4J Workbench (basic auth)"
+    "unifiedviews.$APEX:200|404:UnifiedViews (root 404 OK; lives at /UnifiedViews/)"
+    "dashboard.$APEX:200|302:Kubernetes Dashboard"
+    "prometheus.$APEX:401:Prometheus (basic auth)"
+    "grafana.$APEX:200|302:Grafana"
+)
+
+if [ "$GRAPHRAG_INSTALLED" = "yes" ]; then
+    endpoints+=("graphrag.$APEX:200|301|302:GraphRAG chatbot")
+fi
+
+for entry in "${endpoints[@]}"; do
+    host="${entry%%:*}"; rest="${entry#*:}"
+    expected_re="${rest%%:*}"; label="${rest#*:}"
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$host/" 2>/dev/null)
+    if [[ "$code" =~ ^($expected_re)$ ]]; then
+        check_pass "https://$host/  -> $code  $DIM($label)$RESET"
+    elif [ "$code" = "000" ]; then
+        check_fail "https://$host/  -> connection failed" "DNS / SG / ingress-nginx check"
+    elif [[ "$code" =~ ^5 ]]; then
+        check_fail "https://$host/  -> $code  ($label)" "5xx -- backend pod errored or crashed"
+    else
+        check_warn "https://$host/  -> $code  (expected $expected_re; $label)" \
+                   "Acceptable for some apps; investigate if persistent"
+    fi
+done
+
+# --------------------------------------------------------------------
+# Summary
+# --------------------------------------------------------------------
+echo
+printf '%s%s%s\n' "$BOLD" "─────────────────────────────────────────────────────────────────" "$RESET"
+printf '%s%s%-12s%s passed   %s%-12s%s failed   %s%-12s%s warning\n' \
+       "$BOLD" "$GREEN" "$PASS_COUNT" "$RESET" \
+       "$RED" "$FAIL_COUNT" "$RESET" \
+       "$YELLOW" "$WARN_COUNT" "$RESET"
+printf '%s%s%s\n' "$BOLD" "─────────────────────────────────────────────────────────────────" "$RESET"
+echo
+
+# --------------------------------------------------------------------
+# Where to click next
+# --------------------------------------------------------------------
+cat <<NEXTSTEPS
+${BOLD}${CYAN}Where to click next:${RESET}
+
+  ${BOLD}Console landing page${RESET}      https://$APEX/
+  ${BOLD}PoolParty Thesaurus${RESET}       https://poolparty.$APEX/PoolParty/
+                              ${DIM}sign in: superadmin / poolparty${RESET}
+  ${BOLD}GraphDB embedded${RESET}          https://graphdb.$APEX/
+                              ${DIM}basic-auth: demo / rdf#rocks${RESET}
+  ${BOLD}GraphDB projects${RESET}          https://graphdb-projects.$APEX/
+                              ${DIM}basic-auth: demo / rdf#rocks${RESET}
+  ${BOLD}Keycloak admin${RESET}            https://auth.$APEX/admin/
+                              ${DIM}sign in: poolparty_auth_admin / admin${RESET}
+  ${BOLD}Grafana${RESET}                   https://grafana.$APEX/
+                              ${DIM}sign in: admin / demo-graphwise-2026${RESET}
+  ${BOLD}Kubernetes Dashboard${RESET}      https://dashboard.$APEX/
+                              ${DIM}upload ~/dashboard-kubeconfig.yaml${RESET}
+
+${DIM}Full URL + credentials reference: CONSOLE-GUIDE.md${RESET}
+
+NEXTSTEPS
+
+if [ "$FAIL_COUNT" = "0" ]; then
+    printf '%s✓ Stack looks healthy. You are good to demo.%s\n\n' "$GREEN$BOLD" "$RESET"
+    exit 0
+else
+    printf '%s✗ %d check(s) failed. Investigate above before demoing.%s\n' "$RED$BOLD" "$FAIL_COUNT" "$RESET"
+    printf '%sCONSOLE-GUIDE.md "If something breaks" runbook is the next stop.%s\n\n' "$DIM" "$RESET"
+    exit 1
+fi
