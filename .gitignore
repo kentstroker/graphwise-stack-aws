@@ -109,6 +109,7 @@ infra/terraform/.terraform/
 infra/terraform/terraform.tfstate
 infra/terraform/terraform.tfstate.backup
 infra/terraform/terraform.tfstate.*
+infra/terraform/.terraform.tfstate.lock.info
 infra/terraform/*.tfplan
 # Per-deployment variable values. terraform.tfvars.example (the
 # template) IS committed — the real terraform.tfvars with your AWS

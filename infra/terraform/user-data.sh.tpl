@@ -154,10 +154,22 @@ rm -rf "/tmp/linux-$ARCH"
 # inherit the deployment apex hostname without anyone having to set it.
 # ---------------------------------------------------------------------------
 cat > /etc/profile.d/graphwise.sh <<EOF
-# Managed by graphwise-stack-aws cloud-init. Apex hostname for this
-# deployment, consumed by scripts/cluster-bootstrap.sh when it builds
-# observability ingress hostnames (dashboard.<apex>, etc.).
+# Managed by graphwise-stack-aws cloud-init.
+#
+# GRAPHWISE_APEX -- apex hostname for this deployment, consumed by
+#                   scripts/cluster-bootstrap.sh when it builds
+#                   observability ingress hostnames (dashboard.<apex>, etc.).
+# ROUTE53_ZONE_ID -- hosted zone ID for the deployment's base_domain.
+#                   Consumed by cluster-bootstrap.sh when configuring the
+#                   cert-manager DNS-01 ClusterIssuer (Route 53 solver
+#                   needs to know which zone to write _acme-challenge
+#                   TXT records into).
+# AWS_REGION -- region cert-manager's Route 53 solver hits for STS
+#                   endpoint selection; also consumed by AWS SDK calls
+#                   from in-cluster pods.
 export GRAPHWISE_APEX="${hostname_fqdn}"
+export ROUTE53_ZONE_ID="${route53_zone_id}"
+export AWS_REGION="${aws_region}"
 EOF
 chmod 644 /etc/profile.d/graphwise.sh
 
@@ -258,10 +270,10 @@ What's still manual, in order:
 
     cd ~/graphwise-stack-aws
 
-    # 1. Update GoDaddy DNS for $HOSTNAME_FQDN
-    #    Two A records, both pointing at this instance's EIP. The exact
-    #    values are in the 'godaddy_dns_records' Terraform output.
-    #    Wait 5-30 minutes for propagation:
+    # 1. Set the Route 53 A records for $HOSTNAME_FQDN
+    #    Two A records (apex + wildcard), both pointing at this instance's
+    #    EIP. The exact AWS CLI command is in the 'route53_dns_records'
+    #    Terraform output. Route 53 propagation is near-instant:
     #      dig +short $HOSTNAME_FQDN
     #      dig +short poolparty.$HOSTNAME_FQDN
 

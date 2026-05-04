@@ -25,12 +25,26 @@
 # must point at one. Per-deployment.
 region = "us-west-2"
 
-# Parent domain that hosts your subdomain. Graphwise field SEs use
-# Kent's `semantic-proof.com` zone. Forks / external users: your own
-# domain on whatever DNS provider. Per-deployment.
-base_domain = "semantic-proof.com"
+# Parent domain that hosts your subdomain. Must be a domain whose DNS
+# is hosted in Route 53 in this same AWS account (cert-manager writes
+# _acme-challenge TXT records here for DNS-01 wildcard cert issuance).
+# Graphwise field SEs use Kent's `semantic-demo.com` zone (registered
+# through Route 53 -- nameservers already authoritative on AWS, no
+# delegation step). Forks / external users: register your own domain
+# in Route 53, or transfer DNS hosting (NS records) of an existing
+# domain to a Route 53 hosted zone.
+base_domain = "semantic-demo.com"
 
-# the EIP allocation IP so he can add the A records.
+# Route 53 hosted zone ID for base_domain. Get it once with:
+#   aws route53 list-hosted-zones --query 'HostedZones[?Name==`<base_domain>.`].Id' --output text | sed 's|/hostedzone/||'
+# Format: Z<uppercase-alphanum>. Used to scope the EC2 instance role's
+# Route 53 permissions to just this zone (cert-manager DNS-01 solver
+# can ONLY edit records here, not anywhere else in the account).
+route53_zone_id = "ZCHANGEME"
+
+# Your subdomain under base_domain. Per-deployment. Final hostnames:
+#   <subdomain>.<base_domain>           -- Console landing
+#   <app>.<subdomain>.<base_domain>     -- every app (poolparty, auth, ...)
 subdomain = "CHANGEME"                       # e.g. "scott", "acme-corp", or multi-level "demo.stroker"
 
 # An EXISTING key pair in the target region (EC2 → Network & Security →

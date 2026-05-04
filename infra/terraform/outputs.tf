@@ -1,13 +1,13 @@
 # Outputs — printed after `terraform apply` completes.
 #
 # Cover the four things a teammate acts on immediately after provisioning:
-#   1. The Elastic IP (so the teammate adds the GoDaddy A records)
-#   2. The two GoDaddy DNS records to create (host + value, ready to paste)
+#   1. The Elastic IP (so the teammate adds the Route 53 A records)
+#   2. The two Route 53 DNS records to create (single AWS CLI command)
 #   3. SSH commands (once keys are valid)
 #   4. The expected final public URL (once DNS is up and LE certs issued)
 
 output "elastic_ip" {
-  description = "Public Elastic IP. Add this as the value for both GoDaddy A records (see godaddy_dns_records). When existing_eip_allocation_id is set, this stays stable across rebuilds — DNS is set-and-forget. When unset, a fresh EIP is allocated each apply and DNS must be updated."
+  description = "Public Elastic IP. Add this as the value for both Route 53 A records (see route53_dns_records). When existing_eip_allocation_id is set, this stays stable across rebuilds — DNS is set-and-forget. When unset, a fresh EIP is allocated each apply and DNS must be updated."
   value       = local.public_ip
 }
 
@@ -16,19 +16,23 @@ output "eip_mode" {
   value       = local.use_existing_eip ? "existing (allocation_id=${var.existing_eip_allocation_id})" : "fresh (allocated this apply)"
 }
 
-output "godaddy_dns_records" {
-  description = "Two A records to add in the GoDaddy DNS console for the base domain. Wait 5-30 minutes for propagation. The output value renders the exact host/value pairs; copy-paste them into GoDaddy."
+output "route53_dns_records" {
+  description = "Single AWS CLI command to UPSERT the two A records in the Route 53 hosted zone. Idempotent (UPSERT) -- safe to re-run after EIP changes. Requires the operator's laptop AWS profile to have route53:ChangeResourceRecordSets on the zone."
   value       = <<-EOT
-    Add these two A records in GoDaddy DNS for ${var.base_domain}:
+    Run this once on your laptop to set / refresh the two A records:
 
-      Host: ${var.subdomain}        Type: A    Value: ${local.public_ip}    TTL: 600
-      Host: *.${var.subdomain}      Type: A    Value: ${local.public_ip}    TTL: 600
+      aws route53 change-resource-record-sets --hosted-zone-id ${var.route53_zone_id} --change-batch '{
+        "Changes":[
+          {"Action":"UPSERT","ResourceRecordSet":{"Name":"${var.subdomain}.${var.base_domain}","Type":"A","TTL":300,"ResourceRecords":[{"Value":"${local.public_ip}"}]}},
+          {"Action":"UPSERT","ResourceRecordSet":{"Name":"*.${var.subdomain}.${var.base_domain}","Type":"A","TTL":300,"ResourceRecords":[{"Value":"${local.public_ip}"}]}}
+        ]
+      }'
 
     Verify with:
       dig +short ${var.subdomain}.${var.base_domain}
       dig +short poolparty.${var.subdomain}.${var.base_domain}
 
-    Both should return ${local.public_ip} once DNS has propagated.
+    Both should return ${local.public_ip} (Route 53 propagation is near-instant).
   EOT
 }
 
@@ -48,7 +52,7 @@ output "instance_public_dns" {
 }
 
 output "ssh" {
-  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created. Set GRAPHWISE_KEY / GRAPHWISE_HOST / GRAPHWISE_USER per SETUP §7 -- the literal IP form ssh -i <path-to-keypair.pem> ec2-user@${local.public_ip} also works."
+  description = "SSH command for the instance. AL2023's ec2-user is pre-provisioned with your SSH key, has wheel-group sudo, and is the runtime account for KIND/Docker/kubectl. No separate named user is created. Set GRAPHWISE_KEY / GRAPHWISE_HOST / GRAPHWISE_USER per SETUP §7 -- the literal IP form (ssh -i <path-to-keypair.pem> ec2-user@<elastic-ip>) also works."
   value       = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST   # GRAPHWISE_HOST=${local.public_ip} or your subdomain"
 }
 

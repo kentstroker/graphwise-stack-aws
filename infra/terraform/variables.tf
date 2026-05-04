@@ -11,7 +11,7 @@ variable "region" {
 }
 
 variable "subdomain" {
-  description = "Your subdomain path under base_domain. Single-level (\"scott\") or multi-level (\"demo.stroker\") both work. All app hostnames live one level deeper: poolparty.<subdomain>.<base_domain>, auth.<subdomain>.<base_domain>, graphrag.<subdomain>.<base_domain>, etc. Multi-level lets one teammate run multiple deployments under their own slot (e.g. \"demo.stroker\" + \"prod.stroker\") without colliding. The teammate adds two A records in GoDaddy (<subdomain> + *.<subdomain>) pointing at the EIP."
+  description = "Your subdomain path under base_domain. Single-level (\"scott\") or multi-level (\"demo.stroker\") both work. All app hostnames live one level deeper: poolparty.<subdomain>.<base_domain>, auth.<subdomain>.<base_domain>, graphrag.<subdomain>.<base_domain>, etc. Multi-level lets one teammate run multiple deployments under their own slot (e.g. \"demo.stroker\" + \"prod.stroker\") without colliding. The teammate adds two A records in Route 53 (<subdomain> + *.<subdomain>) pointing at the EIP."
   type        = string
 
   validation {
@@ -21,13 +21,23 @@ variable "subdomain" {
 }
 
 variable "base_domain" {
-  description = "Parent domain that hosts the per-teammate subdomain. Defaults to the Graphwise presales domain. Override only if you've forked the project for a different parent domain."
+  description = "Parent domain that hosts the per-teammate subdomain. Must be a domain whose DNS is hosted in Route 53 in this same AWS account (the EC2 instance role gets scoped Route 53 permissions to the zone via route53_zone_id). Defaults to the Graphwise presales domain registered through Route 53. Override only if you're using your own."
   type        = string
-  default     = "semantic-proof.com"
+  default     = "semantic-demo.com"
 
   validation {
     condition     = can(regex("^[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.base_domain))
     error_message = "Base domain must be lowercase, start/end with a letter or digit, and contain only letters, digits, dots, or hyphens."
+  }
+}
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID for base_domain (e.g. \"Z01234567ABCDEFGHIJK\"). Get it once with: aws route53 list-hosted-zones --query 'HostedZones[?Name==`<base_domain>.`].Id' --output text | sed 's|/hostedzone/||'. Used to scope the EC2 instance role's Route 53 permissions so cert-manager can write _acme-challenge TXT records for DNS-01 wildcard cert issuance, and only on this zone."
+  type        = string
+
+  validation {
+    condition     = can(regex("^Z[A-Z0-9]+$", var.route53_zone_id))
+    error_message = "route53_zone_id must look like a Route 53 hosted zone ID, e.g. Z01234567ABCDEFGHIJK."
   }
 }
 
@@ -93,7 +103,7 @@ variable "ami_override" {
 }
 
 variable "existing_eip_allocation_id" {
-  description = "Allocation ID (eipalloc-...) of a pre-allocated Elastic IP to attach to this instance. When set, Terraform will NOT create a fresh EIP each apply — it associates the existing one and leaves it untouched on destroy, so the GoDaddy DNS records stay valid across rebuilds. Allocate the EIP once in the AWS Console (EC2 → Elastic IPs → Allocate) or via `aws ec2 allocate-address --domain vpc --region us-west-2`. Leave empty to keep the original behaviour (allocate a fresh EIP each apply)."
+  description = "Allocation ID (eipalloc-...) of a pre-allocated Elastic IP to attach to this instance. When set, Terraform will NOT create a fresh EIP each apply — it associates the existing one and leaves it untouched on destroy, so the Route 53 DNS records stay valid across rebuilds. Allocate the EIP once in the AWS Console (EC2 → Elastic IPs → Allocate) or via `aws ec2 allocate-address --domain vpc --region us-west-2`. Leave empty to keep the original behaviour (allocate a fresh EIP each apply)."
   type        = string
   default     = ""
 

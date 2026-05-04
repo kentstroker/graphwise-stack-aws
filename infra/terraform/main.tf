@@ -98,8 +98,78 @@ data "cloudinit_config" "bootstrap" {
       github_repo_url    = var.github_repo_url
       hostname_fqdn      = "${var.subdomain}.${var.base_domain}"
       n8n_encryption_key = random_id.n8n_encryption_key.hex
+      route53_zone_id    = var.route53_zone_id
+      aws_region         = var.region
     })
   }
+}
+
+# ---------------------------------------------------------------------------
+# IAM role + instance profile for the EC2 instance
+# ---------------------------------------------------------------------------
+# Why: cert-manager (running in the cluster) needs to write
+# _acme-challenge TXT records into the Route 53 hosted zone for DNS-01
+# wildcard cert issuance. The cert-manager pod talks to AWS via the
+# instance metadata service (IMDSv2), which transparently surfaces
+# whatever role is attached to the EC2 -- so the chain is:
+#
+#   cert-manager pod -> AWS SDK -> IMDSv2 -> EC2 instance role -> Route 53
+#
+# No AWS access key Secret needs to live in the cluster. The role's
+# Route 53 policy is scoped to ChangeResourceRecordSets +
+# ListResourceRecordSets on a single hostedzone ARN (var.route53_zone_id),
+# so even if the role were exfiltrated it could only edit DNS for this
+# one zone.
+#
+# Plus route53:GetChange on `*` because LE polls the change-status API
+# after each TXT write and that API isn't zone-scoped.
+
+resource "aws_iam_role" "ec2" {
+  name = "${local.instance_name}-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy" "ec2_route53" {
+  name = "graphwise-cert-manager-route53"
+  role = aws_iam_role.ec2.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "route53:GetChange"
+        Resource = "arn:aws:route53:::change/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListResourceRecordSets",
+        ]
+        Resource = "arn:aws:route53:::hostedzone/${var.route53_zone_id}"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "ec2" {
+  name = "${local.instance_name}-profile"
+  role = aws_iam_role.ec2.name
+
+  tags = local.tags
 }
 
 # ---------------------------------------------------------------------------
@@ -216,6 +286,7 @@ resource "aws_instance" "stack" {
   key_name               = var.key_pair_name
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.stack.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
   user_data_base64       = data.cloudinit_config.bootstrap.rendered
   tags = merge(local.tags, {
     Name = local.instance_name
