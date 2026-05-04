@@ -21,6 +21,9 @@ you will have:
 - AWS Bedrock available in your region (no per-model approval
   needed — AWS now grants foundation-model access by default).
 - Terraform installed and on `PATH`.
+- Python 3 + pip + PyYAML installed (used by the laptop-side
+  push-config.sh / pull-config.sh helpers for YAML splicing
+  and auto-migration).
 - An EC2 key pair downloaded and `chmod 400`'d.
 - A base domain whose DNS is hosted in Route 53 in this same AWS
   account (registered through Route 53 is simplest). cert-manager
@@ -335,6 +338,52 @@ rsync --version
 Want at least rsync 3.x. If you'd rather not install it, `scp` is
 the documented fallback in DEPLOY §3.5 — fine for one-off file
 drops, painful for multi-GB transfers (no resume, no compression).
+
+### Python 3 + pip + PyYAML (laptop-side helper scripts)
+
+`scripts/laptop/push-config.sh` and `scripts/laptop/pull-config.sh`
+parse YAML on the laptop (n8n encryption-key splice, wildcard cert
+summary, auto-migration of Bedrock + n8n license values from chart
+values.yaml into the secrets overlay). They use Python 3 + the
+`yaml` module (PyYAML). The scripts fail-fast at startup with a
+clear remediation if PyYAML is missing.
+
+**macOS:**
+
+```bash
+brew install python3
+python3 --version
+pip3 install --user pyyaml
+python3 -c "import yaml; print('PyYAML', yaml.__version__)"
+```
+
+If `pip3 install --user` fails with "externally-managed-environment"
+(PEP 668; some Homebrew setups since Python 3.12 disable user-site
+pip installs), use one of:
+
+```bash
+# Recommended: Homebrew's pip with --break-system-packages (the
+# package is small and PyYAML is heavily-tested -- low risk):
+/opt/homebrew/bin/pip3 install --break-system-packages pyyaml
+
+# Or: a per-user virtualenv (more hygienic but adds an activation step):
+python3 -m venv ~/.venv-graphwise && source ~/.venv-graphwise/bin/activate
+pip install pyyaml
+# Then add `source ~/.venv-graphwise/bin/activate` to your shell rc
+# so push-config.sh / pull-config.sh always run inside the venv.
+```
+
+**Windows:**
+
+```powershell
+choco install python -y
+python --version
+pip install pyyaml
+python -c "import yaml; print('PyYAML', yaml.__version__)"
+```
+
+Want at least Python 3.9. The PyYAML version doesn't matter (any
+release from the last decade works); the latest stable is fine.
 
 ### Clone the graphwise-stack-aws repo to your laptop
 
