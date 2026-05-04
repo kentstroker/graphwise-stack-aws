@@ -22,3 +22,21 @@ persistence:
   size: 10Gi
   accessMode: ReadWriteOnce
   storageClass: ""
+# Helm post-install/upgrade Job that idempotently SPARQL-resets the
+# UV login passwords (admin/admin and user/user by default). UV's
+# image-baked seed password doesn't decode against any documented
+# default; without this Job a fresh deploy lands in an unrecoverable
+# "Invalid credentials" state. See uv-password-reset-job.yaml for the
+# why + the SHA-1 vs SHA-256 PRF gotcha.
+passwordReset:
+  enabled: true
+  rdf4jUrl: "http://rdf4j:8080/rdf4j-server"
+  repository: "uv"
+  confGraph: "http://unifiedviews.poolparty.biz/resource/graph/conf"
+  userBase: "http://unifiedviews.poolparty.biz/resource/user/"
+  passwordPredicate: "http://ontology.unifiedviews.eu/core#password"
+  users:
+    - username: "admin"
+      password: "admin"
+    - username: "user"
+      password: "user"
