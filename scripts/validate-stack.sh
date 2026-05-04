@@ -255,6 +255,16 @@ else
     check_warn "active issuer: $ISSUER_IN_USE (unrecognized)" "expected letsencrypt-staging or letsencrypt-prod"
 fi
 
+# Set CURL_TLS_FLAG once, here, so EVERY subsequent curl in this script
+# (OIDC discovery in section 9, HTTPS reachability in section 10) honors
+# the staging-cert exception. Without this, OIDC checks silently fail
+# TLS verification and report all 3 realms as broken when the stack
+# is actually healthy.
+CURL_TLS_FLAG=""
+if [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
+    CURL_TLS_FLAG="-k"
+fi
+
 # 8c. Per-Certificate readiness + issuer + age table.
 total_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
 ready_certs=$(kubectl get certificate -A --no-headers 2>/dev/null | awk '$3 == "True" { c++ } END { print c+0 }')
@@ -297,7 +307,7 @@ fi
 # --------------------------------------------------------------------
 section "Keycloak OIDC issuer match (Spring Security strict-equality)"
 for realm in master poolparty graphrag; do
-    issuer=$(curl -sS --max-time 10 "https://auth.$APEX/realms/$realm/.well-known/openid-configuration" 2>/dev/null | jq -r .issuer 2>/dev/null)
+    issuer=$(curl $CURL_TLS_FLAG -sS --max-time 10 "https://auth.$APEX/realms/$realm/.well-known/openid-configuration" 2>/dev/null | jq -r .issuer 2>/dev/null)
     expected="https://auth.$APEX/realms/$realm"
     if [ "$issuer" = "$expected" ]; then
         check_pass "$realm realm: $issuer"
@@ -311,14 +321,11 @@ done
 # --------------------------------------------------------------------
 # 10. HTTPS reachability sweep
 # --------------------------------------------------------------------
-# ISSUER_IN_USE was set in section 8. If it's letsencrypt-staging the
-# cert chain isn't browser-trusted (no ISRG root in the LE staging
-# chain), so curl without -k would report the entire stack as broken
-# even when it's healthy. Add -k when staging is detected; print a
-# banner explaining why TLS verification is being skipped.
-CURL_TLS_FLAG=""
+# ISSUER_IN_USE + CURL_TLS_FLAG were both set in section 8. When
+# letsencrypt-staging is active the cert chain isn't browser-trusted
+# (no ISRG root in the LE staging chain), so curl without -k would
+# report the entire stack as broken even when it's healthy.
 if [ "$ISSUER_IN_USE" = "letsencrypt-staging" ]; then
-    CURL_TLS_FLAG="-k"
     section "HTTPS reachability (every app URL)  ${YELLOW}[staging certs detected -- TLS verification skipped]${RESET}"
     printf '  %s%s%s\n' "$DIM" "Browser visits will show 'Not Secure' warnings. Trust the LE staging root CA per" "$RESET"
     printf '  %s%s%s\n\n' "$DIM" "SETUP §3, OR flip to prod via scripts/switch-cert-issuer.sh prod before a demo." "$RESET"
