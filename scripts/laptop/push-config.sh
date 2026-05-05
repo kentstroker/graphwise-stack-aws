@@ -304,6 +304,7 @@ done < "$INVENTORY"
 
 echo
 echo "${BOLD}Then on EC2 (in this order):${RESET}"
-echo "  ./scripts/cluster-bootstrap.sh   # auto-restores wildcard cert if pushed"
-echo "  ./scripts/install-licenses.sh    # turns license files into K8s Secrets"
-echo "  ./scripts/reset-helm.sh stroker  # picks up secrets via -f overlay"
+echo "  ./scripts/cluster-bootstrap.sh        # auto-restores wildcard cert if pushed"
+echo "  ./scripts/extract-poolparty-realm.sh  # extracts realm JSON + jq-substitutes \${...} placeholders"
+echo "  ./scripts/install-licenses.sh         # turns license files into K8s Secrets"
+echo "  ./scripts/reset-helm.sh stroker       # picks up secrets via -f overlay"
