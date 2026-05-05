@@ -225,55 +225,82 @@ PREFLIGHT
 fi
 
 # ---------------------------------------------------------------------
-# Pre-flight: secrets overlay must have real values for full deploy
+# Pre-flight: ~/graphwise-secrets.yaml must have real values for full deploy
 # ---------------------------------------------------------------------
-# When NOT --skip-graphrag, the graphrag chart needs Bedrock creds +
-# n8n license activation key from ~/graphwise-secrets.yaml. Cloud-init
-# writes the file with empty placeholders + n8n-encryption-key auto-
-# generated. If operator forgot to fill in awsCredentials/n8nLicense,
-# graphrag-components and graphrag-workflows pods will start but be
-# permanently broken (AccessDeniedException / license-check failure).
-# Catch it before we wipe PVCs.
-if [[ $SKIP_GRAPHRAG -ne 1 && -f "$SECRETS_OVERLAY" ]]; then
-    # Parse via PyYAML so quoted/unquoted scalars are treated alike --
-    # earlier grep-based regex required QUOTED values and false-positived
-    # on legal YAML like `accessKeyId: AKIA...` (no quotes).
-    placeholder_warnings=()
-    while IFS= read -r line; do
-        [ -n "$line" ] && placeholder_warnings+=("$line")
-    done < <(SECRETS_OVERLAY="$SECRETS_OVERLAY" python3 <<'PY'
+# Reports OK/MISSING for each operator-supplied secret BEFORE the
+# destructive uninstall, so the operator sees status of every input
+# next to the license-secrets pre-flight above. If anything is
+# missing AND graphrag is in scope, prompt-pause for 5s so Ctrl-C is
+# still useful before wipe.
+#
+# Maven creds are checked here for visibility -- the actual image-pull
+# secret is created later (after PVCs are deleted, before helm install).
+echo
+echo "Pre-flight: checking ~/graphwise-secrets.yaml..."
+if [[ ! -f "$SECRETS_OVERLAY" ]]; then
+    echo "  NOTE:  $SECRETS_OVERLAY not found (cloud-init didn't run?)"
+else
+    secrets_status=$(SECRETS_OVERLAY="$SECRETS_OVERLAY" python3 <<'PY'
 import os, yaml
 with open(os.environ['SECRETS_OVERLAY']) as f:
     d = yaml.safe_load(f) or {}
-gs = d.get('graphrag-secrets') or {}
+gs  = d.get('graphrag-secrets') or {}
 aws = gs.get('awsCredentials') or {}
 n8n = gs.get('n8nLicense') or {}
 
-def empty(v):
-    return v is None or (isinstance(v, str) and not v.strip())
+def filled(v):
+    return isinstance(v, str) and v.strip() != ''
+
+# Maven: top-level canonical, falls back to graphrag-secrets.maven
+mv = d.get('maven') or {}
+mv_user, mv_pass, mv_loc = mv.get('user'), mv.get('pass'), 'top-level'
+if not (filled(mv_user) and filled(mv_pass)):
+    nm = gs.get('maven') or {}
+    if filled(nm.get('user')) and filled(nm.get('pass')):
+        mv_user, mv_pass, mv_loc = nm.get('user'), nm.get('pass'), 'graphrag-secrets.maven (legacy)'
+
+if filled(mv_user) and filled(mv_pass):
+    print(f'OK|maven creds ({mv_loc})')
+else:
+    print('MISSING|maven creds (maven.user / maven.pass) -- graphrag pods will ImagePullBackOff')
 
 ak = aws.get('accessKeyId')
-if empty(ak) or (isinstance(ak, str) and not ak.strip().startswith('AKIA')):
-    print('awsCredentials.accessKeyId looks empty/placeholder')
-if empty(aws.get('secretAccessKey')):
-    print('awsCredentials.secretAccessKey looks empty/placeholder')
-if empty(n8n.get('activationKey')):
-    print('n8nLicense.activationKey looks empty/placeholder')
+sk = aws.get('secretAccessKey')
+if filled(ak) and ak.strip().startswith('AKIA') and filled(sk):
+    print(f'OK|Bedrock creds (awsCredentials.accessKeyId={ak.strip()[:8]}...)')
+else:
+    if not filled(ak) or not ak.strip().startswith('AKIA'):
+        print('MISSING|Bedrock awsCredentials.accessKeyId (must start with AKIA)')
+    if not filled(sk):
+        print('MISSING|Bedrock awsCredentials.secretAccessKey')
+
+ek = n8n.get('activationKey')
+if filled(ek):
+    print('OK|n8n license activation key')
+else:
+    print('MISSING|n8n license activationKey')
 PY
 )
-    if [[ ${#placeholder_warnings[@]} -gt 0 ]]; then
+    missing_count=0
+    while IFS='|' read -r status detail; do
+        case "$status" in
+            OK)      printf '  OK:    %s\n' "$detail" ;;
+            MISSING) printf '  %sMISSING%s: %s\n' "$YELLOW" "$RESET" "$detail"
+                     missing_count=$((missing_count + 1)) ;;
+        esac
+    done <<<"$secrets_status"
+
+    # Pause only if graphrag is in scope AND something is missing --
+    # umbrella-only deploys don't need Bedrock/n8n license, and clean
+    # files don't need to be warned about.
+    if [[ $SKIP_GRAPHRAG -ne 1 && $missing_count -gt 0 ]]; then
         cat >&2 <<PREFLIGHT
 
-${YELLOW}WARNING:${RESET} ~/graphwise-secrets.yaml has unfilled placeholder values:
-PREFLIGHT
-        for w in "${placeholder_warnings[@]}"; do
-            echo "  - $w" >&2
-        done
-        cat >&2 <<PREFLIGHT
-
-graphrag-components / graphrag-workflows pods will start but be
-permanently broken until you fill these in. Edit ~/graphwise-secrets.yaml
-on this host (it's gitignored / EC2-local) and re-run.
+${YELLOW}WARNING:${RESET} $missing_count secret(s) missing/placeholder.
+graphrag-components / graphrag-workflows / chatbot pods will be
+broken (ImagePullBackOff or AccessDeniedException) until you fill
+them in. Edit ~/graphwise-secrets.yaml on this host (gitignored /
+EC2-local) and re-run.
 
 If you only need the umbrella (PoolParty + GraphDB + addons), pass
 --skip-graphrag and these warnings disappear.
