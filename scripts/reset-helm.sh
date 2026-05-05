@@ -235,17 +235,32 @@ fi
 # permanently broken (AccessDeniedException / license-check failure).
 # Catch it before we wipe PVCs.
 if [[ $SKIP_GRAPHRAG -ne 1 && -f "$SECRETS_OVERLAY" ]]; then
+    # Parse via PyYAML so quoted/unquoted scalars are treated alike --
+    # earlier grep-based regex required QUOTED values and false-positived
+    # on legal YAML like `accessKeyId: AKIA...` (no quotes).
     placeholder_warnings=()
-    if ! grep -qE '^\s*accessKeyId:\s*"AKIA' "$SECRETS_OVERLAY" 2>/dev/null; then
-        placeholder_warnings+=("awsCredentials.accessKeyId looks empty/placeholder")
-    fi
-    if ! grep -qE '^\s*secretAccessKey:\s*"[^"]+"' "$SECRETS_OVERLAY" 2>/dev/null || \
-       grep -qE '^\s*secretAccessKey:\s*""' "$SECRETS_OVERLAY" 2>/dev/null; then
-        placeholder_warnings+=("awsCredentials.secretAccessKey looks empty/placeholder")
-    fi
-    if grep -qE '^\s*activationKey:\s*""' "$SECRETS_OVERLAY" 2>/dev/null; then
-        placeholder_warnings+=("n8nLicense.activationKey looks empty/placeholder")
-    fi
+    while IFS= read -r line; do
+        [ -n "$line" ] && placeholder_warnings+=("$line")
+    done < <(SECRETS_OVERLAY="$SECRETS_OVERLAY" python3 <<'PY'
+import os, yaml
+with open(os.environ['SECRETS_OVERLAY']) as f:
+    d = yaml.safe_load(f) or {}
+gs = d.get('graphrag-secrets') or {}
+aws = gs.get('awsCredentials') or {}
+n8n = gs.get('n8nLicense') or {}
+
+def empty(v):
+    return v is None or (isinstance(v, str) and not v.strip())
+
+ak = aws.get('accessKeyId')
+if empty(ak) or (isinstance(ak, str) and not ak.strip().startswith('AKIA')):
+    print('awsCredentials.accessKeyId looks empty/placeholder')
+if empty(aws.get('secretAccessKey')):
+    print('awsCredentials.secretAccessKey looks empty/placeholder')
+if empty(n8n.get('activationKey')):
+    print('n8nLicense.activationKey looks empty/placeholder')
+PY
+)
     if [[ ${#placeholder_warnings[@]} -gt 0 ]]; then
         cat >&2 <<PREFLIGHT
 
@@ -471,21 +486,40 @@ MAVEN_PASS=""
 if [[ -f "$SECRETS_OVERLAY" ]]; then
     # Parse YAML via Python (always present on AL2023; PyYAML in stdlib
     # via system packages). Empty/missing values -> empty strings.
-    yaml_creds=$(python3 -c "
-import sys, yaml
+    # Canonical schema is top-level `maven:`. Fall back to the nested
+    # `graphrag-secrets.maven:` form for files that grew that mistake
+    # via hand-edits -- still works, but the operator should flatten.
+    yaml_creds=$(SECRETS_OVERLAY="$SECRETS_OVERLAY" python3 <<'PY' 2>/dev/null
+import os, sys, yaml
 try:
-    with open('$SECRETS_OVERLAY') as f:
+    with open(os.environ['SECRETS_OVERLAY']) as f:
         d = yaml.safe_load(f) or {}
     m = d.get('maven') or {}
-    print((m.get('user') or '').strip())
-    print((m.get('pass') or '').strip())
-except Exception as e:
-    print('', file=sys.stderr)
-    print('')
-    print('')
-" 2>/dev/null)
+    user = (m.get('user') or '').strip() if isinstance(m.get('user'), str) else ''
+    pw   = (m.get('pass') or '').strip() if isinstance(m.get('pass'), str) else ''
+    nested_used = False
+    if not user or not pw:
+        gs = d.get('graphrag-secrets') or {}
+        nm = gs.get('maven') or {}
+        nu = (nm.get('user') or '').strip() if isinstance(nm.get('user'), str) else ''
+        np = (nm.get('pass') or '').strip() if isinstance(nm.get('pass'), str) else ''
+        if nu and np:
+            user, pw = nu, np
+            nested_used = True
+    print(user)
+    print(pw)
+    print('NESTED' if nested_used else '')
+except Exception:
+    print(''); print(''); print('')
+PY
+)
     MAVEN_USER=$(echo "$yaml_creds" | sed -n '1p')
     MAVEN_PASS=$(echo "$yaml_creds" | sed -n '2p')
+    MAVEN_NESTED=$(echo "$yaml_creds" | sed -n '3p')
+    if [[ "$MAVEN_NESTED" == "NESTED" ]]; then
+        echo "NOTE: maven creds found under graphrag-secrets.maven (legacy nested form);"
+        echo "      canonical location is top-level 'maven:' in ~/graphwise-secrets.yaml."
+    fi
 fi
 # Fallback to legacy plain-text files if the YAML didn't have them.
 if [[ -z "$MAVEN_USER" && -f "$HOME/.ontotext/maven-user" ]]; then
