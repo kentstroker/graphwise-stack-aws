@@ -29,7 +29,7 @@ prometheus.* / grafana.* subdomains).
 
 ## Two ways to deploy
 
-- **Done this before, want to move fast:** [**QUICKSTART.md**](QUICKSTART.md) — sequential 0-18 step list, every command marked `# laptop` or `# EC2`. Cross-links to detail when you need it.
+- **Done this before, want to move fast:** [**QUICKSTART.md**](QUICKSTART.md) — sequential 0-17 step list, every command marked `# laptop` or `# EC2`. Cross-links to detail when you need it.
 - **First time, want context with each step:** the table below + [SETUP.md](SETUP.md) → [DEPLOY.md](DEPLOY.md). More narrative, more rationale.
 
 If you're new to Kubernetes / Docker / KIND, also read [**HOWITWORKS.md**](HOWITWORKS.md) — plain-English explainer of the layered architecture, the request-routing path, and the cert-manager + Let's Encrypt flow.
@@ -75,7 +75,7 @@ scripts/                 cluster-bootstrap, cluster-resume, cluster-stop,
 scripts/laptop/          pull-config, push-config, pushLastPull (operator-state
                          cycle); push-to-ec2, pull-from-ec2 (legacy)
 files/licenses/          Vendor license files (gitignored)
-QUICKSTART.md            Fast-path 0-18 sequential deploy
+QUICKSTART.md            Fast-path 0-17 sequential deploy
 SETUP.md                 Laptop-zero prerequisites guide (macOS + Windows)
 DEPLOY.md                End-to-end deploy walkthrough + day-2 lifecycle
 HOWITWORKS.md            Plain-English explainer of the layered architecture
@@ -85,7 +85,7 @@ CLAUDE.md                Architecture deep dive, invariants, debugging notes
 
 ## Companion docs
 
-- **[QUICKSTART.md](QUICKSTART.md)** — fast-path 0-18 step deploy for operators who've done this before. Sequential, every command marked `# laptop` or `# EC2`, cross-links to detail.
+- **[QUICKSTART.md](QUICKSTART.md)** — fast-path 0-17 step deploy for operators who've done this before. Sequential, every command marked `# laptop` or `# EC2`, cross-links to detail.
 - **[SETUP.md](SETUP.md)** — laptop-zero prerequisites guide (macOS + Windows): terminal, Homebrew/Chocolatey, AWS CLI, IAM (two-user actor model), Bedrock, Terraform, EC2 key pair, EIP pre-allocation + DNS, EC2 Instance Connect note, Graphwise creds. Stops where Terraform begins.
 - **[DEPLOY.md](DEPLOY.md)** — end-to-end deploy walkthrough including `terraform.tfvars` field-by-field reference, AMI lock §1.5, post-apply runbook, day-2 lifecycle, architecture notes, troubleshooting. Every code block marked `# On laptop` or `# On EC2`.
 - **[HOWITWORKS.md](HOWITWORKS.md)** — plain-English explainer for K8s/Docker/KIND-naive operators: container layering, the 5-hop request flow, per-app subdomain routing, the cert-manager + Let's Encrypt DNS-01 wildcard dance, the Keycloak Ingress quirk, OIDC issuer-match invariant, day-2 persistence rules, symptom → first-command runbook.

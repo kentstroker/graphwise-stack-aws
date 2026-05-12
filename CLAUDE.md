@@ -26,7 +26,7 @@ No application source code is in this repo. Only:
 
 Changes are usually to a chart's `values.yaml` / `templates/`, the umbrella's `templates/`, or `scripts/render-values.sh`.
 
-Companion docs: [README.md](README.md) (one-page summary + zero-to-deployed checklist), [QUICKSTART.md](QUICKSTART.md) (sequential 0-18 step deploy for experienced operators), [SETUP.md](SETUP.md) (laptop-zero prerequisites), [DEPLOY.md](DEPLOY.md) (end-to-end deploy walkthrough), [HOWITWORKS.md](HOWITWORKS.md) (plain-English layered architecture explainer for K8s-naive operators), [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) (URLs / credentials), [infra/README.md](infra/README.md) (Terraform module).
+Companion docs: [README.md](README.md) (one-page summary + zero-to-deployed checklist), [QUICKSTART.md](QUICKSTART.md) (sequential 0-17 step deploy for experienced operators), [SETUP.md](SETUP.md) (laptop-zero prerequisites), [DEPLOY.md](DEPLOY.md) (end-to-end deploy walkthrough), [HOWITWORKS.md](HOWITWORKS.md) (plain-English layered architecture explainer for K8s-naive operators), [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) (URLs / credentials), [infra/README.md](infra/README.md) (Terraform module).
 
 ## Architecture
 
