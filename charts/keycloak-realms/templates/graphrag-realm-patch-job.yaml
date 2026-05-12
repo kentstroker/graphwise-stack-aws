@@ -24,16 +24,30 @@ Why this exists:
   via direct kcadm-style REST API calls, regardless of whether the
   KeycloakRealmImport CR has re-run.
 
-Auth flow (mirrors keycloak-bootstrap-admin-job.yaml):
+Auth flow (mirrors keycloak-bootstrap-admin-job.yaml step 6):
   1. Wait for /realms/graphrag/.well-known/openid-configuration
      (the graphrag realm must exist before we patch it).
-  2. Get a temp-admin token from master.
-  3. Bind graphrag-realm.realm-admin role to temp-admin so the
-     subsequent admin-API calls against /admin/realms/graphrag/*
-     return 200 instead of 403. (master admin doesn't auto-have
-     cross-realm management; the role must be explicitly bound.)
-  4. Refresh the token (so the new role-binding is in the JWT).
+  2. Get a temp-admin token from master (operator's initial admin,
+     has master `admin` realm role).
+  3. Find the master-side graphrag-realm management client and POST
+     its roles to master's `admin` realm role composite. The companion
+     bootstrap-admin Job (hook-weight 5) normally does this for every
+     <realm>-realm client present when IT runs, but the EXPECTED_REALMS
+     wait it now performs is best-effort -- doing the same wiring here
+     (scoped to graphrag-realm) makes the patch job idempotent with
+     bootstrap-admin and survives any future regression. POST is
+     idempotent: re-adding a role to a composite no-ops.
+  4. Refresh the token so the new composite roles are in the JWT.
   5. PUT each client with the corrected config.
+
+  Why composite-wiring, not role-binding: prior versions of this Job
+  tried to bind a `<realm>-realm.realm-admin` role to temp-admin
+  directly. Keycloak v26 removed the composite `realm-admin` role on
+  the <realm>-realm management clients in favor of the granular
+  manage-realm and view-realm roles -- the role-binding GET returned
+  404 and the script aborted. Wiring the granular roles into master's
+  admin composite (the bootstrap-admin pattern) works on every
+  Keycloak version we ship.
 
 Hook semantics:
   - post-install,post-upgrade: runs on every install + upgrade.
@@ -125,29 +139,29 @@ spec:
               TOKEN=$(get_token)
               [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] && { echo "ERROR: temp-admin auth failed" >&2; exit 1; }
 
-              # 3. Bind <REALM>-realm.realm-admin role to temp-admin so
-              # /admin/realms/$REALM/* calls return 200 instead of 403.
-              # (master admin doesn't have cross-realm management automatically.)
-              echo "Granting $REALM-realm.realm-admin to temp-admin..."
-              USER_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
-                  "$KC_SERVER/admin/realms/master/users?username=$TEMP_ADMIN_USER&exact=true" \
-                  | jq -r '.[0].id')
+              # 3. Wire <REALM>-realm client roles into master's admin
+              # role composite. Same idempotent pattern as
+              # keycloak-bootstrap-admin-job.yaml step 6, scoped to one
+              # realm. POST to /roles/admin/composites no-ops on roles
+              # already present, so this is safe to re-run on every
+              # helm upgrade.
+              echo "Wiring $REALM-realm client roles into master admin composite..."
               REALM_CLIENT_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
                   "$KC_SERVER/admin/realms/master/clients?clientId=$REALM-realm" \
                   | jq -r '.[0].id // empty')
               if [ -z "$REALM_CLIENT_ID" ]; then
-                  echo "ERROR: $REALM-realm client doesn't exist in master (realm import may have failed)" >&2
+                  echo "ERROR: $REALM-realm client doesn't exist in master (realm import failed?)" >&2
                   exit 1
               fi
-              REALM_ADMIN_ROLE=$(curl -sf -H "Authorization: Bearer $TOKEN" \
-                  "$KC_SERVER/admin/realms/master/clients/$REALM_CLIENT_ID/roles/realm-admin")
-              # Idempotent role-add: POST adds if missing, no-ops if already present.
-              curl -s -o /dev/null -w '  bind realm-admin -> HTTP %{http_code}\n' \
+              ROLES=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/master/clients/$REALM_CLIENT_ID/roles")
+              COUNT=$(echo "$ROLES" | jq 'length')
+              curl -s -o /dev/null -w "  composite POST -> HTTP %{http_code} (${COUNT} roles wired)\n" \
                   -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-                  "$KC_SERVER/admin/realms/master/users/$USER_ID/role-mappings/clients/$REALM_CLIENT_ID" \
-                  -d "[$REALM_ADMIN_ROLE]"
+                  "$KC_SERVER/admin/realms/master/roles/admin/composites" \
+                  -d "$ROLES"
 
-              # 4. Refresh token so the new role binding is in the JWT.
+              # 4. Refresh token so the new composite roles are in the JWT.
               TOKEN=$(get_token)
 
               # 5. PUT chatbot-app-client with corrected redirectUris + webOrigins.

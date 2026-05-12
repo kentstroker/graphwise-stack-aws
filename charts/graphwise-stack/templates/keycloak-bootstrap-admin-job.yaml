@@ -121,6 +121,8 @@ spec:
                 secretKeyRef:
                   name: poolparty-auth-admin
                   key: password
+            - name: EXPECTED_REALMS
+              value: {{ .Values.keycloak.bootstrapAdmin.expectedRealms | default "" | quote }}
           command:
             - /bin/sh
             - -c
@@ -212,6 +214,31 @@ spec:
               ADMIN_ROLE=$(api GET "/admin/realms/master/roles/admin")
               api POST "/admin/realms/master/users/$USER_ID/role-mappings/realm" \
                   -d "[$ADMIN_ROLE]" >/dev/null || true
+
+              # ---------- 5.5 Wait for expected realm imports to complete ----------
+              # Realm imports are async (operator-driven). On a cold-cache
+              # fresh deploy the realm-import pods spend ~3 min pulling the
+              # 250MB Keycloak image before they can even create the
+              # <realm>-realm clients in master. Without this wait, step 6
+              # below would iterate only the realms that exist SO FAR and
+              # silently leave the rest out of the admin composite -- leaving
+              # poolparty_auth_admin (and any downstream Job that depends on
+              # cross-realm management like graphrag-realm-patch) without
+              # the perms they need. EXPECTED_REALMS is space-separated.
+              if [ -n "${EXPECTED_REALMS:-}" ]; then
+                  echo "Waiting for expected realm imports: $EXPECTED_REALMS"
+                  for realm in $EXPECTED_REALMS; do
+                      for i in $(seq 1 60); do
+                          if curl -sf -o /dev/null \
+                              "$KC_SERVER/realms/$realm/.well-known/openid-configuration"; then
+                              echo "  realm '$realm' present after $i attempt(s)"
+                              break
+                          fi
+                          [ "$i" = "60" ] && { echo "ERROR: realm '$realm' never appeared (5min)" >&2; exit 1; }
+                          sleep 5
+                      done
+                  done
+              fi
 
               # ---------- 6. Wire admin composite from <realm>-realm clients ----------
               # The operator's KeycloakRealmImport creates the <realm>-realm

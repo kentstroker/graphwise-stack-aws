@@ -160,6 +160,16 @@ keycloak:
     # no-ops some operations we depend on (notably adding client
     # roles to a realm role's composite).
     image: alpine:3.20
+    # Realms the bootstrap-admin Job must wait for before wiring the
+    # master admin composite. Realm imports are async (operator-
+    # driven) -- on a cold-cache deploy the realm-import pods pull
+    # ~250MB of Keycloak image first and don't complete for ~3 min,
+    # well after this Job's wait-for-Keycloak step ends. Without an
+    # explicit wait, step 6 of the Job (wire <realm>-realm clients
+    # into master's admin composite) silently iterates only the
+    # realms that exist SO FAR, leaving the rest out and breaking
+    # downstream Jobs like graphrag-realm-patch. Space-separated.
+    expectedRealms: "graphrag poolparty"
 
 n8nPostgres:
   enabled: true
