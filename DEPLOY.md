@@ -744,6 +744,42 @@ Bedrock creds) and n8n refuses to start (invalid license).
 For an umbrella-only deploy (`reset-helm.sh --skip-graphrag`),
 the placeholders are fine — GraphRAG isn't installed.
 
+### 7.5 Pre-flight check (before reset-helm)
+
+```bash
+# On EC2
+./scripts/preflight-reset-helm.sh
+```
+
+Read-only sanity check across every precondition `reset-helm.sh`
+needs: tools available, cluster reachable, operator pods Ready,
+`letsencrypt-prod` ClusterIssuer Ready, `poolparty-realm.json`
+present + placeholders substituted, license files on disk,
+`~/graphwise-secrets.yaml` field completeness, DNS apex + wildcard
+resolution, AWS instance role bound (required for cert-manager's
+Route53 DNS-01 solver), maven.ontotext.com HTTP basic auth probe
+(catches credential typos before ImagePullBackOff), and whether
+`~/wildcard-tls-saved.yaml` is present (saves an LE rate-limit
+slot if so).
+
+Categorized color-coded output. Exit code `0` = all required checks
+pass; `1` = one or more failed; `2` = cluster unreachable (early
+abort — skips remaining checks since they would all fail too).
+
+Flags:
+
+- `--skip-graphrag` — skip the maven auth probe + the
+  `graphrag-secrets` completeness checks. Use when running
+  `reset-helm.sh --skip-graphrag` for an umbrella-only deploy.
+- `--strict` — promote warnings to failures. Warnings are
+  informational by default (e.g. "no `wildcard-tls-saved.yaml`,
+  cluster-bootstrap will issue a fresh LE cert"). In `--strict`
+  mode every warning counts as a failure for the exit code.
+
+If anything fails, the per-check output includes a one-line
+remediation hint pointing at the exact script or file to fix. Re-run
+preflight after the fix; it's idempotent.
+
 ### 8. Deploy the stack
 
 **Full deploy** (umbrella + GraphRAG, requires Maven creds + n8n license):

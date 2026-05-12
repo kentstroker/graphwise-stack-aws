@@ -274,6 +274,7 @@ export LE_EMAIL=you@example.com
 # ~5-6 min: ingress-nginx, cert-manager, CNPG, Keycloak operator,
 # metrics-server, Kubernetes Dashboard, kube-prometheus-stack.
 # Idempotent.
+./scripts/validate-bootstrap.sh
 ```
 
 Details: [DEPLOY §4](DEPLOY.md#4-install-cluster-operators).
@@ -298,13 +299,29 @@ Details: [DEPLOY §4](DEPLOY.md#4-install-cluster-operators).
 
 ---
 
-## 16. Deploy both Helm releases (EC2)
+## 16. Pre-flight check (EC2)
+
+```bash
+# EC2
+./scripts/preflight-reset-helm.sh
+```
+
+Read-only sanity check across tools, cluster, operators, license files, `~/graphwise-secrets.yaml` completeness, DNS, AWS instance role, and maven registry auth. Catches the broken-from-the-start cases (missing realm JSON, bad maven creds, wildcard DNS off, etc.) **before** `reset-helm.sh` spends 10-15 minutes installing pods that are doomed to crash.
+
+Exit codes: `0` = green; `1` = at least one required check failed; `2` = cluster unreachable. Add `--skip-graphrag` if you're doing the umbrella-only deploy; `--strict` to promote warnings to failures.
+
+Details: [DEPLOY §7.5](DEPLOY.md#75-pre-flight-check-before-reset-helm).
+
+---
+
+## 17. Deploy both Helm releases (EC2)
 
 ```bash
 # EC2
 ./scripts/reset-helm.sh --yes <your-subdomain>
 # ~10-15 min first time (image pulls, Keycloak realm imports,
 # Spring init, LE cert issuance).
+./scripts/validate-cluster.sh
 ```
 
 Watch progress in another SSH session:
@@ -318,7 +335,7 @@ Details: [DEPLOY §8](DEPLOY.md#8-deploy-the-stack).
 
 ---
 
-## 17. Verify
+## 18. Verify
 
 ```bash
 # laptop or EC2 -- HTTPS reachability test
