@@ -89,6 +89,24 @@ jq --arg ppt_secret "$PPT_SECRET" --arg superadmin_pw "$SUPERADMIN_PASSWORD" '
 echo "  ppt.secret      -> ohIP...eFb5  (matches PoolParty image)"
 echo "  superadmin pw   -> poolparty   (temporary=false)"
 
+# Belt-and-braces global sweep for any OTHER occurrence of the same
+# placeholders. The targeted jq above hits the load-bearing paths
+# (ppt.secret + superadmin password), but the same env-var-style
+# placeholders also appear in client attributes / web origins /
+# protocolMapper config in some image versions, and the operator-
+# managed KeycloakRealmImport CR doesn't expand them. Leftover
+# `${POOLPARTY_*}` strings break the realm import silently. Global
+# sed is safe -- the placeholder syntax is unambiguous and the value
+# is identical wherever it appears.
+sed -i "s|\${POOLPARTY_KEYCLOAK_LOGIN_CLIENTSECRET}|$PPT_SECRET|g" "$DEST"
+sed -i "s|\${POOLPARTY_SUPER_ADMIN_PASSWORD}|$SUPERADMIN_PASSWORD|g" "$DEST"
+remaining=$(grep -oE '\$\{POOLPARTY_[A-Z_]+\}' "$DEST" | sort -u || true)
+if [[ -n "$remaining" ]]; then
+    echo "  WARNING: leftover \${...} placeholders the script doesn't know how to substitute:"
+    echo "$remaining" | sed 's/^/    /'
+    echo "  Update extract-poolparty-realm.sh with values for these before running reset-helm.sh."
+fi
+
 echo
 echo "Sanity check:"
 jq -r '"  realm: \(.realm)"' "$DEST" 2>/dev/null || echo "  (jq not installed; skip sanity check)"

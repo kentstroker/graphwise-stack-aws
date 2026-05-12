@@ -182,8 +182,13 @@ else
                "kubectl get pods -n keycloak -l app.kubernetes.io/name=keycloak-operator"
 fi
 
-REFLECTOR_READY=$(kubectl get pods -A -l app.kubernetes.io/name=reflector --no-headers 2>/dev/null \
-    | awk '{split($2,r,"/"); if ($3 == "Running" && r[1] == r[2]) print "yes"}' | head -1)
+# Match reflector pod by name prefix in kube-system. Label keys differ
+# across emberstack chart versions (`app=` vs `app.kubernetes.io/name=`
+# vs `app.kubernetes.io/name=emberstack-reflector`), but the Deployment
+# name `reflector-*` is stable. Same pattern as validate-bootstrap.sh's
+# metrics-server check.
+REFLECTOR_READY=$(kubectl get pods -n kube-system --no-headers 2>/dev/null \
+    | awk '$1 ~ /^reflector-/ {split($2,r,"/"); if ($3 == "Running" && r[1] == r[2]) print "yes"}' | head -1)
 if [ "$REFLECTOR_READY" = "yes" ]; then
     check_pass "reflector Running (mirrors wildcard-tls into consuming namespaces)"
 else
