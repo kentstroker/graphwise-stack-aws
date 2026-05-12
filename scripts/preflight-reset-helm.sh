@@ -408,20 +408,37 @@ if [ -z "$MAVEN_USER" ] || [ -z "$MAVEN_PASS" ]; then
     check_warn "Skipping maven auth test -- maven.user/pass not set in overlay" \
                "Fill them in, then re-run preflight"
 else
-    HTTP=$(curl -s -o /dev/null -w '%{http_code}' \
-           -u "$MAVEN_USER:$MAVEN_PASS" \
-           "https://maven.ontotext.com/v2/" --max-time 10 2>/dev/null || echo 000)
-    case "$HTTP" in
+    # Two probes: with creds and without. The /v2/ endpoint is the
+    # Docker Registry HTTP API root, but maven.ontotext.com sits behind
+    # a reverse proxy that routes by image-specific paths (/v2/<image>/
+    # manifests/<tag>) and returns plain 404 at the registry root --
+    # not a Docker error. Comparing the two probes lets us distinguish
+    # an actual auth failure (different status with vs without creds)
+    # from this structural quirk (same 404 either way).
+    HTTP_WITH_AUTH=$(curl -s -o /dev/null -w '%{http_code}' \
+                     -u "$MAVEN_USER:$MAVEN_PASS" \
+                     "https://maven.ontotext.com/v2/" --max-time 10 2>/dev/null || echo 000)
+    HTTP_NO_AUTH=$(curl -s -o /dev/null -w '%{http_code}' \
+                   "https://maven.ontotext.com/v2/" --max-time 10 2>/dev/null || echo 000)
+    case "$HTTP_WITH_AUTH" in
         200|301|302)
-            check_pass "maven.ontotext.com auth OK (HTTP $HTTP)" ;;
+            check_pass "maven.ontotext.com auth OK (HTTP $HTTP_WITH_AUTH)" ;;
         401|403)
-            check_fail "maven.ontotext.com rejected credentials (HTTP $HTTP)" \
+            check_fail "maven.ontotext.com rejected credentials (HTTP $HTTP_WITH_AUTH)" \
                        "Wrong maven.user / maven.pass in $OVERLAY" ;;
         000)
             check_fail "maven.ontotext.com unreachable from this host" \
                        "Check egress / DNS / security group" ;;
+        404)
+            if [ "$HTTP_NO_AUTH" = "404" ]; then
+                check_warn "maven.ontotext.com /v2/ returns 404 (registry root not exposed)" \
+                           "Reverse-proxy artifact (Nexus/Harbor); image-specific paths still work. Auth test is inconclusive -- real test is first image pull."
+            else
+                check_fail "maven.ontotext.com /v2/ returns 404 with creds but $HTTP_NO_AUTH without -- routing differs by auth state" \
+                           "Investigate registry config; unexpected proxy behavior."
+            fi ;;
         *)
-            check_warn "maven.ontotext.com unexpected status (HTTP $HTTP)" \
+            check_warn "maven.ontotext.com unexpected status (HTTP $HTTP_WITH_AUTH)" \
                        "Treat as fail if image pulls subsequently break" ;;
     esac
 fi
