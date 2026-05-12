@@ -157,31 +157,95 @@ USAGE
                 exit 2
             fi ;;
     esac
-    if [ "$KEEP_LOCAL_ENCRYPTION_KEY" = "no" ]; then
-        echo "  reading fresh n8nEncryption.key from remote..."
-        REMOTE_KEY=$(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USR@$HOST" 'python3 -c "
+    # Splice strategy (one SSH, two merge rules):
+    #   - n8nEncryption.key:  REMOTE wins. The local file's key is from
+    #     a prior destroyed n8n DB; the current EC2's cloud-init-
+    #     generated key is what the live n8n install will accept.
+    #     Override unless --keep-local-encryption-key.
+    #   - maven.user/pass:    LOCAL wins if filled; remote fills empties.
+    #     Why flipped vs n8n: maven creds are operator-supplied + stable
+    #     across rebuilds, and an old snapshot (or one taken before
+    #     maven was filled in) would otherwise CLOBBER good creds the
+    #     operator already typed into the fresh EC2.
+    echo "  reading remote graphwise-secrets.yaml metadata..."
+    REMOTE_VALUES=$(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USR@$HOST" 'python3 -c "
 import yaml
 with open(\"/home/ec2-user/graphwise-secrets.yaml\") as f:
     d = yaml.safe_load(f) or {}
-print(((d.get(\"graphrag-secrets\") or {}).get(\"n8nEncryption\") or {}).get(\"key\") or \"\")
-"' 2>/dev/null) || REMOTE_KEY=""
-        if [ -z "$REMOTE_KEY" ]; then
-            echo "${RED}ERROR:${RESET} couldn't read remote n8nEncryption.key (cloud-init not complete?)" >&2
-            exit 1
-        fi
-        printf '  %s✓%s remote key (first 8): %s...\n' "$GREEN" "$RESET" "${REMOTE_KEY:0:8}"
-        REMOTE_KEY="$REMOTE_KEY" python3 -c "
-import os, yaml
-with open('$SECRETS_FILE') as f:
-    d = yaml.safe_load(f) or {}
-gs = d.setdefault('graphrag-secrets', {})
-gs.setdefault('n8nEncryption', {})['key'] = os.environ['REMOTE_KEY']
-with open('$STAGE/graphwise-secrets.yaml', 'w') as f:
-    yaml.safe_dump(d, f, default_flow_style=False, sort_keys=False)
-"
-    else
-        cp "$SECRETS_FILE" "$STAGE/graphwise-secrets.yaml"
+gs = d.get(\"graphrag-secrets\") or {}
+mv = d.get(\"maven\") or {}
+print(((gs.get(\"n8nEncryption\") or {}).get(\"key\")) or \"\")
+print((mv.get(\"user\") or \"\").strip() if isinstance(mv.get(\"user\"), str) else \"\")
+print((mv.get(\"pass\") or \"\").strip() if isinstance(mv.get(\"pass\"), str) else \"\")
+"' 2>/dev/null) || REMOTE_VALUES=$'\n\n'
+    REMOTE_KEY=$(printf '%s' "$REMOTE_VALUES" | sed -n '1p')
+    REMOTE_MAVEN_USER=$(printf '%s' "$REMOTE_VALUES" | sed -n '2p')
+    REMOTE_MAVEN_PASS=$(printf '%s' "$REMOTE_VALUES" | sed -n '3p')
+
+    if [ "$KEEP_LOCAL_ENCRYPTION_KEY" = "no" ] && [ -z "$REMOTE_KEY" ]; then
+        echo "${RED}ERROR:${RESET} couldn't read remote n8nEncryption.key (cloud-init not complete?)" >&2
+        exit 1
     fi
+    if [ "$KEEP_LOCAL_ENCRYPTION_KEY" = "no" ]; then
+        printf '  %s✓%s fresh n8nEncryption.key (first 8): %s...\n' "$GREEN" "$RESET" "${REMOTE_KEY:0:8}"
+    fi
+
+    # Single python invocation: merges into $STAGE/graphwise-secrets.yaml
+    # and emits status markers on stdout (captured below).
+    MERGE_STATUS=$(SRC="$SECRETS_FILE" DST="$STAGE/graphwise-secrets.yaml" \
+                   REMOTE_KEY="$REMOTE_KEY" \
+                   REMOTE_MAVEN_USER="$REMOTE_MAVEN_USER" \
+                   REMOTE_MAVEN_PASS="$REMOTE_MAVEN_PASS" \
+                   KEEP_KEY="$KEEP_LOCAL_ENCRYPTION_KEY" \
+                   python3 <<'PY'
+import os, sys, yaml
+with open(os.environ['SRC']) as f:
+    d = yaml.safe_load(f) or {}
+
+# n8nEncryption.key: remote wins unless --keep-local-encryption-key.
+if os.environ.get('KEEP_KEY') != 'yes':
+    gs = d.setdefault('graphrag-secrets', {})
+    gs.setdefault('n8nEncryption', {})['key'] = os.environ['REMOTE_KEY']
+
+# maven.user/maven.pass: local wins; remote fills empties only.
+def empty(v):
+    return not (isinstance(v, str) and v.strip())
+
+mv = d.setdefault('maven', {})
+preserved = []
+if empty(mv.get('user')) and os.environ.get('REMOTE_MAVEN_USER', '').strip():
+    mv['user'] = os.environ['REMOTE_MAVEN_USER'].strip()
+    preserved.append('maven.user')
+if empty(mv.get('pass')) and os.environ.get('REMOTE_MAVEN_PASS', '').strip():
+    mv['pass'] = os.environ['REMOTE_MAVEN_PASS'].strip()
+    preserved.append('maven.pass')
+
+with open(os.environ['DST'], 'w') as f:
+    yaml.safe_dump(d, f, default_flow_style=False, sort_keys=False)
+
+if preserved:
+    print('PRESERVED:' + ','.join(preserved))
+if empty(mv.get('user')) or empty(mv.get('pass')):
+    print('MAVEN_EMPTY_BOTH_SIDES')
+PY
+)
+
+    # Surface merge outcome.
+    while IFS= read -r line; do
+        case "$line" in
+            PRESERVED:*)
+                printf '  %s✓%s preserved from remote: %s\n' \
+                    "$GREEN" "$RESET" "${line#PRESERVED:}"
+                ;;
+            MAVEN_EMPTY_BOTH_SIDES)
+                printf '  %s⚠%s maven.user/pass empty in BOTH local snapshot and remote EC2.\n' \
+                    "$YELLOW" "$RESET"
+                printf '      graphrag pods will ImagePullBackOff until you fill in\n'
+                printf '      ~/graphwise-secrets.yaml on the EC2 and re-run reset-helm.sh.\n'
+                ;;
+        esac
+    done <<< "$MERGE_STATUS"
+
     chmod 600 "$STAGE/graphwise-secrets.yaml"
     printf '  %s✓%s staged graphwise-secrets.yaml\n' "$GREEN" "$RESET"
 fi

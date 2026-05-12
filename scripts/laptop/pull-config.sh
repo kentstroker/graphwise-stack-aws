@@ -167,6 +167,17 @@ if [ "$WANT_SECRETS" = "1" ]; then
     else
         echo "MISSING:~/graphwise-secrets.yaml" >&2
     fi
+    # Also capture the legacy ~/.ontotext/maven-{user,pass} plain-text
+    # files if they exist. Pre-overlay-arch deployments kept maven
+    # creds there; the laptop-side auto-migration block splices them
+    # into the snapshot's overlay if the overlay's maven block is
+    # empty. Harmless on modern deployments (files won't exist).
+    if [ -f "\$HOME/.ontotext/maven-user" ] || [ -f "\$HOME/.ontotext/maven-pass" ]; then
+        mkdir -p "\$RDIR/legacy-ontotext"
+        [ -f "\$HOME/.ontotext/maven-user" ] && cp -p "\$HOME/.ontotext/maven-user" "\$RDIR/legacy-ontotext/maven-user"
+        [ -f "\$HOME/.ontotext/maven-pass" ] && cp -p "\$HOME/.ontotext/maven-pass" "\$RDIR/legacy-ontotext/maven-pass"
+        echo "PRESENT:legacy-ontotext/ (~/.ontotext/maven-{user,pass} found)" >&2
+    fi
 fi
 
 # Phase 2: license files (vendor blobs)
@@ -374,6 +385,88 @@ PY
         echo "      Review: cat \"$SNAPSHOT_DIR/chart-values.diff\""
         echo "      Bedrock + n8n license were auto-migrated above; any OTHER edits"
         echo "      (custom passwords, log levels, etc.) need manual handling."
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# Auto-migrate legacy ~/.ontotext/maven-{user,pass} into the snapshot's
+# graphwise-secrets.yaml maven block, IF the overlay's maven block is
+# empty. Symmetric to the Bedrock/n8n license migration above, for
+# pre-overlay-arch deployments that kept maven creds in the legacy
+# plain-text files.
+# ---------------------------------------------------------------------
+legacy_dir="$SNAPSHOT_DIR/legacy-ontotext"
+overlay_file="$SNAPSHOT_DIR/graphwise-secrets.yaml"
+if [ -d "$legacy_dir" ] && [ -f "$overlay_file" ]; then
+    legacy_user=""
+    legacy_pass=""
+    [ -f "$legacy_dir/maven-user" ] && legacy_user=$(tr -d '[:space:]' < "$legacy_dir/maven-user")
+    [ -f "$legacy_dir/maven-pass" ] && legacy_pass=$(tr -d '[:space:]' < "$legacy_dir/maven-pass")
+    if [ -n "$legacy_user" ] || [ -n "$legacy_pass" ]; then
+        echo
+        echo "${BOLD}Auto-migration check (legacy ~/.ontotext -> graphwise-secrets.yaml):${RESET}"
+        legacy_migrated=$(LEGACY_USER="$legacy_user" LEGACY_PASS="$legacy_pass" \
+                          OVERLAY_FILE="$overlay_file" python3 <<'PY'
+import os, yaml
+ovl = yaml.safe_load(open(os.environ['OVERLAY_FILE'])) or {}
+mv  = ovl.setdefault('maven', {})
+
+def empty(v):
+    return not (isinstance(v, str) and v.strip())
+
+migrated = []
+if empty(mv.get('user')) and os.environ.get('LEGACY_USER', '').strip():
+    mv['user'] = os.environ['LEGACY_USER'].strip()
+    migrated.append('maven.user')
+if empty(mv.get('pass')) and os.environ.get('LEGACY_PASS', '').strip():
+    mv['pass'] = os.environ['LEGACY_PASS'].strip()
+    migrated.append('maven.pass')
+
+if migrated:
+    with open(os.environ['OVERLAY_FILE'], 'w') as f:
+        yaml.safe_dump(ovl, f, default_flow_style=False, sort_keys=False)
+
+print('\n'.join(migrated))
+PY
+)
+        if [ -n "$legacy_migrated" ]; then
+            printf '  %s✓%s migrated %d field(s) from ~/.ontotext into graphwise-secrets.yaml:\n' \
+                   "$GREEN" "$RESET" "$(echo "$legacy_migrated" | wc -l | tr -d ' ')"
+            echo "$legacy_migrated" | sed 's|^|       |'
+        else
+            printf '  %s✓%s no fields needed migration (overlay already has maven creds)\n' "$GREEN" "$RESET"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# Final check: if the snapshot's maven.user / maven.pass are STILL
+# empty after all migrations, warn loudly. Push-config.sh's
+# preserve-from-remote logic will still try to save the operator on
+# the next push, but if the remote is also empty (e.g. fresh
+# terraform apply, operator hasn't filled in maven on EC2 yet) the
+# graphrag pods will ImagePullBackOff after reset-helm.sh.
+# ---------------------------------------------------------------------
+if [ -f "$overlay_file" ]; then
+    maven_status=$(OVERLAY_FILE="$overlay_file" python3 <<'PY'
+import os, yaml
+d = yaml.safe_load(open(os.environ['OVERLAY_FILE'])) or {}
+mv = d.get('maven') or {}
+def empty(v):
+    return not (isinstance(v, str) and v.strip())
+if empty(mv.get('user')) or empty(mv.get('pass')):
+    print('EMPTY')
+PY
+)
+    if [ "$maven_status" = "EMPTY" ]; then
+        echo
+        printf '%s⚠ WARNING:%s the snapshot %sgraphwise-secrets.yaml%s has an empty maven.user / maven.pass block.\n' \
+               "$YELLOW" "$RESET" "$BOLD" "$RESET"
+        echo "    Pushing this snapshot back via push-config.sh will preserve the EC2's existing"
+        echo "    maven creds IF they're filled in there; otherwise graphrag pods will"
+        echo "    ImagePullBackOff after reset-helm.sh. Fill them in either by:"
+        echo "       1. Editing this snapshot:  \$EDITOR \"$overlay_file\""
+        echo "       2. Or on the EC2 host:     ssh in, edit ~/graphwise-secrets.yaml"
     fi
 fi
 

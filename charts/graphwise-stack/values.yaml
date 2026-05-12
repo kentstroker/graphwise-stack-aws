@@ -9,20 +9,25 @@
 # ║                                                              ║
 # ║   ⚠  USER-SUPPLIED CREDENTIALS DO NOT LIVE IN THIS FILE      ║
 # ║                                                              ║
-# ║   AWS Bedrock keys + n8n license activation key live in      ║
-# ║   ~/graphwise-secrets.yaml on the EC2 host (auto-created     ║
+# ║   Maven registry creds (maven.user / maven.pass), AWS        ║
+# ║   Bedrock keys, and the n8n license activation key all live  ║
+# ║   in ~/graphwise-secrets.yaml on the EC2 host (auto-created  ║
 # ║   by Terraform cloud-init, gitignored, never tracked).       ║
 # ║   reset-helm.sh auto-includes that file via -f, so the       ║
-# ║   overlay's values merge over this file's defaults.          ║
+# ║   overlay's values merge over this file's defaults. Maven    ║
+# ║   creds are read separately by reset-helm.sh to kubectl-     ║
+# ║   create the `graphwise` image-pull Secret in the graphwise  ║
+# ║   + graphrag namespaces (no Helm value for them in here).    ║
 # ║                                                              ║
 # ║   Why a separate overlay: every git pull would otherwise     ║
 # ║   merge-conflict against your real credentials. The overlay  ║
 # ║   stays EC2-local; pulls are always clean fast-forwards.     ║
 # ║                                                              ║
 # ║   For a full deploy: edit ~/graphwise-secrets.yaml and       ║
-# ║   fill in awsCredentials + n8nLicense. For an umbrella-only  ║
-# ║   deploy (reset-helm.sh --skip-graphrag) you can leave them  ║
-# ║   as placeholders -- GraphRAG isn't installed in that mode.  ║
+# ║   fill in maven + awsCredentials + n8nLicense. For an        ║
+# ║   umbrella-only deploy (reset-helm.sh --skip-graphrag) maven ║
+# ║   + Bedrock + n8n can stay as placeholders -- GraphRAG isn't ║
+# ║   installed in that mode.                                    ║
 # ║                                                              ║
 # ║   Walkthrough: DEPLOY.md §7.                                 ║
 # ║                                                              ║
