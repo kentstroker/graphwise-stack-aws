@@ -151,9 +151,10 @@ SMC step:**
   inline policy MUST list
   `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`
   alongside the Cohere embed ARN.
-- AWS account hasn't been granted access to Claude Sonnet 4.5
-  (Anthropic models on Bedrock are not default-on — request access
-  in the Bedrock Console → Model access page, see SETUP §4b).
+- IAM ARN typo / wrong region in the inline policy — verify the
+  Resource ARNs in SETUP §4b match the region the pod is invoking
+  against. (AWS retired the per-model "Modify model access" flow,
+  so there's no Bedrock Console access step to check.)
 - The pod's AWS env vars aren't set — check
   `kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- env | grep AWS_`.
   If empty, the `poolparty-aws-credentials` Secret wasn't created

@@ -56,12 +56,10 @@ laptop-zero through ready-for-`terraform-apply`. At a glance:
     by `terraform-demo` (which lacks IAM permissions). SETUP §4
     opens with an actor table — read it before clicking through any
     IAM Console step.
-- AWS Bedrock available in your region. The Cohere embed model is
-  default-on (no per-model approval needed). **Claude Sonnet 4.5
-  still requires explicit access approval** — request it via the
-  Bedrock Console's Model access page; approval is typically
-  minutes to hours. Both models live in the same IAM policy
-  attached to the Bedrock user.
+- AWS Bedrock available in your region. No per-model access request
+  needed — AWS retired the "Modify model access" approval flow.
+  Both models are invokable as soon as the IAM policy attached to
+  the Bedrock user grants `bedrock:InvokeModel` on their ARNs.
 - Terraform 1.5+ and AWS CLI v2 installed and authenticated.
 - EC2 key pair downloaded and `chmod 400`'d.
 - A subdomain plan (`<sub>.<base>` apex + `*.<sub>.<base>` wildcard

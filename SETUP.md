@@ -20,11 +20,10 @@ you will have:
     on the EC2 host) and `anthropic.claude-sonnet-4-5-20250929-v1:0`
     (used by PoolParty's "Build Your Taxonomy" feature). One IAM
     user, one inline policy, two ARNs.
-- AWS Bedrock available in your region. The Cohere embed model is
-  default-on (no per-model approval needed). **Claude Sonnet 4.5
-  requires explicit access approval** — request it via the Bedrock
-  Console → Model access page; approval is typically minutes to
-  hours. Step-by-step is in §4b.
+- AWS Bedrock available in your region. **No per-model access
+  request needed** — AWS retired the "Modify model access" approval
+  flow; every foundation model is invokable as soon as the IAM
+  policy grants `bedrock:InvokeModel` on its ARN.
 - Terraform installed and on `PATH`.
 - Python 3 + pip + PyYAML installed (used by the laptop-side
   push-config.sh / pull-config.sh helpers for YAML splicing
@@ -622,21 +621,12 @@ here, change it in the chart values too — the EC2 instance region
 (`terraform.tfvars`) and the Bedrock region don't have to match, but
 both must be valid Bedrock regions.
 
-> **Bedrock model access — two different rules.**
->
-> - `cohere.embed-english-v3` (embedding model, used by GraphRAG) is
->   **default-on**. AWS removed the per-model approval flow for this
->   one; with `bedrock:InvokeModel` on its ARN you can invoke it.
-> - `anthropic.claude-sonnet-4-5-20250929-v1:0` (chat model, used by
->   PoolParty's "Build Your Taxonomy" feature) **still requires
->   approval**. Anthropic models are gated per AWS account.
->
-> Request the Claude model now so it's ready when you wire PoolParty
-> later: AWS Console → Bedrock → **Model access** (left nav) → **Modify
-> model access** → tick **Claude Sonnet 4.5** → **Next** → fill in the
-> use-case justification (one or two sentences is fine — "taxonomy
-> generation in our internal Graphwise demo deployment") → **Submit**.
-> Approval is typically minutes to hours.
+> **Bedrock model access is default-on across the board.** AWS retired
+> the per-account "Modify model access" approval flow — every
+> foundation model (including Anthropic Claude, Cohere, Amazon Titan,
+> Meta Llama, Mistral) is reachable as soon as the IAM identity has
+> `bedrock:InvokeModel` on its ARN. Nothing to request, nothing to
+> wait for. The inline policy below is the only prerequisite.
 
 > **Console-only walkthrough.** Same as §4a — no CLI commands until
 > §5. Verify and the optional CLI equivalents are in §5.

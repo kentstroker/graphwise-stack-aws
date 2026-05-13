@@ -301,9 +301,9 @@ required alongside the Cohere embed ARN already in the policy. The
 inline policy at SETUP §4b uses a Resource array with both ARNs:
 `arn:aws:bedrock:<region>::foundation-model/cohere.embed-english-v3`
 and `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`.
-Anthropic models still require per-account access approval in the
-Bedrock Console (Model access → Modify) — only Cohere embed is
-default-on. Approval is minutes-to-hours.
+No per-model access request needed — AWS retired the "Modify model
+access" approval flow; every foundation model is invokable as soon
+as the IAM identity has `bedrock:InvokeModel` on its ARN.
 
 **JAR set proves it works:** the `quay.io/ontotext/poolparty:10.2.0`
 image ships `langchain4j-bedrock-1.12.2.jar` +
