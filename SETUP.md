@@ -1170,10 +1170,9 @@ exporting it now means you only do it once. After
 and every subsequent command in the docs Just Works.
 
 The laptop-side helpers (`scripts/laptop/pull-config.sh`,
-`push-config.sh`, `pushLastPull.sh`, plus the legacy
-`push-to-ec2.sh` / `pull-from-ec2.sh`) all honor these three vars
-as defaults, so you can run them with just the operation-specific
-flags.
+`push-config.sh`, plus the legacy `push-to-ec2.sh` /
+`pull-from-ec2.sh`) all honor these three vars as defaults, so you
+can run them with just the operation-specific flags.
 
 If you'd prefer `ssh graphwise` / `scp foo graphwise:bar` (no
 flags at all), an `~/.ssh/config` alias is the cleaner pattern:

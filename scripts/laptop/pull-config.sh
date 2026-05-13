@@ -602,6 +602,8 @@ echo "  Inspect the snapshot:"
 echo "    ls -la \"$SNAPSHOT_DIR\""
 echo
 echo "  After the next ${BOLD}terraform apply${RESET}, push this snapshot back:"
-echo "    ./scripts/laptop/push-config.sh \\"
-echo "      --secrets-file \"$SNAPSHOT_DIR/graphwise-secrets.yaml\" \\"
-echo "      --licenses-dir \"$SNAPSHOT_DIR/licenses\""
+echo "    ./scripts/laptop/push-config.sh"
+echo
+echo "  ${DIM}push-config.sh auto-discovers the most recent snapshot under${RESET}"
+echo "  ${DIM}~/Downloads/graphwise-config-*. To push a specific (older)${RESET}"
+echo "  ${DIM}snapshot, pass --secrets-file / --licenses-dir explicitly.${RESET}"

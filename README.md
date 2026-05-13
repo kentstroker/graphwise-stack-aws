@@ -72,8 +72,10 @@ scripts/                 cluster-bootstrap, cluster-resume, cluster-stop,
                          render-values, reset-helm, install-licenses,
                          extract-poolparty-realm, validate-bootstrap,
                          validate-stack
-scripts/laptop/          pull-config, push-config, pushLastPull (operator-state
-                         cycle); push-to-ec2, pull-from-ec2 (legacy)
+scripts/laptop/          pull-config, push-config (operator-state cycle:
+                         pull writes ~/Downloads/graphwise-config-<UTC>/;
+                         push auto-discovers + reapplies); push-to-ec2,
+                         pull-from-ec2 (legacy)
 files/licenses/          Vendor license files (gitignored)
 QUICKSTART.md            Fast-path 0-18 sequential deploy
 SETUP.md                 Laptop-zero prerequisites guide (macOS + Windows)

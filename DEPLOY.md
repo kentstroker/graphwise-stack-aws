@@ -296,12 +296,13 @@ restore it after `terraform apply`. The pair:
 # under ~/Downloads/ (each pull stands alone, no clobber of $HOME).
 ./scripts/laptop/pull-config.sh
 
-# After terraform apply: restore the most recent snapshot in one shot.
-./scripts/laptop/pushLastPull.sh
-# (or, to push a specific snapshot:
+# After terraform apply: push the most recent snapshot back in one shot.
+# (push-config auto-discovers the latest ~/Downloads/graphwise-config-* snapshot)
+./scripts/laptop/push-config.sh
+# Pin a specific (older) snapshot if needed:
 #   ./scripts/laptop/push-config.sh \
 #       --secrets-file ~/Downloads/graphwise-config-<UTC>/graphwise-secrets.yaml \
-#       --licenses-dir ~/Downloads/graphwise-config-<UTC>/licenses )
+#       --licenses-dir ~/Downloads/graphwise-config-<UTC>/licenses
 ```
 
 What lands in the snapshot (`~/Downloads/graphwise-config-<UTC>/`):
@@ -332,7 +333,7 @@ First time only (you don't yet have a snapshot to pull): edit
 `~/graphwise-secrets.yaml` directly on the EC2 (cloud-init pre-creates
 it with placeholders) and scp the three license files in. Subsequent
 cycles are automatic: `pull-config.sh` before each destroy,
-`pushLastPull.sh` after each apply.
+`push-config.sh` after each apply.
 
 **Manual fallback** — if you'd rather edit on the EC2 and scp licenses
 ad-hoc, or you don't want the push helper:
@@ -1083,8 +1084,7 @@ curl -s https://auth.<sub>.<base>/realms/master/.well-known/openid-configuration
 │   ├── validate-stack.sh            # Post-reset-helm health check
 │   └── laptop/                      # Laptop-side helpers
 │       ├── pull-config.sh           # Pull operator state (secrets + licenses + LE cert) into ~/Downloads/graphwise-config-<UTC>/
-│       ├── push-config.sh           # Push operator state back to a fresh EC2
-│       ├── pushLastPull.sh          # Convenience wrapper: push the most recent pull-config snapshot
+│       ├── push-config.sh           # Push operator state back to a fresh EC2 (auto-discovers latest snapshot when run with no flags)
 │       ├── push-to-ec2.sh           # (legacy) rsync local edits to the EC2 host
 │       └── pull-from-ec2.sh         # (legacy) rsync EC2-side edits back to laptop
 ├── files/licenses/                  # Vendor license files (gitignored)

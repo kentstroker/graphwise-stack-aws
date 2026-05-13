@@ -4,24 +4,32 @@
 # host as a single tarball; a remote bash snippet extracts to canonical
 # paths.
 #
+# Bookend to pull-config.sh: pull-config writes a dated snapshot under
+# ~/Downloads/graphwise-config-<UTC>/; this script reads that snapshot
+# and places its contents at the canonical paths the downstream EC2
+# scripts expect. With no flags it auto-discovers the MOST RECENT
+# snapshot in ~/Downloads/ -- the typical "I just did pull-config,
+# I'm rebuilding the EC2, push it back" flow is a single command:
+#
+#     ./scripts/laptop/push-config.sh
+#
 # Why one tarball: each scp is a fresh SSH connection (handshake
 # latency, partial-failure mode per file). One tarball + one SSH means
 # atomic-or-nothing: either all files arrive or none do.
 #
-# What's pushed (canonical local paths):
+# What's pushed (snapshot path -> EC2 destination):
 #
-#   1. ~/graphwise-secrets.yaml      -> EC2:~/graphwise-secrets.yaml
+#   1. <snap>/graphwise-secrets.yaml  -> EC2:~/graphwise-secrets.yaml
 #      Single-file secrets: maven, Bedrock, n8n license, n8n encryption.
 #
-#   2. ~/graphwise-licenses/poolparty.key      ->
-#      ~/graphwise-licenses/graphdb.license       EC2:~/graphwise-stack-aws/files/licenses/
-#      ~/graphwise-licenses/uv-license.key
+#   2. <snap>/licenses/poolparty.key     -> EC2:~/graphwise-stack-aws/files/licenses/
+#      <snap>/licenses/graphdb.license
+#      <snap>/licenses/uv-license.key
 #
-#   3. ~/graphwise-licenses/wildcard-tls.yaml  -> EC2:~/wildcard-tls-saved.yaml
-#      Saved LE wildcard cert from a prior pull-config.sh.
-#      cluster-bootstrap.sh detects + restores it (cert-manager sees
-#      a valid Secret in place and skips LE issuance -- saves a
-#      per-week LE rate-limit slot).
+#   3. <snap>/licenses/wildcard-tls.yaml -> EC2:~/wildcard-tls-saved.yaml
+#      Saved LE wildcard cert. cluster-bootstrap.sh detects + restores
+#      it (cert-manager sees a valid Secret in place and skips LE
+#      issuance -- saves a per-week LE rate-limit slot).
 #
 # Missing files are warned + skipped, not fatal.
 #
@@ -37,7 +45,7 @@
 #   GRAPHWISE_USER   ec2-user (default)
 #
 # Usage:
-#   ./scripts/laptop/push-config.sh
+#   ./scripts/laptop/push-config.sh                   # auto-discover most recent snapshot
 #   ./scripts/laptop/push-config.sh --secrets-file ~/path/to/secrets.yaml
 #   ./scripts/laptop/push-config.sh --licenses-dir ~/path/to/licenses
 #   ./scripts/laptop/push-config.sh --skip-secrets
@@ -48,7 +56,7 @@
 # Exit codes:
 #   0 -- all selected items pushed
 #   1 -- ssh / tar / merge failure
-#   2 -- usage / missing local file / missing env
+#   2 -- usage / missing local file / missing env / no snapshot found
 
 set -euo pipefail
 
@@ -59,16 +67,19 @@ else
     GREEN=""; RED=""; YELLOW=""; BOLD=""; DIM=""; RESET=""
 fi
 
-SECRETS_FILE="$HOME/graphwise-secrets.yaml"
-LICENSES_DIR="$HOME/graphwise-licenses"
+SECRETS_FILE=""
+LICENSES_DIR=""
+SECRETS_FILE_EXPLICIT=no
+LICENSES_DIR_EXPLICIT=no
 KEEP_LOCAL_ENCRYPTION_KEY=no
 SKIP_SECRETS=no
 SKIP_LICENSES=no
 SKIP_CERT=no
+SNAPSHOT_PARENT="$HOME/Downloads"
 while [ $# -gt 0 ]; do
     case "$1" in
-        --secrets-file)              SECRETS_FILE="$2"; shift 2 ;;
-        --licenses-dir)              LICENSES_DIR="$2"; shift 2 ;;
+        --secrets-file)              SECRETS_FILE="$2"; SECRETS_FILE_EXPLICIT=yes; shift 2 ;;
+        --licenses-dir)              LICENSES_DIR="$2"; LICENSES_DIR_EXPLICIT=yes; shift 2 ;;
         --skip-secrets)              SKIP_SECRETS=yes; shift ;;
         --skip-licenses)             SKIP_LICENSES=yes; shift ;;
         --skip-cert)                 SKIP_CERT=yes; shift ;;
@@ -77,9 +88,46 @@ while [ $# -gt 0 ]; do
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         -*) echo "${RED}Unknown flag: $1${RESET}" >&2; exit 2 ;;
-        *)  SECRETS_FILE="$1"; shift ;;   # legacy positional
+        *)  SECRETS_FILE="$1"; SECRETS_FILE_EXPLICIT=yes; shift ;;   # legacy positional
     esac
 done
+
+# Auto-discover the most recent snapshot when paths aren't explicit.
+# Snapshot folder names sort lexically by their UTC timestamp suffix,
+# so the last entry is the most recent. Either flag being passed
+# explicitly opts that path out of auto-discovery; the other still
+# picks up the snapshot.
+if [ "$SECRETS_FILE_EXPLICIT" = "no" ] || [ "$LICENSES_DIR_EXPLICIT" = "no" ]; then
+    LAST_SNAPSHOT=$(find "$SNAPSHOT_PARENT" -maxdepth 1 -type d -name 'graphwise-config-*' 2>/dev/null \
+                    | sort | tail -n 1)
+    if [ -z "$LAST_SNAPSHOT" ]; then
+        if [ "$SECRETS_FILE_EXPLICIT" = "no" ] && [ "$LICENSES_DIR_EXPLICIT" = "no" ]; then
+            cat >&2 <<USAGE
+${RED}ERROR:${RESET} no graphwise-config-* snapshot found under $SNAPSHOT_PARENT
+and no --secrets-file / --licenses-dir explicitly provided.
+
+Run pull-config.sh first (against a working EC2 deployment) to
+create a snapshot, OR pass explicit paths:
+
+    ./scripts/laptop/push-config.sh \\
+      --secrets-file <path>/graphwise-secrets.yaml \\
+      --licenses-dir <path>/licenses
+USAGE
+            exit 2
+        fi
+    else
+        echo "${BOLD}Using snapshot:${RESET} $LAST_SNAPSHOT"
+        [ "$SECRETS_FILE_EXPLICIT" = "no" ] && SECRETS_FILE="$LAST_SNAPSHOT/graphwise-secrets.yaml"
+        [ "$LICENSES_DIR_EXPLICIT" = "no" ] && LICENSES_DIR="$LAST_SNAPSHOT/licenses"
+    fi
+fi
+
+# Final fallback: if a path is still empty (the asymmetric case where
+# one flag was explicit + no snapshot found), fall back to the
+# pre-snapshot-era $HOME defaults. Downstream existence checks will
+# fail loudly with a clear path in the error if those don't exist.
+[ -z "$SECRETS_FILE" ] && SECRETS_FILE="$HOME/graphwise-secrets.yaml"
+[ -z "$LICENSES_DIR" ] && LICENSES_DIR="$HOME/graphwise-licenses"
 
 KEY="${GRAPHWISE_KEY:-}"
 HOST="${GRAPHWISE_HOST:-}"
