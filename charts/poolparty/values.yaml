@@ -77,6 +77,39 @@ urlBase:
 cors:
   allowedOrigins: ""
 
+# Pluggable LLM provider — drives PoolParty 10.2+ features like
+# "Build Your Taxonomy" (Taxonomy Advisor) and other AI-assisted
+# workflows. PoolParty maps the env vars below to the system
+# properties `poolparty.llm.api`, `poolparty.llm.model`, and
+# `poolparty.llm.bedrock.region` (see vendor docs). AWS credentials
+# are picked up by the bedrock client's default provider chain from
+# the AWS_* env vars sourced from the awsCredentialsSecret.
+#
+# The Secret named here is created by the umbrella chart's template
+# `templates/poolparty-aws-credentials.yaml` from the same
+# graphrag-secrets.awsCredentials overlay block that feeds the
+# graphrag-components pod -- single source of truth in
+# ~/graphwise-secrets.yaml, materialized twice (graphrag ns +
+# graphwise ns).
+#
+# IAM scope: the access key behind awsCredentialsSecret needs
+# bedrock:InvokeModel on the model ARN. SETUP §4b's inline policy
+# already lists anthropic.claude-sonnet-4-5-20250929-v1:0 alongside
+# the Cohere embed model.
+#
+# Application-level step: backend wiring alone doesn't activate the
+# feature -- after a successful deploy you must also create a
+# Taxonomy Advisor instance in PoolParty's SMC (External Services
+# → Taxonomy Advisor → Create instance) using an API key issued by
+# your Graphwise rep. See QUICKSTART §18 / CONSOLE-GUIDE PoolParty
+# Thesaurus section.
+llm:
+  enabled: false
+  api: bedrock
+  model: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  region: "us-west-2"
+  awsCredentialsSecret: poolparty-aws-credentials
+
 # JVM heap. 8g is comfortable for medium workloads on r6g.2xlarge.
 heapSize: "8g"
 

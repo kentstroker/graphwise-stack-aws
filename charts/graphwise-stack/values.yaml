@@ -279,6 +279,23 @@ poolparty:
     context: ""
   ingress:
     host: ""
+  # Pluggable LLM (PoolParty 10.2+). Drives "Build Your Taxonomy" and
+  # related AI features. Defaults to Bedrock + Claude Sonnet 4.5 in
+  # us-west-2. AWS creds are sourced from a Secret materialized by
+  # the umbrella's templates/poolparty-aws-credentials.yaml from the
+  # same graphrag-secrets.awsCredentials overlay block. SETUP §4b
+  # documents the IAM scope needed for this model.
+  #
+  # Backend wiring alone isn't enough -- after a successful deploy
+  # the operator must also create a Taxonomy Advisor instance in
+  # PoolParty's SMC using an API key issued by Graphwise.
+  # QUICKSTART §18 / CONSOLE-GUIDE PoolParty Thesaurus walk through it.
+  llm:
+    enabled: true
+    api: bedrock
+    model: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    region: "us-west-2"
+    awsCredentialsSecret: poolparty-aws-credentials
 
 # Console landing page on the apex.
 console:

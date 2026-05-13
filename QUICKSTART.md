@@ -50,7 +50,7 @@ Details: [SETUP §3 → Clone the repo](SETUP.md#clone-the-graphwise-stack-aws-r
 Performed by **root or IAM admin** (not by the users you're creating). Web UI only.
 
 1. **Terraform user** — `terraform-demo` → API access only → attach `AmazonEC2FullAccess` → also attach a scoped inline IAM policy `graphwise-stack-iam` so Terraform can manage the EC2 instance role for cert-manager → create access key (Application running outside AWS) → save Access Key ID + Secret. Inline-policy JSON in [SETUP §4a "Attach scoped IAM permissions"](SETUP.md#attach-scoped-iam-permissions-for-the-ec2-instance-role) — without it `terraform apply` / `destroy` fail with `AccessDenied: iam:CreateRole`.
-2. **Bedrock user** — `graphrag-bedrock` → API access only → inline policy `bedrock-cohere-invoke` (`bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` on `arn:aws:bedrock:<your-region>::foundation-model/cohere.embed-english-v3`) → create access key → save.
+2. **Bedrock user** — `graphrag-bedrock` → API access only → inline policy `bedrock-graphwise-invoke` (`bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` on a Resource array with BOTH `arn:aws:bedrock:<your-region>::foundation-model/cohere.embed-english-v3` *and* `arn:aws:bedrock:<your-region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`) → create access key → save. The Cohere embed model is default-on, but **Claude Sonnet 4.5 still needs per-account access approval**: Bedrock Console → Model access → Modify → tick Claude Sonnet 4.5 → submit (minutes-to-hours).
 
 Details: [SETUP §4a](SETUP.md#4a-create-the-terraform-iam-user) + [§4b](SETUP.md#4b-create-the-bedrock-iam-user).
 
@@ -376,6 +376,22 @@ aws ec2 start-instances --instance-ids <your-instance-id> --region <your-region>
 ```
 
 Details: [DEPLOY → Day-2 lifecycle](DEPLOY.md#day-2-lifecycle).
+
+---
+
+## Optional: Activate PoolParty "Build Your Taxonomy"
+
+The chart wires PoolParty 10.2's LLM backend at deploy time (Bedrock + Claude Sonnet 4.5 by default — see `poolparty.llm.*` in `charts/poolparty/values.yaml`). That gets the JVM properties set and AWS creds mounted, but the feature itself is gated by a per-deployment **Taxonomy Advisor** instance you have to create inside PoolParty's Semantic Middleware Configurator (SMC). One-time step per deployment.
+
+1. **Request the Taxonomy Advisor API key** from your Graphwise contact. The key authenticates the feature instance itself (separate from the AWS Bedrock credentials, which only authorize the model invocation). Email template: *"Please send the Taxonomy Advisor API key for our `<your-subdomain>.<your-base-domain>` deployment, PoolParty 10.2 against AWS Bedrock."*
+2. **Log in to SMC** — `https://poolparty.<your-subdomain>.<your-base-domain>/PoolParty/` → log in as `superadmin` / `poolparty` → switch to the SMC view.
+3. **Expand External Services** (left-side hierarchy tree) → **double-click Taxonomy Advisor**.
+4. In the **Create taxonomy advisor instance** dialog: **Name** = any label (e.g. `bedrock-claude-sonnet-4-5`); **API Key** = the key Graphwise sent → **Save**.
+5. A sub-node appears under Taxonomy Advisor representing the active service. "Build Your Taxonomy" is now available in the taxonomy editor.
+
+If the IAM policy / model access from §2 wasn't right, the failure surfaces here — `kubectl -n graphwise logs deploy/graphwise-stack-poolparty | grep -i -E 'bedrock|accessdenied'` will show the actual Bedrock API error (most commonly `AccessDeniedException ... is not authorized to perform: bedrock:InvokeModel` on the Claude ARN, fixed by re-checking SETUP §4b's policy + Bedrock Console model access).
+
+Walkthrough source: see [CONSOLE-GUIDE → PoolParty Thesaurus → Build Your Taxonomy](CONSOLE-GUIDE.md#poolparty-thesaurus).
 
 ---
 

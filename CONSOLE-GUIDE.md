@@ -109,6 +109,61 @@ Project" to verify write paths work.
   present, see the [Keycloak issuer-match invariant](#keycloak-auth)
   above.
 
+### Build Your Taxonomy (LLM-assisted, optional)
+
+PoolParty 10.2 ships a pluggable LLM provider used by "Build Your
+Taxonomy" (Taxonomy Advisor) and related AI workflows. The chart wires
+the backend at deploy time — defaults to **AWS Bedrock + Claude
+Sonnet 4.5** in `us-west-2`, configurable via `poolparty.llm.*` in
+`charts/poolparty/values.yaml`. Backend wiring alone doesn't activate
+the feature, though — there's a per-deployment SMC step.
+
+**Verify the backend wiring** (post-deploy sanity check):
+
+```bash
+kubectl -n graphwise get secret poolparty-aws-credentials
+kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- env | grep -E '^POOLPARTY_LLM|^AWS_'
+```
+
+The Secret should exist in `graphwise` ns; the pod's environment
+should show `POOLPARTY_LLM_API=bedrock`,
+`POOLPARTY_LLM_MODEL=anthropic.claude-sonnet-4-5-20250929-v1:0`,
+`POOLPARTY_LLM_BEDROCK_REGION=us-west-2`, plus `AWS_REGION` /
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
+
+**Activate the Taxonomy Advisor instance in SMC** (one-time, per
+deployment):
+
+1. Get the Taxonomy Advisor API key from your Graphwise contact (it
+   authenticates the feature instance itself; separate from the AWS
+   creds the Bedrock client uses).
+2. Log in to PoolParty as `superadmin` / `poolparty` → SMC view.
+3. Expand **External Services** (left-side hierarchy) → double-click
+   **Taxonomy Advisor**.
+4. **Name** = any label (e.g. `bedrock-claude-sonnet-4-5`),
+   **API Key** = the key Graphwise sent → **Save**. A sub-node appears
+   under Taxonomy Advisor confirming the instance is active.
+
+**If "Build Your Taxonomy" still says "no LLM configured" after the
+SMC step:**
+
+- IAM policy doesn't include the Claude model ARN. SETUP §4b's
+  inline policy MUST list
+  `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`
+  alongside the Cohere embed ARN.
+- AWS account hasn't been granted access to Claude Sonnet 4.5
+  (Anthropic models on Bedrock are not default-on — request access
+  in the Bedrock Console → Model access page, see SETUP §4b).
+- The pod's AWS env vars aren't set — check
+  `kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- env | grep AWS_`.
+  If empty, the `poolparty-aws-credentials` Secret wasn't created
+  (most likely cause: `poolparty.llm.enabled` is false in the
+  rendered values, or the `graphrag-secrets.awsCredentials` overlay
+  block was empty at install time).
+
+The actual Bedrock API error (if any) appears in
+`kubectl -n graphwise logs deploy/graphwise-stack-poolparty | grep -iE 'bedrock|accessdenied'`.
+
 ## PoolParty GraphSearch
 
 **URL:** `https://poolparty.<sub>.<base>/GraphSearch/`

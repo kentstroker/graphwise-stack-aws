@@ -70,6 +70,30 @@ spec:
               value: {{ required "urlBase.user must be set" .Values.urlBase.user | quote }}
             - name: _POOLPARTY_URL_BASE_CONTEXT
               value: {{ required "urlBase.context must be set" .Values.urlBase.context | quote }}
+            {{- if .Values.llm.enabled }}
+            # Pluggable LLM provider (PoolParty 10.2+ "Build Your
+            # Taxonomy" and related AI features). Env vars map to
+            # poolparty.llm.* system properties; AWS_* are picked up
+            # by the bedrock client's default credential chain.
+            - name: POOLPARTY_LLM_API
+              value: {{ .Values.llm.api | quote }}
+            - name: POOLPARTY_LLM_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: POOLPARTY_LLM_BEDROCK_REGION
+              value: {{ .Values.llm.region | quote }}
+            - name: AWS_REGION
+              value: {{ .Values.llm.region | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llm.awsCredentialsSecret }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llm.awsCredentialsSecret }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- end }}
           ports:
             - name: http
               containerPort: 8081

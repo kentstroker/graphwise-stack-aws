@@ -15,11 +15,16 @@ you will have:
     `AmazonEC2FullAccess`, used from your laptop to run
     `terraform apply`.
   - A **Bedrock user** (e.g. `graphrag-bedrock`) with a narrow
-    inline policy granting `bedrock:InvokeModel` on
-    `cohere.embed-english-v3`, used at runtime by the
-    `graphrag-components` pod on the EC2 host.
-- AWS Bedrock available in your region (no per-model approval
-  needed — AWS now grants foundation-model access by default).
+    inline policy granting `bedrock:InvokeModel` on TWO models:
+    `cohere.embed-english-v3` (used by the `graphrag-components` pod
+    on the EC2 host) and `anthropic.claude-sonnet-4-5-20250929-v1:0`
+    (used by PoolParty's "Build Your Taxonomy" feature). One IAM
+    user, one inline policy, two ARNs.
+- AWS Bedrock available in your region. The Cohere embed model is
+  default-on (no per-model approval needed). **Claude Sonnet 4.5
+  requires explicit access approval** — request it via the Bedrock
+  Console → Model access page; approval is typically minutes to
+  hours. Step-by-step is in §4b.
 - Terraform installed and on `PATH`.
 - Python 3 + pip + PyYAML installed (used by the laptop-side
   push-config.sh / pull-config.sh helpers for YAML splicing
@@ -617,12 +622,21 @@ here, change it in the chart values too — the EC2 instance region
 (`terraform.tfvars`) and the Bedrock region don't have to match, but
 both must be valid Bedrock regions.
 
-> **Bedrock model access is now default-on.** AWS used to gate each
-> foundation model behind a per-account "Modify model access" approval
-> flow. That flow is gone — `cohere.embed-english-v3` is reachable in
-> any Bedrock-enabled region as long as the IAM identity has
-> `bedrock:InvokeModel` on its ARN. Nothing to request, nothing to
-> wait for.
+> **Bedrock model access — two different rules.**
+>
+> - `cohere.embed-english-v3` (embedding model, used by GraphRAG) is
+>   **default-on**. AWS removed the per-model approval flow for this
+>   one; with `bedrock:InvokeModel` on its ARN you can invoke it.
+> - `anthropic.claude-sonnet-4-5-20250929-v1:0` (chat model, used by
+>   PoolParty's "Build Your Taxonomy" feature) **still requires
+>   approval**. Anthropic models are gated per AWS account.
+>
+> Request the Claude model now so it's ready when you wire PoolParty
+> later: AWS Console → Bedrock → **Model access** (left nav) → **Modify
+> model access** → tick **Claude Sonnet 4.5** → **Next** → fill in the
+> use-case justification (one or two sentences is fine — "taxonomy
+> generation in our internal Graphwise demo deployment") → **Submit**.
+> Approval is typically minutes to hours.
 
 > **Console-only walkthrough.** Same as §4a — no CLI commands until
 > §5. Verify and the optional CLI equivalents are in §5.
@@ -642,7 +656,7 @@ both must be valid Bedrock regions.
    narrower (one model, two actions).
 7. Click **Next** → **Create user**.
 
-#### Attach an inline policy scoped to the embedding model
+#### Attach an inline policy scoped to the two models we use
 
 1. Click into the new user → **Add permissions** → **Create inline
    policy**.
@@ -659,17 +673,26 @@ both must be valid Bedrock regions.
            "bedrock:InvokeModel",
            "bedrock:InvokeModelWithResponseStream"
          ],
-         "Resource": "arn:aws:bedrock:us-west-2::foundation-model/cohere.embed-english-v3"
+         "Resource": [
+           "arn:aws:bedrock:us-west-2::foundation-model/cohere.embed-english-v3",
+           "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+         ]
        }
      ]
    }
    ```
 
-4. If your Bedrock region isn't `us-west-2`, change it in the
-   `Resource` ARN. The empty segment between the two `::` is correct
-   — foundation-model ARNs have no account-id component.
+   `cohere.embed-english-v3` powers the GraphRAG components embedding
+   call; `anthropic.claude-sonnet-4-5-20250929-v1:0` powers PoolParty's
+   "Build Your Taxonomy" feature (configured via the chart's
+   `poolparty.llm.*` block).
+4. If your Bedrock region isn't `us-west-2`, change it in both ARNs.
+   The empty segment between the two `::` is correct — foundation-
+   model ARNs have no account-id component.
 5. Click **Next**.
-6. **Policy name:** `bedrock-cohere-invoke`.
+6. **Policy name:** `bedrock-graphwise-invoke` (the prior name
+   `bedrock-cohere-invoke` is fine to keep on existing deployments —
+   the contents are what matters).
 7. **Create policy.**
 
 #### Create an access key

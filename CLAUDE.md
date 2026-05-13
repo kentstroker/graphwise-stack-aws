@@ -259,6 +259,67 @@ Operator workflow: `rsync -azP -e "ssh -i $GRAPHWISE_KEY" <local>/ $GRAPHWISE_US
 
 Pods are not auto-volumeMounted to `staging-data` by default — consuming workloads (graphrag-workflows, graphrag-components, etc.) add `volumes` + `volumeMounts` referencing PVC `staging-data` in their own namespace when ready. Toggle the entire feature off via `staging.enabled: false` in umbrella values.
 
+### PoolParty 10.2 pluggable LLM wiring (Build Your Taxonomy)
+
+PoolParty 10.2+ exposes a pluggable LLM via system properties
+(`poolparty.llm.api`, `poolparty.llm.model`, `poolparty.llm.bedrock.region`)
+plus the AWS SDK default credential chain. The chart wires it as four
+moving pieces:
+
+1. **`charts/poolparty/values.yaml::llm.*`** holds the model/region/Secret-name
+   defaults. Default model: `anthropic.claude-sonnet-4-5-20250929-v1:0`.
+   Default region: `us-west-2`. Gate: `llm.enabled` (default `true`
+   when overridden via the umbrella; default `false` if the poolparty
+   subchart is installed standalone).
+2. **`charts/poolparty/templates/deployment.yaml`** adds the four
+   `POOLPARTY_LLM_*` env vars + `AWS_REGION` / `AWS_ACCESS_KEY_ID` /
+   `AWS_SECRET_ACCESS_KEY` (the latter two via `secretKeyRef` from the
+   Secret named in `llm.awsCredentialsSecret`), all gated on
+   `.Values.llm.enabled`.
+3. **`charts/graphwise-stack/templates/poolparty-aws-credentials.yaml`**
+   materializes the AWS-creds Secret in the `graphwise` namespace
+   (where PoolParty lives), sourced from the SAME overlay block
+   (`graphrag-secrets.awsCredentials` in `~/graphwise-secrets.yaml`)
+   that already feeds the `graphrag-components-aws-credentials` Secret
+   in the `graphrag` namespace. **Same overlay, two materializations**,
+   one in each namespace. Pods can only mount Secrets from their own
+   namespace, so cross-namespace mounting isn't an option; reflector
+   is overkill for a two-namespace fan-out. The duplication is
+   intentional and obvious.
+4. **SMC Taxonomy Advisor instance** (operator step, NOT chart-side):
+   after deploy, the operator logs into PoolParty's SMC, expands
+   External Services → Taxonomy Advisor, and creates an instance
+   with an API key issued by Graphwise. This API key authenticates
+   the *feature*, separate from the AWS Bedrock creds which authorize
+   the *model invocation*. Without it, "Build Your Taxonomy" still
+   reports "no LLM configured" even though the backend is wired.
+   Documented in QUICKSTART "Optional: Activate Build Your Taxonomy"
+   + CONSOLE-GUIDE → PoolParty Thesaurus.
+
+**IAM scope:** `bedrock:InvokeModel` on the Claude model ARN is
+required alongside the Cohere embed ARN already in the policy. The
+inline policy at SETUP §4b uses a Resource array with both ARNs:
+`arn:aws:bedrock:<region>::foundation-model/cohere.embed-english-v3`
+and `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`.
+Anthropic models still require per-account access approval in the
+Bedrock Console (Model access → Modify) — only Cohere embed is
+default-on. Approval is minutes-to-hours.
+
+**JAR set proves it works:** the `quay.io/ontotext/poolparty:10.2.0`
+image ships `langchain4j-bedrock-1.12.2.jar` +
+`bedrockruntime-2.41.34.jar` in `/usr/share/poolparty/lib/common/`,
+so no proxy (LiteLLM / Bedrock Access Gateway) is needed. Direct
+SDK calls.
+
+**Symptom-to-cause:** "no LLM configured" in the PoolParty UI after a
+clean deploy almost always means the SMC step (4) wasn't done. If the
+SMC step IS done and the error persists, check the pod env (`kubectl
+exec ... -- env | grep POOLPARTY_LLM`) -- if empty, the
+`poolparty.llm.enabled` value didn't take effect (most often: stale
+umbrella values overlay). If env is set but invocation still fails,
+check `kubectl logs ... | grep -i 'accessdenied\|bedrock'` for the
+AWS IAM/model-access error.
+
 ### Nested-subchart `.tgz` gitignore (footgun avoidance)
 
 `.gitignore` excludes `charts/*/charts/*.tgz` and `charts/*/Chart.lock` because these are PACKAGED snapshots of subchart-of-subchart directories that Helm prefers over the source dir at render time. Committing them creates the silent-stale-tarball footgun: source edits to `charts/addons/charts/unifiedviews/templates/all.yaml` get masked by a stale `charts/addons/charts/unifiedviews-1.0.0.tgz`, the umbrella's own packaging includes BOTH copies, and operators end up debugging "why isn't my chart change taking effect" without realizing two copies exist.
