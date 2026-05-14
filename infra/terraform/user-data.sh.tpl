@@ -30,7 +30,7 @@ HELM_VERSION="v3.17.0"
 # OS patches + packages (Docker, KIND networking deps, helper tools).
 dnf upgrade -y --refresh
 dnf install -y docker git jq bind-utils conntrack-tools ethtool socat \
-    iproute httpd-tools tar gzip ca-certificates
+    iproute httpd-tools tar gzip ca-certificates rsync
 
 # sshd: bump queue limits + force internal-sftp.
 mkdir -p /etc/ssh/sshd_config.d

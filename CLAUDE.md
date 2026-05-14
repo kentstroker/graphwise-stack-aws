@@ -267,10 +267,16 @@ plus the AWS SDK default credential chain. The chart wires it as four
 moving pieces:
 
 1. **`charts/poolparty/values.yaml::llm.*`** holds the model/region/Secret-name
-   defaults. Default model: `anthropic.claude-sonnet-4-5-20250929-v1:0`.
+   defaults. Default model: `us.meta.llama3-3-70b-instruct-v1:0`
+   (a system-defined cross-region inference profile that routes
+   Llama 3.3 70B Instruct across `us-east-1`/`us-east-2`/`us-west-2`).
    Default region: `us-west-2`. Gate: `llm.enabled` (default `true`
    when overridden via the umbrella; default `false` if the poolparty
-   subchart is installed standalone).
+   subchart is installed standalone). **Two-layer override footgun:**
+   `poolparty.llm.model` is duplicated in `charts/graphwise-stack/values.yaml`
+   (umbrella) and the umbrella's value wins. Edits to one without the
+   other have no effect at deploy time. Grep `claude\|llama\|nova` across
+   `charts/` before any LLM-config change.
 2. **`charts/poolparty/templates/deployment.yaml`** adds the four
    `POOLPARTY_LLM_*` env vars + `AWS_REGION` / `AWS_ACCESS_KEY_ID` /
    `AWS_SECRET_ACCESS_KEY` (the latter two via `secretKeyRef` from the
@@ -296,29 +302,99 @@ moving pieces:
    Documented in QUICKSTART "Optional: Activate Build Your Taxonomy"
    + CONSOLE-GUIDE → PoolParty Thesaurus.
 
-**IAM scope:** `bedrock:InvokeModel` on the Claude model ARN is
-required alongside the Cohere embed ARN already in the policy. The
-inline policy at SETUP §4b uses a Resource array with both ARNs:
-`arn:aws:bedrock:<region>::foundation-model/cohere.embed-english-v3`
-and `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`.
-No per-model access request needed — AWS retired the "Modify model
-access" approval flow; every foundation model is invokable as soon
-as the IAM identity has `bedrock:InvokeModel` on its ARN.
+**IAM scope:** `bedrock:InvokeModel` on the Llama foundation-model
+ARN in every region the cross-region inference profile routes to,
+PLUS the inference-profile ARN itself, alongside the Cohere embed
+ARN already in the policy. The inline policy at SETUP §4b uses a
+Resource array with:
+`arn:aws:bedrock:us-west-2::foundation-model/cohere.embed-english-v3`,
+`arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-3-70b-instruct-v1:0`,
+`arn:aws:bedrock:us-east-2::foundation-model/meta.llama3-3-70b-instruct-v1:0`,
+`arn:aws:bedrock:us-west-2::foundation-model/meta.llama3-3-70b-instruct-v1:0`,
+and `arn:aws:bedrock:us-west-2:<account-id>:inference-profile/us.meta.llama3-3-70b-instruct-v1:0`
+(the inference-profile ARN is account-scoped — note the account-id
+segment). The bare foundation-model ARN alone is insufficient: when
+the call routes via the profile, Bedrock authorizes against BOTH the
+profile ARN AND whichever region the call lands in, so all three
+regions appear.
+
+**Inference profile requirement.** Newer Bedrock chat models
+(Llama 3.3+, Claude Sonnet 3.5 v2 onward, Nova Pro/Lite, Mistral
+Large 2) **cannot be invoked on-demand by their foundation-model
+ID** — Bedrock returns
+`InvalidRequestException: Invocation of model ID X with on-demand
+throughput isn't supported. Retry your request with the ID or ARN of
+an inference profile that contains this model.` The fix is to use
+the system-defined cross-region inference profile ID, which is the
+foundation model ID with a region prefix (`us.` for US, `eu.` for
+EU, `apac.` for APAC). Burned a deploy on this 2026-05-14; symptom
+is the InvalidRequestException above.
+
+**Anthropic Claude use-case form (separate gate).** AWS retired the
+old "Modify model access" approval flow for ALL providers (Llama,
+Amazon Nova, Mistral, Cohere — IAM is now the only gate). Anthropic
+Claude models are the exception: invoking them requires a one-time
+**use-case details form** in the Bedrock Console
+(Model access → Anthropic → fill form → submit, ~5-15 min approval).
+Symptom if you forget: `ResourceNotFoundException: Model use case
+details have not been submitted for this account.` We default to
+Llama specifically to avoid this gate; Claude is a one-form-away
+swap if you prefer its quality.
 
 **JAR set proves it works:** the `quay.io/ontotext/poolparty:10.2.0`
 image ships `langchain4j-bedrock-1.12.2.jar` +
 `bedrockruntime-2.41.34.jar` in `/usr/share/poolparty/lib/common/`,
 so no proxy (LiteLLM / Bedrock Access Gateway) is needed. Direct
-SDK calls.
+SDK calls. langchain4j accepts inference-profile IDs in `modelId`
+unchanged from foundation-model IDs.
 
-**Symptom-to-cause:** "no LLM configured" in the PoolParty UI after a
-clean deploy almost always means the SMC step (4) wasn't done. If the
-SMC step IS done and the error persists, check the pod env (`kubectl
-exec ... -- env | grep POOLPARTY_LLM`) -- if empty, the
-`poolparty.llm.enabled` value didn't take effect (most often: stale
-umbrella values overlay). If env is set but invocation still fails,
-check `kubectl logs ... | grep -i 'accessdenied\|bedrock'` for the
-AWS IAM/model-access error.
+**Secret-only updates require a manual rollout-restart.** AWS
+credentials reach the pod via env vars sourced from the Secret
+`poolparty-aws-credentials` (and similarly for graphrag-components).
+K8s snapshots `secretKeyRef` values at pod-start time. When a
+`helm upgrade` only changes the Secret's contents (e.g., the
+operator filled in `~/graphwise-secrets.yaml` and re-ran helm),
+the Deployment spec is unchanged, no rollout fires, and the running
+pod keeps the old (often empty) env values — so the AWS SDK falls
+through to IMDS and uses the EC2 instance role, which lacks
+`bedrock:InvokeModel`, surfacing as `AccessDeniedException` against
+the `arn:aws:sts::...:assumed-role/graphwise-stack-<sub>-ec2-role/...`
+principal. Force-roll the pod after such an upgrade:
+`kubectl -n graphwise rollout restart deploy/graphwise-stack-poolparty`.
+Proper structural fix (deferred): add a `checksum/aws-creds`
+annotation to `charts/poolparty/templates/deployment.yaml` so any
+Secret change auto-rolls.
+
+**Symptom-to-cause:** "no LLM configured" in the PoolParty UI after
+a clean deploy almost always means the SMC step (4) wasn't done.
+If the SMC step IS done and the error persists, walk the layers:
+
+1. `kubectl exec ... -- env | grep POOLPARTY_LLM` — if empty, the
+   `poolparty.llm.enabled` value didn't take effect (stale umbrella
+   values overlay). If model ID shows the bare foundation-model ID
+   (no `us.` prefix), the chart edit didn't land in both layers
+   (subchart + umbrella).
+2. `kubectl exec ... -- printenv AWS_ACCESS_KEY_ID | head -c 4` —
+   should print `AKIA`. Blank means the Secret was rendered without
+   the `-f ~/graphwise-secrets.yaml` overlay (helm upgrade needs all
+   THREE -f flags: base + per-deploy + secrets; reset-helm.sh adds
+   the secrets flag automatically) OR the pod is stale from before
+   the secrets-overlay upgrade (rollout-restart per above).
+3. `kubectl logs ... | grep -iE 'bedrock|inference|accessdenied|resourcenot'`
+   — `AccessDeniedException` against an inference-profile ARN means
+   the IAM policy needs the profile ARN added; `AccessDeniedException`
+   against an `assumed-role/...-ec2-role` principal means the SDK
+   fell through to IMDS (env vars empty/missing — see step 2);
+   `ResourceNotFoundException ... use case details` means Anthropic
+   model + missing the use-case form.
+
+### GraphDB JVM heap (set explicitly; not auto-sized to pod limit)
+
+`charts/graphdb/values.yaml` sets `javaOpts: "-Xmx8g"` and `resources.limits.memory: 10Gi` — leaves ~2Gi of pod memory for non-heap (metaspace, threads, off-heap caches, OS overhead). `charts/graphdb/templates/statefulset.yaml` wires the value as the `GDB_JAVA_OPTS` env var; the image's `/opt/graphdb/dist/bin/graphdb` script forwards it as `java <opts>`.
+
+**Why this is set explicitly:** without `-Xmx`, GraphDB's JVM defaults to ~1Gi heap regardless of the pod memory limit. The container has more memory available, but the JVM has no way to know — `cgroups`-aware heap sizing is a Java feature, but GraphDB's launcher script overrides it. Symptom of "JVM doesn't know about the pod limit": queries with `GROUP BY` / `DISTINCT` aggregations fail with `Insufficient free Heap Memory NNNMb for group by and distinct, threshold:250Mb, reached 0Mb` — and `kubectl top pod` shows the container nowhere near its limit. Burned a deploy on this 2026-05-14.
+
+**Rule of thumb:** JVM heap = pod memory limit − 2Gi. Both umbrella aliases (`graphdb-embedded` in `graphwise` ns, `graphdb-projects` in `graphdb` ns) inherit from this subchart default — one edit covers both. To override per-alias, the umbrella's `graphdb-embedded:` / `graphdb-projects:` blocks can set their own `javaOpts:` / `resources:`.
 
 ### Nested-subchart `.tgz` gitignore (footgun avoidance)
 

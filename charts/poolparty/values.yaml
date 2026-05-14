@@ -93,9 +93,14 @@ cors:
 # graphwise ns).
 #
 # IAM scope: the access key behind awsCredentialsSecret needs
-# bedrock:InvokeModel on the model ARN. SETUP §4b's inline policy
-# already lists anthropic.claude-sonnet-4-5-20250929-v1:0 alongside
-# the Cohere embed model.
+# bedrock:InvokeModel on the inference-profile ARN
+# us.meta.llama3-3-70b-instruct-v1:0 (account-scoped) AND on the
+# foundation-model ARN meta.llama3-3-70b-instruct-v1:0 in each
+# region the profile routes to (us-east-1 / us-east-2 / us-west-2).
+# Bare foundation-model ARN alone is insufficient for newer chat
+# models -- Bedrock authorizes against the profile ARN + the
+# landing-region foundation ARN. SETUP §4b's inline policy lists
+# all four entries alongside the Cohere embed model.
 #
 # Application-level step: backend wiring alone doesn't activate the
 # feature -- after a successful deploy you must also create a
@@ -106,7 +111,7 @@ cors:
 llm:
   enabled: false
   api: bedrock
-  model: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  model: "us.meta.llama3-3-70b-instruct-v1:0"
   region: "us-west-2"
   awsCredentialsSecret: poolparty-aws-credentials
 

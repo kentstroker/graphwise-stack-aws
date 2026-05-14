@@ -293,7 +293,7 @@ poolparty:
   llm:
     enabled: true
     api: bedrock
-    model: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    model: "us.meta.llama3-3-70b-instruct-v1:0"
     region: "us-west-2"
     awsCredentialsSecret: poolparty-aws-credentials
 

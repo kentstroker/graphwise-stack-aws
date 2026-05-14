@@ -15,6 +15,19 @@ spec:
     metadata:
       labels:
         {{- include "poolparty.labels" . | nindent 8 }}
+      annotations:
+        # Hash the AWS-creds overlay so K8s rolls the pod whenever the
+        # operator updates ~/graphwise-secrets.yaml and reruns helm
+        # upgrade. Without this, the umbrella's Secret gets rewritten
+        # with new values but the Deployment spec is unchanged, no
+        # rollout fires, and the pod keeps stale env vars from
+        # secretKeyRef (K8s snapshots secretKeyRef values at pod-start
+        # and never refreshes them). The umbrella exposes
+        # graphrag-secrets.awsCredentials at the root of $.Values;
+        # reach it via $ from this subchart template. Standalone
+        # subchart install (no umbrella) → dig returns the default
+        # empty dict → checksum is a stable hash → no harm.
+        checksum/aws-creds: {{ index $.Values "graphrag-secrets" | toYaml | sha256sum }}
     spec:
       {{- with .Values.podSecurityContext }}
       securityContext:

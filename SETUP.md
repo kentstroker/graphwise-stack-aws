@@ -15,15 +15,24 @@ you will have:
     `AmazonEC2FullAccess`, used from your laptop to run
     `terraform apply`.
   - A **Bedrock user** (e.g. `graphrag-bedrock`) with a narrow
-    inline policy granting `bedrock:InvokeModel` on TWO models:
-    `cohere.embed-english-v3` (used by the `graphrag-components` pod
-    on the EC2 host) and `anthropic.claude-sonnet-4-5-20250929-v1:0`
-    (used by PoolParty's "Build Your Taxonomy" feature). One IAM
-    user, one inline policy, two ARNs.
-- AWS Bedrock available in your region. **No per-model access
-  request needed** — AWS retired the "Modify model access" approval
-  flow; every foundation model is invokable as soon as the IAM
-  policy grants `bedrock:InvokeModel` on its ARN.
+    inline policy granting `bedrock:InvokeModel` on the models the
+    stack uses: `cohere.embed-english-v3` (single foundation-model
+    ARN, used by the `graphrag-components` pod for embeddings) and
+    `us.meta.llama3-3-70b-instruct-v1:0` (a cross-region inference
+    profile for Llama 3.3 70B Instruct, used by PoolParty's "Build
+    Your Taxonomy" feature). The Llama wiring needs the
+    inference-profile ARN plus the foundation-model ARN in each
+    routed region (us-east-1 / us-east-2 / us-west-2) — full JSON
+    in §4b.
+- AWS Bedrock available in your region. **The old "Modify model
+  access" approval flow is retired** for all providers; for Llama,
+  Amazon Nova, Mistral, and Cohere, `bedrock:InvokeModel` on the
+  right ARN is the only gate. **Anthropic Claude is an exception**
+  — invoking any Claude model requires a one-time "use case details"
+  form in the Bedrock Console (Model access → Anthropic → fill form
+  → submit, ~5-15 min approval). The chart defaults to Llama
+  specifically to avoid this gate; Claude is a one-form-away swap
+  if you prefer its quality.
 - Terraform installed and on `PATH`.
 - Python 3 + pip + PyYAML installed (used by the laptop-side
   push-config.sh / pull-config.sh helpers for YAML splicing
@@ -665,7 +674,10 @@ both must be valid Bedrock regions.
          ],
          "Resource": [
            "arn:aws:bedrock:us-west-2::foundation-model/cohere.embed-english-v3",
-           "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+           "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-3-70b-instruct-v1:0",
+           "arn:aws:bedrock:us-east-2::foundation-model/meta.llama3-3-70b-instruct-v1:0",
+           "arn:aws:bedrock:us-west-2::foundation-model/meta.llama3-3-70b-instruct-v1:0",
+           "arn:aws:bedrock:us-west-2:<YOUR-ACCOUNT-ID>:inference-profile/us.meta.llama3-3-70b-instruct-v1:0"
          ]
        }
      ]
@@ -673,12 +685,35 @@ both must be valid Bedrock regions.
    ```
 
    `cohere.embed-english-v3` powers the GraphRAG components embedding
-   call; `anthropic.claude-sonnet-4-5-20250929-v1:0` powers PoolParty's
-   "Build Your Taxonomy" feature (configured via the chart's
-   `poolparty.llm.*` block).
-4. If your Bedrock region isn't `us-west-2`, change it in both ARNs.
-   The empty segment between the two `::` is correct — foundation-
-   model ARNs have no account-id component.
+   call; `us.meta.llama3-3-70b-instruct-v1:0` (a US cross-region
+   inference profile that routes across us-east-1 / us-east-2 /
+   us-west-2) powers PoolParty's "Build Your Taxonomy" feature
+   (configured via the chart's `poolparty.llm.*` block).
+
+   **Why an inference profile + foundation-model ARNs in every routed
+   region:** newer Bedrock chat models (Llama 3.3+, Claude Sonnet
+   3.5 v2+, Nova Pro, etc.) don't support direct on-demand invocation
+   by foundation-model ID — Bedrock requires a system-defined
+   cross-region inference profile. The profile ID is the model ID
+   with a region prefix (`us.` for US). IAM authorizes BOTH the
+   profile ARN AND the foundation-model ARN in whichever region the
+   profile routes the call to, so all three regions appear above.
+   The inference-profile ARN is account-scoped (note `<YOUR-ACCOUNT-ID>`
+   above — replace with the 12-digit account ID from `aws sts
+   get-caller-identity`).
+
+   **Want a different LLM?** Swap the Llama ARNs (3 foundation + 1
+   inference profile) for the model you want. Amazon Nova Pro
+   (`us.amazon.nova-pro-v1:0`), Nova Lite (`us.amazon.nova-lite-v1:0`),
+   and Mistral Large are gate-free alternatives. Anthropic Claude
+   models work but require a one-time **use-case details form** in
+   the Bedrock console (Model access → Anthropic → fill form →
+   submit, ~5-15 min approval).
+4. If your Bedrock region isn't `us-west-2`, swap `us-west-2` for
+   your region in every ARN above (including the inference-profile
+   ARN — it's region-scoped to where you invoke from). The empty
+   segment between the two `::` in the foundation-model ARNs is
+   correct — they have no account-id component.
 5. Click **Next**.
 6. **Policy name:** `bedrock-graphwise-invoke` (the prior name
    `bedrock-cohere-invoke` is fine to keep on existing deployments —

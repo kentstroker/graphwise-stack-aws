@@ -69,9 +69,21 @@ persistence:
 resources:
   requests:
     cpu: 500m
-    memory: 2Gi
-  limits:
     memory: 4Gi
+  limits:
+    memory: 10Gi
+
+# JVM options for the GraphDB process. The image's startup script
+# (/opt/graphdb/dist/bin/graphdb) forwards GDB_JAVA_OPTS as java
+# command-line args. -Xmx caps heap; leave ~2Gi headroom in
+# resources.limits.memory for non-heap (metaspace, threads, off-heap
+# caches) and OS overhead. Why this is set explicitly: without it,
+# the GraphDB JVM defaults to ~1Gi heap regardless of pod memory
+# limit -- container had 4Gi headroom but the JVM never knew, and
+# group-by/distinct queries OOM'd at the JVM level while the
+# container looked healthy. 2026-05-14 incident; rule of thumb is
+# JVM heap = pod limit - 2Gi.
+javaOpts: "-Xmx8g"
 
 replicas: 1
 

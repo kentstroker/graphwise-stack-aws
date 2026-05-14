@@ -357,7 +357,16 @@ it preserves all data and is non-destructive.${RESET:-}
 
       helm upgrade $UMBRELLA_RELEASE $UMBRELLA_CHART_DIR \\
           -n $UMBRELLA_NAMESPACE -f $UMBRELLA_VALUES \\
+          -f $SECRETS_OVERLAY \\
           --timeout $HELM_TIMEOUT
+
+  (The \`-f $SECRETS_OVERLAY\` is mandatory — without it the
+  awsCredentials / n8nLicense / n8nEncryption values fall back to
+  empty defaults and the resulting Secrets are unusable. K8s does
+  not auto-roll pods when only a Secret's contents change, so
+  follow up with \`kubectl -n $UMBRELLA_NAMESPACE rollout restart
+  deploy\` if you're recovering from a previous upgrade that
+  missed this flag.)
 
 WARNING
 if [[ $SKIP_GRAPHRAG -ne 1 ]]; then
@@ -366,6 +375,7 @@ if [[ $SKIP_GRAPHRAG -ne 1 ]]; then
           -n $GRAPHRAG_NAMESPACE \\
           -f $GRAPHRAG_CHART_DIR/values-graphwise.yaml \\
           -f $GRAPHRAG_VALUES \\
+          -f $SECRETS_OVERLAY \\
           --timeout $HELM_TIMEOUT
 
 WARNING

@@ -47,10 +47,13 @@ laptop-zero through ready-for-`terraform-apply`. At a glance:
   - **Terraform user** (e.g. `terraform-demo`) with
     `AmazonEC2FullAccess`.
   - **Bedrock user** (e.g. `graphrag-bedrock`) with a narrow inline
-    policy granting `bedrock:InvokeModel` on TWO models:
-    `cohere.embed-english-v3` (GraphRAG embeddings) and
-    `anthropic.claude-sonnet-4-5-20250929-v1:0` (PoolParty "Build
-    Your Taxonomy"). SETUP §4b walks the full setup.
+    policy granting `bedrock:InvokeModel` on `cohere.embed-english-v3`
+    (single foundation-model ARN, for GraphRAG embeddings) and on
+    `us.meta.llama3-3-70b-instruct-v1:0` (a cross-region inference
+    profile for Llama 3.3 70B Instruct, for PoolParty "Build Your
+    Taxonomy"). The Llama wiring needs the inference-profile ARN +
+    the foundation-model ARN in each routed region — full JSON in
+    SETUP §4b.
   - **Note on actor:** all IAM user/policy creation is performed by
     the **root account user** or an existing **IAM admin user**, NOT
     by `terraform-demo` (which lacks IAM permissions). SETUP §4
@@ -872,11 +875,14 @@ diagnosis. Detailed troubleshooting in
 ### 10. Optional — Activate PoolParty "Build Your Taxonomy"
 
 The chart wires PoolParty 10.2's pluggable LLM backend at deploy time
-(default: AWS Bedrock + Claude Sonnet 4.5, `us-west-2`; configurable
-via `poolparty.llm.*` in `charts/poolparty/values.yaml`). The
-backend wiring sets the `POOLPARTY_LLM_*` env vars on the pod and
-mounts AWS creds from the `poolparty-aws-credentials` Secret (which
-the umbrella's `templates/poolparty-aws-credentials.yaml` materializes
+(default: AWS Bedrock + Llama 3.3 70B Instruct via cross-region
+inference profile `us.meta.llama3-3-70b-instruct-v1:0`, `us-west-2`;
+configurable via `poolparty.llm.*` in `charts/poolparty/values.yaml`
+AND the umbrella override in `charts/graphwise-stack/values.yaml` —
+both must be changed in lockstep, the umbrella wins). The backend
+wiring sets the `POOLPARTY_LLM_*` env vars on the pod and mounts
+AWS creds from the `poolparty-aws-credentials` Secret (which the
+umbrella's `templates/poolparty-aws-credentials.yaml` materializes
 from the same `graphrag-secrets.awsCredentials` overlay block that
 feeds the GraphRAG components pod). But the feature is gated by an
 SMC instance you have to create after deploy.
@@ -888,8 +894,14 @@ kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- env | grep -E '^PO
 ```
 
 Should show `POOLPARTY_LLM_API=bedrock`,
-`POOLPARTY_LLM_MODEL=anthropic.claude-sonnet-4-5-20250929-v1:0`,
-`POOLPARTY_LLM_BEDROCK_REGION=us-west-2`, plus the AWS_* triple.
+`POOLPARTY_LLM_MODEL=us.meta.llama3-3-70b-instruct-v1:0` (the `us.`
+prefix denotes the cross-region inference profile — Bedrock won't
+serve newer chat models via the bare foundation-model ID),
+`POOLPARTY_LLM_BEDROCK_REGION=us-west-2`, plus the AWS_* triple. If
+the AWS_* values are empty strings, the helm upgrade was run without
+`-f ~/graphwise-secrets.yaml` and/or the pod is stale — re-upgrade
+with all three `-f` flags (base + per-deploy + secrets), then
+`kubectl -n graphwise rollout restart deploy/graphwise-stack-poolparty`.
 
 Then activate the SMC Taxonomy Advisor instance (one-time):
 
@@ -900,7 +912,7 @@ Then activate the SMC Taxonomy Advisor instance (one-time):
 2. Log in to PoolParty at `https://poolparty.<sub>.<base>/PoolParty/`
    as `superadmin` / `poolparty`, switch to SMC view.
 3. Expand **External Services** → double-click **Taxonomy Advisor**.
-4. **Name** = any label (e.g. `bedrock-claude-sonnet-4-5`),
+4. **Name** = any label (e.g. `bedrock-llama-3-3-70b`),
    **API Key** = the key Graphwise sent → **Save**.
 
 A sub-node appears under Taxonomy Advisor confirming the instance is

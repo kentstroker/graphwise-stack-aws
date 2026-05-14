@@ -127,9 +127,15 @@ kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- env | grep -E '^PO
 
 The Secret should exist in `graphwise` ns; the pod's environment
 should show `POOLPARTY_LLM_API=bedrock`,
-`POOLPARTY_LLM_MODEL=anthropic.claude-sonnet-4-5-20250929-v1:0`,
+`POOLPARTY_LLM_MODEL=us.meta.llama3-3-70b-instruct-v1:0` (the `us.`
+prefix is the cross-region inference profile — invoking the bare
+foundation-model ID fails with `InvalidRequestException` for newer
+Bedrock chat models),
 `POOLPARTY_LLM_BEDROCK_REGION=us-west-2`, plus `AWS_REGION` /
-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. If `AWS_ACCESS_KEY_ID`
+is blank but the Secret has a real value, the pod is stale from
+before the secrets overlay was merged in — force-roll it with
+`kubectl -n graphwise rollout restart deploy/graphwise-stack-poolparty`.
 
 **Activate the Taxonomy Advisor instance in SMC** (one-time, per
 deployment):
@@ -140,27 +146,45 @@ deployment):
 2. Log in to PoolParty as `superadmin` / `poolparty` → SMC view.
 3. Expand **External Services** (left-side hierarchy) → double-click
    **Taxonomy Advisor**.
-4. **Name** = any label (e.g. `bedrock-claude-sonnet-4-5`),
+4. **Name** = any label (e.g. `bedrock-llama-3-3-70b`),
    **API Key** = the key Graphwise sent → **Save**. A sub-node appears
    under Taxonomy Advisor confirming the instance is active.
 
 **If "Build Your Taxonomy" still says "no LLM configured" after the
 SMC step:**
 
-- IAM policy doesn't include the Claude model ARN. SETUP §4b's
-  inline policy MUST list
-  `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0`
-  alongside the Cohere embed ARN.
-- IAM ARN typo / wrong region in the inline policy — verify the
-  Resource ARNs in SETUP §4b match the region the pod is invoking
-  against. (AWS retired the per-model "Modify model access" flow,
-  so there's no Bedrock Console access step to check.)
-- The pod's AWS env vars aren't set — check
-  `kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- env | grep AWS_`.
-  If empty, the `poolparty-aws-credentials` Secret wasn't created
-  (most likely cause: `poolparty.llm.enabled` is false in the
-  rendered values, or the `graphrag-secrets.awsCredentials` overlay
-  block was empty at install time).
+- IAM policy is missing the inference-profile ARN or the
+  multi-region foundation-model ARNs. SETUP §4b's inline policy MUST
+  list the Cohere embed ARN, the Llama foundation-model ARN in each
+  routed region (us-east-1 / us-east-2 / us-west-2), AND the Llama
+  inference-profile ARN
+  (`arn:aws:bedrock:<region>:<account-id>:inference-profile/us.meta.llama3-3-70b-instruct-v1:0`).
+  Foundation-model ARN alone is insufficient — Bedrock authorizes
+  against both the profile ARN and whichever region the call lands
+  in.
+- The pod's AWS env vars are empty — check
+  `kubectl -n graphwise exec deploy/graphwise-stack-poolparty -- printenv AWS_ACCESS_KEY_ID | head -c 4`.
+  Expected: `AKIA`. Blank means either the
+  `poolparty-aws-credentials` Secret was rendered empty (helm
+  upgrade missed `-f ~/graphwise-secrets.yaml` — re-run with it) OR
+  the pod is stale from before the secrets-overlay upgrade (Secret
+  contents updated but Deployment spec didn't, so K8s didn't
+  auto-roll — run
+  `kubectl -n graphwise rollout restart deploy/graphwise-stack-poolparty`).
+  If the env var has a real value but invocation still fails with an
+  IAM error against `assumed-role/...-ec2-role`, the SDK is falling
+  through to IMDS for some reason — usually means the env value is
+  an empty string, not actually unset.
+- `InvalidRequestException ... with on-demand throughput isn't
+  supported` — model was changed to a bare foundation-model ID. Use
+  the inference-profile ID instead (`us.<model-id>`); see CLAUDE.md
+  → "PoolParty 10.2 pluggable LLM wiring → Inference profile
+  requirement".
+- `ResourceNotFoundException ... use case details have not been
+  submitted` — only fires for Anthropic Claude models. Fill the
+  one-time use-case form in the Bedrock Console (Model access →
+  Anthropic → fill form → submit), wait 5–15 min, retry. The chart
+  defaults to Llama specifically to avoid this gate.
 
 The actual Bedrock API error (if any) appears in
 `kubectl -n graphwise logs deploy/graphwise-stack-poolparty | grep -iE 'bedrock|accessdenied'`.

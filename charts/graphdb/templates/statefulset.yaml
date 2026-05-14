@@ -37,6 +37,10 @@ spec:
               value: /etc/graphdb/graphdb.license
             - name: graphdb__external___url
               value: {{ required "externalUrl must be set" .Values.externalUrl | quote }}
+            {{- with .Values.javaOpts }}
+            - name: GDB_JAVA_OPTS
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 7200
