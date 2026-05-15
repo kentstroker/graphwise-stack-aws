@@ -2,16 +2,17 @@
 
 **Maintainer:** Kent Stroker
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. It is the spine — the *rules* and live state live here; the *narratives* (rationale, full Job templates, walkthroughs) live under `docs/claude/`.
 
 ## What this repo is
 
 A **Helm-on-KIND** deployment of the Ontotext / Graphwise **PoolParty** ecosystem plus the **GraphRAG** chatbot suite, on a single **AWS EC2** instance (Amazon Linux 2023, Docker, single-node KIND cluster). All ingress is HTTPS via ingress-nginx + cert-manager + Let's Encrypt. It is explicitly a **demo / evaluation** deployment — not production-ready — see the warning block in [DEPLOY.md](DEPLOY.md) for the full list of what would need to change for production use.
 
-**OS history:** previously deployed on Debian 13 with rootless podman. Migrated to AL2023 + Docker in late 2026 after consistent "ssh fails immediately after scp" failures on Debian 13 + AWS Nitro that nobody could explain; AL2023 doesn't trigger the issue. KIND on Docker is also better-supported (KIND-on-podman is still `KIND_EXPERIMENTAL_PROVIDER`).
+**Audience and licensing.** Primarily for **internal use by Graphwise field presales engineers**. Public (MIT-licensed, AS-IS, no warranty, no support — see [LICENSE](LICENSE)) so that customers, partners, and the semantic-web community can reference it when building their own evaluation environments. External users must supply their own Graphwise license files (PoolParty/GraphDB EE/UnifiedViews — obtained by contacting Graphwise), their own AWS account, and their own domain. The repo ships zero license files and no access to Graphwise's shared presales domain `semantic-proof.com`.
 
+**OS history.** Previously deployed on Debian 13 with rootless podman. Migrated to AL2023 + Docker in late 2026 after consistent "ssh fails immediately after scp" failures on Debian 13 + AWS Nitro that nobody could explain; AL2023 doesn't trigger the issue. KIND on Docker is also better-supported (KIND-on-podman is still `KIND_EXPERIMENTAL_PROVIDER`).
 
-**Audience and licensing.** This repo is primarily for **internal use by Graphwise field presales engineers**. It is public (MIT-licensed, AS-IS, no warranty, no support — see [LICENSE](LICENSE)) so that customers, partners, and the semantic-web community can reference it when building their own evaluation environments. External users must supply their own Graphwise license files (PoolParty/GraphDB EE/UnifiedViews — obtained by contacting Graphwise), their own AWS account, and their own domain. The repo ships zero license files and no access to Graphwise's shared presales domain `semantic-proof.com`.
+## Layout
 
 No application source code is in this repo. Only:
 
@@ -20,48 +21,22 @@ No application source code is in this repo. Only:
 - `charts/graphwise-stack/` — umbrella Helm chart (PoolParty + GraphDB ×2 + addons + console + Keycloak + supporting graphrag Secrets/Postgres)
 - `charts/{poolparty,graphdb,addons,console,poolparty-elasticsearch,keycloak-realms}/` — per-app sub-charts
 - `charts/vendor/graphrag*/` — vendored GraphRAG charts (chatbot, conversation, components, workflows) — installed as a separate Helm release
-- Helper scripts under `scripts/`: `cluster-bootstrap.sh`, `cluster-resume.sh`, `cluster-stop.sh`, `reset-helm.sh`, `render-values.sh`, `install-licenses.sh`, `extract-poolparty-realm.sh`, `preflight-reset-helm.sh`, `validate-bootstrap.sh`, `validate-stack.sh`
-- Laptop-side helpers under `scripts/laptop/`: `push-to-ec2.sh`, `pull-from-ec2.sh` (legacy backup, deprecated), and the symmetric deployment-state pair `pull-config.sh` / `push-config.sh` — one command pulls/pushes `~/graphwise-secrets.yaml` + the three license files + the live wildcard TLS cert. `pull-config.sh` writes a dated snapshot folder at `~/Downloads/graphwise-config-<UTC-timestamp>/` (each pull stands alone — no clobber of `$HOME`), captures the EC2's live `charts/graphwise-stack/values.yaml` + diff vs the git baseline, and grabs `~/dashboard-kubeconfig.yaml` for convenience (NOT pushed back — the bearer token is tied to that cluster's signing key). `push-config.sh` run with no flags **auto-discovers the most recent snapshot** under `~/Downloads/graphwise-config-*` and pushes its contents to the canonical paths the downstream EC2 scripts read; explicit `--secrets-file` / `--licenses-dir` override the auto-discovery for older snapshots. `cluster-bootstrap.sh` detects the saved cert at `~/wildcard-tls-saved.yaml` and applies the Secret BEFORE creating the Certificate resource (cert-manager skips the LE issuance call → saves a per-week rate-limit slot).
+- Helper scripts under `scripts/` and `scripts/laptop/` — see `docs/claude/scripts.md`
 - Vendor license files under `files/licenses/` (gitignored)
 
 Changes are usually to a chart's `values.yaml` / `templates/`, the umbrella's `templates/`, or `scripts/render-values.sh`.
 
-Companion docs: [README.md](README.md) (one-page summary + zero-to-deployed checklist), [QUICKSTART.md](QUICKSTART.md) (sequential 0-18 step deploy for experienced operators), [SETUP.md](SETUP.md) (laptop-zero prerequisites), [DEPLOY.md](DEPLOY.md) (end-to-end deploy walkthrough), [HOWITWORKS.md](HOWITWORKS.md) (plain-English layered architecture explainer for K8s-naive operators), [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) (URLs / credentials), [infra/README.md](infra/README.md) (Terraform module).
+**Companion docs:** [README.md](README.md) (one-page summary), [QUICKSTART.md](QUICKSTART.md) (0-18 step deploy), [SETUP.md](SETUP.md) (laptop-zero prereqs), [DEPLOY.md](DEPLOY.md) (walkthrough), [HOWITWORKS.md](HOWITWORKS.md) (layered architecture explainer), [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) (URLs / credentials), [infra/README.md](infra/README.md) (Terraform module).
 
-## Architecture
+## Architecture in one paragraph
 
-### Two Helm releases
+The Helm path runs as **two separate releases**: `graphwise-stack` (in `graphwise` ns — PoolParty, GraphDB ×2, ES, console, addons, Keycloak CR + Postgres + realm imports, **plus** the supporting Secrets/ConfigMap/Postgres the GraphRAG pods need, materialized in the `graphrag` namespace) and `graphrag` (in `graphrag` ns — vendored chatbot/conversation/components/workflows pods from `charts/vendor/graphrag/`, installed as its own release because the vendor templates don't set `metadata.namespace` and would otherwise land in `graphwise` where they can't mount the supporting Secrets).
 
-The Helm path runs as **two separate releases**, not one umbrella:
+**Order matters.** Install: umbrella first (creates Secrets/Postgres in `graphrag`), then graphrag. Uninstall: graphrag first (so pods release mounts/connections), then umbrella. `scripts/reset-helm.sh` enforces both.
 
-1. **`graphwise-stack`** in the `graphwise` namespace — PoolParty, GraphDB (×2), Elasticsearch, console, addons (ADF/Semantic Workbench/GraphViews/RDF4J/UnifiedViews), Keycloak CR + operator-managed Postgres + realm imports, **plus** the Secrets and ConfigMap and the n8n CNPG Postgres that the GraphRAG pods need (these are created in the `graphrag` namespace by the umbrella's own templates so the GraphRAG pods can mount them).
-2. **`graphrag`** in the `graphrag` namespace — vendored chatbot/conversation/components/workflows pods. Installed from `charts/vendor/graphrag/` directly, not as a sub-dependency of the umbrella.
+## Subdomain-per-app routing
 
-Why split: the vendored GraphRAG sub-charts don't set `metadata.namespace` on their resources, so they default to the Helm release namespace. If we kept GraphRAG as a dep of the umbrella (release ns = `graphwise`), the chatbot/conversation/components/workflows pods would land in `graphwise` and couldn't mount the supporting Secrets that need to live in `graphrag` (pods can only mount Secrets from their own namespace, and bare-name Service references resolve in-namespace too — `graphrag-postgres-n8n-rw` from a pod in `graphwise` would fail). Installing GraphRAG as its own release in `graphrag` is the cleanest fix; alternatives (forking vendor templates, or moving every supporting Secret into `graphwise`) all bleed worse.
-
-Install/uninstall order matters:
-- **Install**: umbrella first (it creates the supporting Secrets and Postgres in `graphrag`), then graphrag (its pods mount them).
-- **Uninstall**: graphrag first (so pods stop holding open volume mounts / DB connections), then umbrella.
-
-`scripts/reset-helm.sh` enforces both orderings.
-
-### Lifecycle scripts
-
-| Script | Purpose |
-|---|---|
-| `scripts/cluster-bootstrap.sh` | One-time install of cluster operators + observability: ingress-nginx, cert-manager (+ LE `letsencrypt-prod` ClusterIssuer), CNPG, Keycloak operator, metrics-server, **Kubernetes Dashboard** (kubectl apply v2.7.0 + dashboard-admin ServiceAccount + ClusterRoleBinding + permanent `dashboard-admin-token` Secret + auto-generated `~/dashboard-kubeconfig.yaml` for browser sign-in), **kube-prometheus-stack** (Prometheus + Grafana + AlertManager + node-exporter + kube-state-metrics). Provisions per-host Ingresses for the three observability UIs (Dashboard backend-protocol HTTPS; Prometheus basic-auth-gated `demo / rdf#rocks`; Grafana own-login `admin / demo-graphwise-2026`). The `graphwise` image-pull secret (for `maven.ontotext.com`) is created by `reset-helm.sh` — it reads `maven.user`/`maven.pass` from `~/graphwise-secrets.yaml` (consolidated single-file source for all operator secrets; legacy `~/.ontotext/maven-{user,pass}` plain-text files still work as fallback). Idempotent. Required env: `LE_EMAIL`. |
-| `scripts/cluster-resume.sh` | Restart the KIND cluster after an EC2 stop/start. Finds the cluster's node containers via the `io.x-k8s.kind.cluster=<name>` label, `docker start`s them, and sets `--restart=unless-stopped` so subsequent reboots are a non-event. Polls `/readyz` until the API answers. |
-| `scripts/cluster-stop.sh` | Politely quiesce the application workloads (graphwise + graphrag namespaces) before stopping the EC2. Scales every Deployment + StatefulSet to 0 replicas, waits up to 90s for pods to drain, then prints the AWS CLI / Console commands to stop the EC2. Idempotent. Operator namespaces are left running -- they tolerate hard stop. PVCs and Secrets all preserved. Optional polish over a hard EC2 stop, which apps tolerate via WAL recovery anyway. |
-| `scripts/render-values.sh [--umbrella\|--graphrag\|--both] <subdomain> [base_domain]` | Emits Helm values overlays. **Auto-invoked by `reset-helm.sh`** before each `helm upgrade --install` — the standard deploy flow does not call it manually. Default (`--both`) writes two files — `/tmp/values-<sub>.yaml` (umbrella) and `/tmp/values-<sub>-graphrag.yaml` (graphrag). `--umbrella`/`--graphrag` emit just one to stdout. Computes every per-app hostname (`poolparty.<sub>.<base>`, `auth.<sub>.<base>`, `graphrag.<sub>.<base>`, `graphdb.<sub>.<base>`, `graphdb-projects.<sub>.<base>`, `adf.<sub>.<base>`, `semantic-workbench.<sub>.<base>`, `graphviews.<sub>.<base>`, `rdf4j.<sub>.<base>`, `unifiedviews.<sub>.<base>`; console at apex `<sub>.<base>`). Run manually only to inspect the rendered overlay or feed it into a non-destructive `helm upgrade`. |
-| `scripts/install-licenses.sh` | kubectl-creates the three license Secrets (`poolparty-license`, `graphdb-license`, `unifiedviews-license`) in the `graphwise` namespace from `files/licenses/*`. Idempotent. |
-| `scripts/preflight-reset-helm.sh [--skip-graphrag] [--strict]` | Read-only pre-flight gate for `reset-helm.sh`. Verifies every precondition the destructive uninstall + reinstall will need so the operator catches broken-from-the-start cases before Helm spends 10-15 min on doomed pods. Categories: tools (`kubectl`/`helm`/`jq`/`python3`/`curl`/`dig`/`openssl` + PyYAML), cluster reachability (early-aborts with exit 2 if `kubectl get nodes` fails -- no point checking anything else), operator pods Ready (cert-manager / ingress-nginx / cnpg-system / keycloak-operator / reflector), `letsencrypt-prod` ClusterIssuer Ready, repo state (`charts/keycloak-realms/files/poolparty-realm.json` exists AND has no leftover `${POOLPARTY_*}` placeholders), three license files on disk, `~/graphwise-secrets.yaml` field-by-field completeness (parsed via Python+PyYAML), DNS apex + sample-wildcard resolution + match, AWS IMDSv2 reachable + instance role bound (cert-manager DNS-01 needs it), and an actual HTTP basic-auth probe against `https://maven.ontotext.com/v2/` -- catches typo'd creds before ImagePullBackOff. Reports `~/wildcard-tls-saved.yaml` presence as informational (saves an LE rate-limit slot). Color-coded categorized output. Exit 0 = pass; 1 = any required check failed (or any warning in `--strict`); 2 = cluster unreachable. `--skip-graphrag` mirrors `reset-helm.sh`'s flag (skips maven auth + `graphrag-secrets` blocks). Read-only; idempotent; safe to re-run after every fix. Standalone (not wired into reset-helm.sh) -- operator runs it manually as the step between `install-licenses.sh` and `reset-helm.sh`. |
-| `scripts/validate-bootstrap.sh` | One-shot post-cluster-bootstrap health check. Read-only; clears screen and walks every operator namespace (cert-manager, ingress-nginx, cnpg-system, monitoring, kubernetes-dashboard, keycloak operator, kube-system metrics-server), the `letsencrypt-prod` ClusterIssuer, the `~/dashboard-kubeconfig.yaml` artifact, and a cluster-wide non-Running-pod sweep. Prints color-coded pass/fail per check + an overall verdict. Exit 0 on green, 1 on any failure (so it can gate automation). Run any time after `cluster-bootstrap.sh`. Image-pull secret check is intentionally NOT here -- that secret is created by `reset-helm.sh`, not bootstrap; checked in `validate-stack.sh` instead. |
-| `scripts/validate-stack.sh` | One-shot post-`reset-helm.sh` health check. Read-only; clears screen and walks the helm releases (umbrella + optional graphrag), every workload pod across `graphwise` / `keycloak` / `graphrag` namespaces, the three license Secrets, the `graphwise` image-pull secret in both consuming namespaces, the GraphDB rename (catches alias-collision regression), `staging-data` PVCs in both namespaces, the two Keycloak post-install Jobs (`keycloak-bootstrap-admin` + `keycloak-authz-import`), every cert-manager Certificate, OIDC issuer match for `master` / `poolparty` / `graphrag` realms (the historic stack-breaker), and an HTTPS reachability sweep against every app URL with per-app expected status codes. Closes with a "Where to click next" panel listing key login URLs + credentials. Reads `GRAPHWISE_APEX` env var (set by cloud-init); falls back to deriving from Ingresses. Exit 0 on green, 1 on any failure. |
-| `scripts/reset-helm.sh [--yes] [--skip-graphrag] <subdomain> [base_domain]` | Wipe and reinstall the umbrella (and graphrag unless skipped). Pre-flight: checks the three license Secrets (`poolparty-license`, `graphdb-license`, `unifiedviews-license`) exist in `graphwise` ns; if missing, fails fast with a hint to run `install-licenses.sh` first. Then uninstalls graphrag first (if present) then umbrella, deletes all PVCs in `graphwise` / `keycloak` / `graphrag`, re-renders both values overlays via `render-values.sh`, runs `helm dependency update` on `charts/graphwise-stack` (and on `charts/vendor/graphrag` unless `--skip-graphrag`), then `helm upgrade --install` umbrella, then graphrag (unless skipped), each with `--timeout 15m`. `--yes` skips the destructive-confirmation prompt; `--skip-graphrag` is the umbrella-only path for operators without Maven creds yet (rerun without the flag once they have credentials — umbrella is upgraded in place, graphrag is installed fresh). The arg parser accepts both flags in any position. Subdomain and base-domain are validated against RFC 1123 before anything destructive runs (so e.g. a `--yes` typo can't end up in the base-domain slot). Does **not** touch operators installed by `cluster-bootstrap.sh`. **Side-effect:** re-renders the apex landing page ConfigMap via Helm `tpl` so the console always reflects current values. |
-
-### Subdomain-per-app routing
-
-Each app gets its own subdomain so ingress-nginx can mint a separate LE cert per app and each app's webapp doesn't need a context-path-prefix story:
+Each app gets its own subdomain so ingress-nginx can mint a separate cert per app and each app's webapp doesn't need a context-path-prefix story:
 
 | App | Hostname |
 |---|---|
@@ -80,377 +55,67 @@ Each app gets its own subdomain so ingress-nginx can mint a separate LE cert per
 | Prometheus | `prometheus.<sub>.<base>` |
 | Grafana | `grafana.<sub>.<base>` |
 
-DNS needs both `<sub>.<base>` (apex) and `*.<sub>.<base>` (wildcard) A-records to the EIP. The Terraform module's `route53_dns_records` output prints both. **EIP must be pre-allocated** outside Terraform and passed via `existing_eip_allocation_id` (see "EIP pre-allocation" section below) so the EIP — and therefore the DNS records — survive `terraform destroy`/`apply` cycles.
+DNS needs both `<sub>.<base>` (apex) and `*.<sub>.<base>` (wildcard) A-records to the EIP. The Terraform module's `route53_dns_records` output prints both. **EIP must be pre-allocated** via `existing_eip_allocation_id` in `terraform.tfvars` so it survives `terraform destroy`/`apply` cycles — see `docs/claude/aws-and-terraform.md`.
 
-### Keycloak hostname rule (the #1 cause of stack breakage)
+## Critical rules (the ones that cause stack breakage)
 
-Spring Security's `NimbusJwtDecoder.withIssuerLocation()` does a **strict equality check** between the URL the OIDC client is handed and the `issuer` field in Keycloak's discovery doc. If they don't match exactly, every webapp's `jwtDecoder` bean throws at boot (`IllegalStateException: The Issuer ... did not match`) and the app is dead until you fix the URL and recreate.
+- **Keycloak hostname must be exactly `auth.<sub>.<base>` with `strict: true` on the CR** (NO `/auth` path). Spring Security's `NimbusJwtDecoder.withIssuerLocation()` is strict-equality on the issuer URL; any drift kills every OIDC client at boot. The operator-generated Ingress lacks a `tls:` block when `httpEnabled: true`, so we set `spec.ingress.enabled: false` on the CR and ship our own Ingress with the TLS block. → `docs/claude/keycloak.md`
 
-Set on the Keycloak CR at `charts/graphwise-stack/templates/keycloak.yaml`:
+- **PoolParty `llm.model` is duplicated across TWO chart layers** (`charts/poolparty/values.yaml` and `charts/graphwise-stack/values.yaml`); umbrella wins. Grep `claude\|llama\|nova` across `charts/` before any LLM-config edit. Newer Bedrock chat models (Llama 3.3+, Claude Sonnet 3.5 v2+, Nova, Mistral Large 2) need an **inference profile ID** (`us.` / `eu.` / `apac.` prefix) — bare foundation-model IDs return `InvalidRequestException`. Secret-only updates require a manual `kubectl rollout restart` — `secretKeyRef` env vars are snapshotted at pod start. → `docs/claude/poolparty-llm.md`
 
-```yaml
-spec:
-  hostname:
-    hostname: auth.<sub>.<base>     # NO /auth path
-    strict: true
-```
+- **GraphDB JVM heap is set explicitly** to `-Xmx8g` (memory limit `10Gi`) in `charts/graphdb/values.yaml`. Without `-Xmx`, the JVM defaults to ~1Gi regardless of pod limit and `GROUP BY` / `DISTINCT` queries fail with `Insufficient free Heap Memory`. **Rule of thumb: heap = pod memory limit − 2Gi.**
 
-Issuer claim becomes `https://auth.<sub>.<base>/realms/<realm>`. Every OIDC client (PoolParty, ADF, Semantic Workbench, graphrag-conversation) must point at exactly this URL. Confirm with:
+- **Nested-subchart `.tgz` is gitignored** (`charts/*/charts/*.tgz` + `charts/*/Chart.lock`). Committing them creates the silent-stale-tarball footgun: Helm prefers the tarball over source edits, so chart changes silently no-op. The umbrella's own `charts/graphwise-stack/charts/*.tgz` IS committed (vendored deps, intentional). If you see addons resources missing expected fields after an edit, suspect this — `rm charts/addons/charts/*.tgz charts/addons/Chart.lock` then `helm dependency update`.
 
-```bash
-curl -s https://auth.<sub>.<base>/realms/master/.well-known/openid-configuration | jq -r .issuer
-# Must show: https://auth.<sub>.<base>/realms/master
-```
+- **GraphDB subchart fullname must keep `.Chart.Name`** in the helper (`printf "%s-%s" .Release.Name .Chart.Name`). The umbrella installs `charts/graphdb/` twice as aliases (`graphdb-embedded`, `graphdb-projects`); dropping `.Chart.Name` collapses both into one manifest and the second silently overwrites the first. PoolParty's `internalUrl` (`http://graphwise-stack-graphdb-embedded:7200`) depends on the prefixed name. → `docs/claude/chart-internals.md`
 
-### Keycloak Ingress lesson (the one that bit us)
+- **TLS: one wildcard cert via Route 53 DNS-01**, reflector mirrors it into every consuming namespace. Every Ingress's `tls.secretName: wildcard-tls`. `letsencrypt-prod` only — staging chain isn't trusted by in-cluster JVM clients (PoolParty → Keycloak), TLS handshake fails. → `docs/claude/tls-and-ingress.md`
 
-The Keycloak operator (v26.x) generates an Ingress whose shape is driven by `spec.http.httpEnabled`. With `httpEnabled: true` (our case — TLS terminates at ingress-nginx, the Keycloak pod speaks plain HTTP internally) the operator emits an Ingress with **no `tls:` block**. cert-manager's ingress-shim only mints a Certificate when an Ingress carries a `tls.hosts` + `tls.secretName` pair, so the `cert-manager.io/cluster-issuer` annotation alone produced an HTTP-only Ingress with no LE cert and every `https://auth.<apex>` request from in-cluster clients failed the TLS handshake.
+- **Two-IAM-user actor model** (AWS). `terraform-demo` (laptop, infra provisioning) and `graphrag-bedrock` (runtime, baked into Secret). All IAM creation done by root or IAM-admin, NEVER by `terraform-demo` itself. EIP must be pre-allocated via `existing_eip_allocation_id` (required). AMI is locked via `lifecycle.ignore_changes` + `ami_override` to prevent `terraform apply` from destroying the EC2 when AWS publishes an AL2023 refresh. → `docs/claude/aws-and-terraform.md`
 
-The operator's CR doesn't expose a way to inject `tls:` directly. Fix shipped in this repo:
+- **Mac → EC2 sync during iteration**: edits land on Mac, `scp` to EC2 before `helm upgrade`. Git is intentionally not in the loop until changes settle. `helm get manifest graphwise-stack -n graphwise` confirms what was actually applied — useful when an expected change isn't taking effect.
 
-1. `charts/graphwise-stack/templates/keycloak.yaml` sets `spec.ingress.enabled: false` — operator stops creating its own Ingress.
-2. `charts/graphwise-stack/templates/keycloak-ingress.yaml` ships our own Ingress with the TLS block, the cert-manager annotation, and backend `<keycloak-name>-service:8080`.
+- **Default password convention: `rdf#rocks`** for chart-default passwords (Keycloak/n8n/conversation Postgres, ingress basic-auth, conversation Keycloak client secret). Exceptions: `keycloak.bootstrapAdmin.password = "admin"` (PoolParty's chart hard-codes it), `n8nEncryption.key` (auto-generated by Terraform), Grafana `demo-graphwise-2026` (historic).
 
-Don't re-enable the operator-managed Ingress without re-checking that the TLS block lands on the resulting object.
+## Lifecycle scripts (one-liners)
 
-### KIND lifecycle on EC2
+Full descriptions in `docs/claude/scripts.md`.
 
-KIND nodes are **Docker** containers (we migrated off podman in late 2026 — see the OS-history note in §"What this repo is"). On EC2 stop/start `docker.service` comes back automatically, but containers without a restart policy stay `Exited` — kubectl then fails with `connection refused on 127.0.0.1:6443`. `scripts/cluster-resume.sh` starts them and sets `--restart=unless-stopped` so the next reboot is a non-event. Run it any time after a fresh boot; it's idempotent.
+- `scripts/cluster-bootstrap.sh` — one-time install of cluster operators + observability (ingress-nginx, cert-manager + LE issuer, CNPG, Keycloak operator, metrics-server, Dashboard, kube-prometheus-stack).
+- `scripts/cluster-resume.sh` — restart KIND nodes after EC2 stop/start; sets `--restart=unless-stopped`.
+- `scripts/cluster-stop.sh` — quiesce app workloads (scale-to-0) before stopping the EC2.
+- `scripts/render-values.sh` — emit `$HOME/.graphwise-stack/values-<sub>.yaml` + `$HOME/.graphwise-stack/values-<sub>-graphrag.yaml`. Auto-invoked by `reset-helm.sh`. (Persistent across reboots; AL2023 wipes `/tmp` on boot, so the prior `/tmp` location was a footgun after `cluster-stop.sh` → start.)
+- `scripts/install-licenses.sh` — create the three license Secrets in `graphwise` ns from `files/licenses/`.
+- `scripts/preflight-reset-helm.sh` — read-only pre-flight gate (tools, cluster, operators, DNS, IMDS, maven auth probe).
+- `scripts/validate-bootstrap.sh` — post-bootstrap health check.
+- `scripts/validate-stack.sh` — post-reset-helm.sh health check (pods, certs, OIDC issuers, HTTPS reachability).
+- `scripts/reset-helm.sh [--yes] [--skip-graphrag] <subdomain> [base_domain]` — wipe and reinstall both releases.
+- `scripts/laptop/{pull,push}-config.sh` — symmetric snapshot pair for `~/graphwise-secrets.yaml` + licenses + live wildcard cert.
 
-### Mac → EC2 sync during active troubleshooting
+## Chart internals — pointers
 
-While iterating on the Helm charts, edits land on the developer's Mac and get scp'd to the EC2 host. Git is intentionally not in the loop until the changes settle. After every chart/script edit, sync the affected files before `helm upgrade`:
+Detail in `docs/claude/chart-internals.md`:
 
-```bash
-scp -i $GRAPHWISE_KEY <changed-files> $GRAPHWISE_USER@$GRAPHWISE_HOST:~/graphwise-stack-aws/<paths>/
-```
+- GraphDB subchart fullname pattern (alias-aware) + namespace split (`graphdb-embedded` in `graphwise`, `graphdb-projects` in `graphdb`).
+- GraphDB JVM heap rationale (`-Xmx8g` / limit `10Gi`).
+- Staging-data three-layer wiring (`/home/ec2-user/staging-data/` → KIND `extraMounts` → PVC per namespace).
+- Console landing page Helm `tpl` pattern.
+- UnifiedViews `uv-password-reset` Job (SPARQL-resets admin/admin via RDF4J in-cluster).
+- `graphrag-vectors-index` Job (PUTs the Elasticsearch index graphrag-components's health probe requires).
+- KIND lifecycle on EC2.
+- Default password convention details.
 
-`helm get manifest graphwise-stack -n graphwise` confirms what was actually applied — useful when an expected change isn't taking effect.
+Keycloak-specific Jobs (authz-import, graphrag-realm-patch, bootstrap-admin race fix) are in `docs/claude/keycloak.md`.
 
-### Two-IAM-user actor model (AWS account hygiene)
+## Resolved bug catalog
 
-Two distinct IAM users with different blast radii — never combine into one:
+Patterns to recognize when something looks familiar — full write-ups in `docs/claude/bug-history.md`:
 
-1. **Terraform user** (e.g. `terraform-demo`) with `AmazonEC2FullAccess` PLUS a scoped inline IAM policy `graphwise-stack-iam` (see SETUP §4a "Attach scoped IAM permissions for the EC2 instance role"). Holds infrastructure-provisioning credentials. Lives only on the operator's laptop. Used by `terraform apply`, `aws configure`'s default profile, `aws ec2-instance-connect ssh`, and every laptop-side AWS CLI invocation.
-2. **Bedrock user** (e.g. `graphrag-bedrock`) with a narrow inline policy granting `bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` on `cohere.embed-english-v3` only. Holds runtime credentials baked into a Helm Secret on the EC2 (`graphrag-components-aws-credentials` in `graphrag` ns) and read by the `graphrag-components` pod every embedding call.
+- PoolParty stuck on Keycloak `uma2-configuration` → realm export `${...}` placeholders not substituted.
+- `unifiedviews` `CrashLoopBackOff` → stale nested-subchart `.tgz` shadowed the source initContainer fix.
+- GraphDB subchart fullname collision under umbrella aliases.
+- `graphrag-realm-patch` `BackoffLimitExceeded` on cold-cache → race with realm-import + Keycloak v26 role-model change.
 
-**Critical actor rule:** all IAM user/policy/access-key creation in §4 of SETUP.md is performed by the **root user** OR an existing **IAM admin user** (carrying `AdministratorAccess` or `IAMFullAccess`). NEVER by `terraform-demo` itself — `terraform-demo` lacks `iam:*` on its own user resource and attempting to grant itself perms returns `AccessDenied: iam:PutUserPolicy on resource: user terraform-demo`. SETUP §4 opens with an actor table to make this unmistakable; if SSM-style features are added that require additional IAM permissions, those grants are also performed by root/IAM-admin (same pattern).
-
-**`graphwise-stack-iam` inline policy** (mandatory): Terraform's `infra/terraform/main.tf` creates an `aws_iam_role` + `aws_iam_role_policy` + `aws_iam_instance_profile` so the EC2 host can talk to Route 53 (cert-manager DNS-01 wildcard cert issuance — see "Why letsencrypt-prod only" below). `AmazonEC2FullAccess` does NOT include `iam:*`, so without the scoped inline policy attached to `terraform-demo`, both `terraform apply` and `terraform destroy` fail with `AccessDenied: iam:CreateRole` / `iam:ListInstanceProfilesForRole`. Policy is scoped to role + instance-profile names matching `graphwise-stack-*` — `terraform-demo` still can't touch any other IAM resources in the account. Full JSON in SETUP §4a.
-
-**EC2 Instance Connect special case:** `aws ec2-instance-connect ssh` requires `ec2-instance-connect:SendSSHPublicKey` which is NOT in `AmazonEC2FullAccess`. Operators who use this path attach a small inline policy `ec2-instance-connect-send-key` to `terraform-demo` once (Console-only step, root/IAM-admin performs it). The browser-based "Connect" tab is documented as not working out of the box — its source IP is AWS's service prefix list, blocked by the strict `admin_cidr` SG rule. Manual SG rule add per SETUP §9.
-
-### EIP pre-allocation (required, not optional)
-
-`existing_eip_allocation_id` in `terraform.tfvars` is a **required** field (sits in the REQUIRED block of `terraform.tfvars.example`, not optional). Why: Terraform's default behavior when this is empty is to allocate a fresh EIP each apply AND release it on each `terraform destroy` — so every rebuild gets a different IP and DNS records become stale.
-
-The architecture is: operator allocates the EIP outside Terraform (Console or `aws ec2 allocate-address --domain vpc`), captures the Allocation ID (`eipalloc-...`) AND Public IPv4. The Allocation ID goes in `terraform.tfvars`; the Public IPv4 goes in the two DNS A records (`<sub>.<base>` apex + `*.<sub>.<base>` wildcard). Terraform creates only the `aws_eip_association` (binding the existing EIP to the EC2) — destroy detaches but never releases. EIP + DNS are set-and-forget across destroy/apply cycles.
-
-The Terraform `eip_mode` output reports which path is active (`existing (allocation_id=...)` or `fresh (allocated this apply)`). Walkthrough in SETUP.md §6 (Console + CLI paths to allocate). Lost an entire validated demo deployment to a fresh-EIP rebuild once before promoting this to required; the workflow doesn't recover gracefully when DNS goes stale mid-deployment.
-
-### AMI lock pattern (terraform safety, two layers)
-
-`data "aws_ami" "al2023_arm64"` uses `most_recent = true` because we want fresh deployments to land on the latest AL2023. But every subsequent `terraform plan` re-resolves to a potentially-different AMI ID — and `ami` is a force-replace attribute, so an unscoped `terraform apply` after AWS publishes any AL2023 refresh **destroys the EC2** (root EBS, every PVC) just to "update" the AMI. Lost a fully-validated demo deployment to this exact bug; the rule is now hard-enforced.
-
-Two-layer protection:
-
-1. **Belt — `lifecycle.ignore_changes = [user_data_base64, ami]` on `aws_instance.stack`** (in `infra/terraform/main.tf`). Once provisioned, Terraform never marks the instance for replacement on AMI grounds even if the data-source resolution drifts. Protects every deployment automatically; no operator action required.
-2. **Braces — the `ami_override` variable.** After first apply, operator runs `terraform output -raw ami_id` and pastes the resulting `ami-...` into `terraform.tfvars` as `ami_override = "ami-..."`. Re-running `terraform plan` MUST print "No changes." This makes plan output clean (no spurious AMI diffs) and makes intentional AMI upgrades an explicit `terraform.tfvars` edit rather than a side-effect. Documented as DEPLOY.md §1.5 — a required post-first-apply step.
-
-The Safety section in `infra/README.md` is the canonical operator-facing reference. Anything that wants to `terraform apply` after first provision uses scoped `-target=` syntax, and `terraform plan` output is read character-by-character before applying.
-
-### Realm export `${...}` placeholder substitution
-
-Ontotext's `poolparty-keycloak` image ships a realm JSON with literal `${POOLPARTY_*}` env-var-style placeholders the operator-managed `KeycloakRealmImport` CR doesn't substitute. Without intervention, Keycloak imports the literal strings as the `superadmin` password and `ppt` client secret, breaking every PoolParty login.
-
-`scripts/extract-poolparty-realm.sh` jq-substitutes both at extract time as part of producing the realm JSON the chart ships:
-
-- `(.clients[] | select(.clientId == "ppt") | .secret) = "ohIP3x4XuoCsGDsGlZRvNvO5VN6veFb5"` (PoolParty image's baked-in client secret — image-version coupled; revisit if the image is bumped)
-- `(.users[] | select(.username == "superadmin") | .credentials[0].value) = "poolparty"` + `temporary = false`
-
-Image-version coupling is documented in the script's comment block. To check for new placeholders in a future image bump: `grep -oE '\${[A-Z_]+}' charts/keycloak-realms/files/poolparty-realm.json | sort -u`.
-
-### Keycloak authz-import post-install Job
-
-The `KeycloakRealmImport` CR ALSO drops the per-client `.authorizationSettings` block (resources/scopes/policies). PoolParty needs this for its UMA permission ticket flow — without it, the conversation login lands but every authorized request returns `Client does not support permissions`.
-
-`charts/keycloak-realms/templates/keycloak-authz-import-job.yaml` is a Helm `post-install,post-upgrade` Job (`hook-weight: 10`, runs after the umbrella's keycloak-bootstrap-admin Job at weight 5) that:
-
-1. Builds a ConfigMap at chart render time iterating over the realm JSON's clients-with-`authorizationSettings` (currently just `ppt`), emitting one `<clientId>.json` key per client.
-2. The Job mounts that ConfigMap, gets an admin token via password grant against the master realm using the existing `poolparty-auth-admin` Secret (which the umbrella's bootstrap-admin Job already created), and for each client: fetches the UUID, PUTs the client representation with `authorizationServicesEnabled = true`, POSTs the authz config to `/admin/realms/<realm>/clients/<uuid>/authz/resource-server/import`.
-
-Idempotent, generic across clients (any future client with `authorizationSettings` is auto-handled). Container is `alpine:3.20` + apk-add `bash curl jq` — same pattern as the bootstrap-admin Job.
-
-### graphrag-realm-patch post-install/upgrade Job
-
-`KeycloakRealmImport` CRs are **import-once-only**. The Keycloak operator marks `status.conditions.Done=True` after the first successful import and never re-imports a given CR — even if the spec changes (e.g., a chart-template fix or a new apex hostname). The first deploy of this stack imported the graphrag realm with `redirectUris` like `https://graphrag../*` (empty subdomain/baseDomain due to a Helm globals-propagation bug); subsequent `helm upgrade`s silently no-op'd, the chatbot login failed with `Invalid parameter: redirect_url`, and the only fix was to manually delete the realm + CR + helm upgrade.
-
-`charts/keycloak-realms/templates/graphrag-realm-patch-job.yaml` is a Helm `post-install,post-upgrade` Job that runs after every helm operation and idempotently PATCHes the graphrag realm via the Keycloak admin REST API:
-
-- `chatbot-app-client.redirectUris` ← computed from the current subdomain/baseDomain
-- `chatbot-app-client.webOrigins` ← same
-- `conversation-api-client.webOrigins` ← same
-
-Auth flow mirrors `keycloak-bootstrap-admin-job.yaml`: wait for `/realms/graphrag/.well-known/openid-configuration`, get a temp-admin token from master, PUT the client representation. Runs regardless of whether the `KeycloakRealmImport` CR re-ran. Gated by `.Values.graphrag.enabled`.
-
-### unifiedviews uv-password-reset post-install/upgrade Job
-
-UV's image bootstraps `admin` + `user` accounts on first boot, but the password triple it lays down doesn't decode against any known default — the literal `admin / admin` printed in UV docs does NOT log you in on a clean deploy. UV has no built-in password reset, so the historical recovery dance was: exec into the rdf4j workbench → find the conf graph + user resource URI → `python3 hashlib.pbkdf2_hmac("sha1", b"admin", salt, 100000, 32)` → format as `100000:salt-hex:dk-hex` → DELETE old + INSERT new in the right named graph (`<.../resource/graph/conf>`, NOT the default graph).
-
-`charts/addons/charts/unifiedviews/templates/uv-password-reset-job.yaml` replaces that. It runs on every install + upgrade and SPARQL-resets the admin/admin + user/user passwords by DELETE+INSERTing the password triple in the `conf` graph of the RDF4J `uv` repository. Talks to the rdf4j Service in-cluster (`http://rdf4j:8080/...`) so it bypasses the nginx ingress + basic-auth (rdf4j-workbench has no container-level auth). Waits for the `uv` repo to exist AND for UV's seed admin user triple to be present before patching. Gated by `.Values.passwordReset.enabled` (default true).
-
-### graphrag-vectors-index post-install/upgrade Job
-
-`graphrag-components`'s startup probe hits `/__gtg`, which runs `ElasticSearchVectorHealthCheck`. That health check verifies the `graphrag-vectors` index exists in Elasticsearch; if it doesn't, the probe returns 503 forever and the pod never goes Ready. Pre-Job, every fresh deploy required a manual `kubectl exec ... curl -XPUT` to create the index.
-
-`charts/graphwise-stack/templates/graphrag-vectors-index-job.yaml` PUTs the index automatically: `embedding: dense_vector, dims=1024` (cohere.embed-english-v3 size), `similarity=cosine`. Idempotent — PUT-ing an existing index returns 400 with `resource_already_exists_exception` which the Job treats as success. `hook-weight: 10` (after Keycloak bootstrap weight=5; ES StatefulSet is up by then). Gated on `graphrag-secrets.enabled` AND `graphrag-secrets.vectorDB.vectorStore == "elasticsearch"`.
-
-### GraphDB subchart fullname pattern (alias-aware) + namespace split
-
-`charts/graphdb/` is installed twice in the umbrella as subchart aliases (`graphdb-embedded`, `graphdb-projects`) to give two independent GraphDB instances. The fullname helper in `charts/graphdb/templates/_helpers.tpl` uses `printf "%s-%s" .Release.Name .Chart.Name` so the aliases produce distinct resource names:
-
-- `graphwise-stack-graphdb-embedded` (Service, StatefulSet, Ingress, TLS Secret) — lives in `graphwise` namespace.
-- `graphwise-stack-graphdb-projects` (same set) — lives in **`graphdb` namespace** (split out for logical separation).
-
-**Namespace split.** `charts/graphdb/values.yaml` exposes a `namespace` value that defaults to empty (falls back to release namespace). Every template's `metadata.namespace` reads `{{ .Values.namespace | default .Release.Namespace }}`. The umbrella sets `graphdb-projects.namespace: graphdb` so its resources land there; the embedded alias leaves it empty so it inherits `graphwise` (the release namespace). Why split: graphdb-embedded MUST stay in `graphwise` because PoolParty's `internalUrl` in `charts/poolparty/values.yaml` uses bare-name service resolution (`http://graphwise-stack-graphdb-embedded:7200`) — bare names only resolve in-namespace. graphdb-projects has no in-cluster client requiring bare-name resolution; user-facing access goes through the public Ingress; PoolParty / UnifiedViews configure it as a remote endpoint at user level (UI-driven), using either the public URL or the cross-namespace Service URL `http://graphwise-stack-graphdb-projects.graphdb:7200`.
-
-The `graphdb` namespace is created by `cluster-bootstrap.sh`. The `graphdb-license` Secret is installed there too by `install-licenses.sh` (one license file → two namespaces; Ontotext licenses by hardware, not Secret count). The wildcard-tls Secret is mirrored into `graphdb` by reflector (annotations on the Cert in `cluster-bootstrap.sh` list `graphdb` as a target).
-
-If you ever change the fullname helper, **don't drop the `.Chart.Name` part** — both aliases share `.Release.Name` (the parent umbrella's release name), so a `.Release.Name`-only fullname collapses both into the same `graphwise-stack` and the second alias silently overwrites the first in the rendered manifest. PoolParty's `internalUrl` in `charts/poolparty/values.yaml` points at the prefixed `http://graphwise-stack-graphdb-embedded:7200`; if you rename the helper output pattern, update PoolParty's URL in lockstep.
-
-### Console landing page — Helm `tpl` pattern
-
-`charts/console/files/index.html` is a Helm template (rendered at install time via `tpl` in `charts/console/templates/configmap.yaml`). Apex hostname (`{{ $apex }}` = `<sub>.<base>`) and credential strings (`{{ .Values.credentials.* }}`) substitute at render time, so the deployed landing page always reflects current chart values — change a default in `charts/console/values.yaml` or the umbrella's override, run `helm upgrade`, the page is updated.
-
-Credentials block in `charts/console/values.yaml` documents WHERE each credential is sourced from elsewhere (e.g. Grafana password lives in `charts/observability/kube-prometheus-stack-values.yaml`; basic-auth password is set by `cluster-bootstrap.sh`). Keep these in sync.
-
-A JS hostname-rewrite hook at the bottom of index.html is a safety net: if the page is reached via a different hostname than what was rendered (proxy, internal LB rebrand), every link self-rewrites at page load. Don't rely on it as the primary mechanism — the `tpl` substitution is the authoritative path.
-
-CONSOLE-GUIDE.md is the human-readable canonical reference for credentials (user-facing logins + internal service-to-service secrets + user-supplied secrets). Cross-reference both.
-
-### Default password convention: `rdf#rocks`
-
-Every chart-default password in the demo standardizes on the literal string `rdf#rocks`. Affects:
-
-- Keycloak Postgres super + app passwords
-- n8n Postgres super + app passwords
-- GraphRAG conversation Postgres app password
-- GraphRAG n8n DB credential
-- conversation Keycloak client secret + matching realm-side client secret (lines 83 + 122 of umbrella `values.yaml` must stay equal)
-- ingress basic-auth (htpasswd in `cluster-bootstrap.sh`) for Prometheus / GraphDB / RDF4J
-
-Exceptions:
-
-- `keycloak.bootstrapAdmin.password = "admin"` (PoolParty's chart hard-codes `poolparty_auth_admin / admin` — don't change without updating PoolParty's chart in lockstep).
-- `graphrag-secrets.n8nEncryption.key` is auto-generated by Terraform's `random_id.n8n_encryption_key` and supplied via the `~/graphwise-secrets.yaml` overlay — `rdf#rocks` is too short for n8n's encryption requirement.
-- Grafana's app-login password (`demo-graphwise-2026`) lives in `charts/observability/kube-prometheus-stack-values.yaml` — historic; OK to leave as-is or rename to `rdf#rocks` for full convention coverage.
-
-This is demo-grade. Production deployments would per-deployment-randomize via Terraform `random_password` resources or external-secrets.
-
-### Staging-data three-layer wiring (universal ingest path)
-
-Multi-GB ingest data (PDFs, source documents, reference corpora the GraphRAG pipeline consumes) lives at the standardized path `/home/ec2-user/staging-data/` on the EC2. Cloud-init creates the directory on first boot. The path is exposed to Kubernetes pods via a three-layer mount chain (full diagram in HOWITWORKS.md §11):
-
-1. **EC2 host:** `/home/ec2-user/staging-data/` (real files on EBS, created by `infra/terraform/user-data.sh.tpl`).
-2. **KIND container:** mounted at `/staging-data` via `extraMounts` in `infra/kind/kind-config.yaml`. **Adding this requires `kind delete cluster` + `kind create cluster`** — KIND can't add mounts to a running cluster. Schedule with the next planned `reset-helm.sh` cycle, never as a hotfix.
-3. **Pod:** PVC named `staging-data` per consuming namespace. `charts/graphwise-stack/templates/staging-data.yaml` renders one hostPath PV + one PVC per entry in `.Values.staging.namespaces` (default `[graphwise, graphrag]`). PVs use a sentinel `storageClassName: hostpath-staging` (no provisioner) and `claimRef`-pre-bind to their specific PVC; PVCs pin via `volumeName`. Both pre-binding mechanisms are required — without either, PVCs would stay `Pending` while K8s tried (and failed) to dynamically provision against the sentinel storage class.
-
-Operator workflow: `rsync -azP -e "ssh -i $GRAPHWISE_KEY" <local>/ $GRAPHWISE_USER@$GRAPHWISE_HOST:~/staging-data/`. Files survive EC2 stop/start, KIND restart, `reset-helm.sh`. Do NOT survive `terraform destroy` (root EBS goes with the instance).
-
-Pods are not auto-volumeMounted to `staging-data` by default — consuming workloads (graphrag-workflows, graphrag-components, etc.) add `volumes` + `volumeMounts` referencing PVC `staging-data` in their own namespace when ready. Toggle the entire feature off via `staging.enabled: false` in umbrella values.
-
-### PoolParty 10.2 pluggable LLM wiring (Build Your Taxonomy)
-
-PoolParty 10.2+ exposes a pluggable LLM via system properties
-(`poolparty.llm.api`, `poolparty.llm.model`, `poolparty.llm.bedrock.region`)
-plus the AWS SDK default credential chain. The chart wires it as four
-moving pieces:
-
-1. **`charts/poolparty/values.yaml::llm.*`** holds the model/region/Secret-name
-   defaults. Default model: `us.meta.llama3-3-70b-instruct-v1:0`
-   (a system-defined cross-region inference profile that routes
-   Llama 3.3 70B Instruct across `us-east-1`/`us-east-2`/`us-west-2`).
-   Default region: `us-west-2`. Gate: `llm.enabled` (default `true`
-   when overridden via the umbrella; default `false` if the poolparty
-   subchart is installed standalone). **Two-layer override footgun:**
-   `poolparty.llm.model` is duplicated in `charts/graphwise-stack/values.yaml`
-   (umbrella) and the umbrella's value wins. Edits to one without the
-   other have no effect at deploy time. Grep `claude\|llama\|nova` across
-   `charts/` before any LLM-config change.
-2. **`charts/poolparty/templates/deployment.yaml`** adds the four
-   `POOLPARTY_LLM_*` env vars + `AWS_REGION` / `AWS_ACCESS_KEY_ID` /
-   `AWS_SECRET_ACCESS_KEY` (the latter two via `secretKeyRef` from the
-   Secret named in `llm.awsCredentialsSecret`), all gated on
-   `.Values.llm.enabled`.
-3. **`charts/graphwise-stack/templates/poolparty-aws-credentials.yaml`**
-   materializes the AWS-creds Secret in the `graphwise` namespace
-   (where PoolParty lives), sourced from the SAME overlay block
-   (`graphrag-secrets.awsCredentials` in `~/graphwise-secrets.yaml`)
-   that already feeds the `graphrag-components-aws-credentials` Secret
-   in the `graphrag` namespace. **Same overlay, two materializations**,
-   one in each namespace. Pods can only mount Secrets from their own
-   namespace, so cross-namespace mounting isn't an option; reflector
-   is overkill for a two-namespace fan-out. The duplication is
-   intentional and obvious.
-4. **SMC Taxonomy Advisor instance** (operator step, NOT chart-side):
-   after deploy, the operator logs into PoolParty's SMC, expands
-   External Services → Taxonomy Advisor, and creates an instance
-   with an API key issued by Graphwise. This API key authenticates
-   the *feature*, separate from the AWS Bedrock creds which authorize
-   the *model invocation*. Without it, "Build Your Taxonomy" still
-   reports "no LLM configured" even though the backend is wired.
-   Documented in QUICKSTART "Optional: Activate Build Your Taxonomy"
-   + CONSOLE-GUIDE → PoolParty Thesaurus.
-
-**IAM scope:** `bedrock:InvokeModel` on the Llama foundation-model
-ARN in every region the cross-region inference profile routes to,
-PLUS the inference-profile ARN itself, alongside the Cohere embed
-ARN already in the policy. The inline policy at SETUP §4b uses a
-Resource array with:
-`arn:aws:bedrock:us-west-2::foundation-model/cohere.embed-english-v3`,
-`arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-3-70b-instruct-v1:0`,
-`arn:aws:bedrock:us-east-2::foundation-model/meta.llama3-3-70b-instruct-v1:0`,
-`arn:aws:bedrock:us-west-2::foundation-model/meta.llama3-3-70b-instruct-v1:0`,
-and `arn:aws:bedrock:us-west-2:<account-id>:inference-profile/us.meta.llama3-3-70b-instruct-v1:0`
-(the inference-profile ARN is account-scoped — note the account-id
-segment). The bare foundation-model ARN alone is insufficient: when
-the call routes via the profile, Bedrock authorizes against BOTH the
-profile ARN AND whichever region the call lands in, so all three
-regions appear.
-
-**Inference profile requirement.** Newer Bedrock chat models
-(Llama 3.3+, Claude Sonnet 3.5 v2 onward, Nova Pro/Lite, Mistral
-Large 2) **cannot be invoked on-demand by their foundation-model
-ID** — Bedrock returns
-`InvalidRequestException: Invocation of model ID X with on-demand
-throughput isn't supported. Retry your request with the ID or ARN of
-an inference profile that contains this model.` The fix is to use
-the system-defined cross-region inference profile ID, which is the
-foundation model ID with a region prefix (`us.` for US, `eu.` for
-EU, `apac.` for APAC). Burned a deploy on this 2026-05-14; symptom
-is the InvalidRequestException above.
-
-**Anthropic Claude use-case form (separate gate).** AWS retired the
-old "Modify model access" approval flow for ALL providers (Llama,
-Amazon Nova, Mistral, Cohere — IAM is now the only gate). Anthropic
-Claude models are the exception: invoking them requires a one-time
-**use-case details form** in the Bedrock Console
-(Model access → Anthropic → fill form → submit, ~5-15 min approval).
-Symptom if you forget: `ResourceNotFoundException: Model use case
-details have not been submitted for this account.` We default to
-Llama specifically to avoid this gate; Claude is a one-form-away
-swap if you prefer its quality.
-
-**JAR set proves it works:** the `quay.io/ontotext/poolparty:10.2.0`
-image ships `langchain4j-bedrock-1.12.2.jar` +
-`bedrockruntime-2.41.34.jar` in `/usr/share/poolparty/lib/common/`,
-so no proxy (LiteLLM / Bedrock Access Gateway) is needed. Direct
-SDK calls. langchain4j accepts inference-profile IDs in `modelId`
-unchanged from foundation-model IDs.
-
-**Secret-only updates require a manual rollout-restart.** AWS
-credentials reach the pod via env vars sourced from the Secret
-`poolparty-aws-credentials` (and similarly for graphrag-components).
-K8s snapshots `secretKeyRef` values at pod-start time. When a
-`helm upgrade` only changes the Secret's contents (e.g., the
-operator filled in `~/graphwise-secrets.yaml` and re-ran helm),
-the Deployment spec is unchanged, no rollout fires, and the running
-pod keeps the old (often empty) env values — so the AWS SDK falls
-through to IMDS and uses the EC2 instance role, which lacks
-`bedrock:InvokeModel`, surfacing as `AccessDeniedException` against
-the `arn:aws:sts::...:assumed-role/graphwise-stack-<sub>-ec2-role/...`
-principal. Force-roll the pod after such an upgrade:
-`kubectl -n graphwise rollout restart deploy/graphwise-stack-poolparty`.
-Proper structural fix (deferred): add a `checksum/aws-creds`
-annotation to `charts/poolparty/templates/deployment.yaml` so any
-Secret change auto-rolls.
-
-**Symptom-to-cause:** "no LLM configured" in the PoolParty UI after
-a clean deploy almost always means the SMC step (4) wasn't done.
-If the SMC step IS done and the error persists, walk the layers:
-
-1. `kubectl exec ... -- env | grep POOLPARTY_LLM` — if empty, the
-   `poolparty.llm.enabled` value didn't take effect (stale umbrella
-   values overlay). If model ID shows the bare foundation-model ID
-   (no `us.` prefix), the chart edit didn't land in both layers
-   (subchart + umbrella).
-2. `kubectl exec ... -- printenv AWS_ACCESS_KEY_ID | head -c 4` —
-   should print `AKIA`. Blank means the Secret was rendered without
-   the `-f ~/graphwise-secrets.yaml` overlay (helm upgrade needs all
-   THREE -f flags: base + per-deploy + secrets; reset-helm.sh adds
-   the secrets flag automatically) OR the pod is stale from before
-   the secrets-overlay upgrade (rollout-restart per above).
-3. `kubectl logs ... | grep -iE 'bedrock|inference|accessdenied|resourcenot'`
-   — `AccessDeniedException` against an inference-profile ARN means
-   the IAM policy needs the profile ARN added; `AccessDeniedException`
-   against an `assumed-role/...-ec2-role` principal means the SDK
-   fell through to IMDS (env vars empty/missing — see step 2);
-   `ResourceNotFoundException ... use case details` means Anthropic
-   model + missing the use-case form.
-
-### GraphDB JVM heap (set explicitly; not auto-sized to pod limit)
-
-`charts/graphdb/values.yaml` sets `javaOpts: "-Xmx8g"` and `resources.limits.memory: 10Gi` — leaves ~2Gi of pod memory for non-heap (metaspace, threads, off-heap caches, OS overhead). `charts/graphdb/templates/statefulset.yaml` wires the value as the `GDB_JAVA_OPTS` env var; the image's `/opt/graphdb/dist/bin/graphdb` script forwards it as `java <opts>`.
-
-**Why this is set explicitly:** without `-Xmx`, GraphDB's JVM defaults to ~1Gi heap regardless of the pod memory limit. The container has more memory available, but the JVM has no way to know — `cgroups`-aware heap sizing is a Java feature, but GraphDB's launcher script overrides it. Symptom of "JVM doesn't know about the pod limit": queries with `GROUP BY` / `DISTINCT` aggregations fail with `Insufficient free Heap Memory NNNMb for group by and distinct, threshold:250Mb, reached 0Mb` — and `kubectl top pod` shows the container nowhere near its limit. Burned a deploy on this 2026-05-14.
-
-**Rule of thumb:** JVM heap = pod memory limit − 2Gi. Both umbrella aliases (`graphdb-embedded` in `graphwise` ns, `graphdb-projects` in `graphdb` ns) inherit from this subchart default — one edit covers both. To override per-alias, the umbrella's `graphdb-embedded:` / `graphdb-projects:` blocks can set their own `javaOpts:` / `resources:`.
-
-### Nested-subchart `.tgz` gitignore (footgun avoidance)
-
-`.gitignore` excludes `charts/*/charts/*.tgz` and `charts/*/Chart.lock` because these are PACKAGED snapshots of subchart-of-subchart directories that Helm prefers over the source dir at render time. Committing them creates the silent-stale-tarball footgun: source edits to `charts/addons/charts/unifiedviews/templates/all.yaml` get masked by a stale `charts/addons/charts/unifiedviews-1.0.0.tgz`, the umbrella's own packaging includes BOTH copies, and operators end up debugging "why isn't my chart change taking effect" without realizing two copies exist.
-
-The umbrella's own bundled tarballs (`charts/graphwise-stack/charts/*.tgz` + `charts/graphwise-stack/Chart.lock`) ARE committed deliberately — those are the umbrella's vendored deps, intentionally pinned so deploys don't need network access. Only nested-subchart-of-subchart tarballs are the footgun.
-
-If you ever see addons resources missing expected fields after an edit to `charts/addons/charts/<addon>/`, suspect this. Fix: `rm charts/addons/charts/*.tgz charts/addons/Chart.lock` (now harmless because gitignored), then `helm dependency update charts/graphwise-stack` to repackage the umbrella's addons tarball from clean source. The unifiedviews initContainer fix saga is the canonical example — see "Resolved bug catalog" below.
-
-### TLS architecture: wildcard cert via Route 53 DNS-01
-
-One LE-prod wildcard cert (`<sub>.<base>` + `*.<sub>.<base>`) covers every Ingress in the stack. The cert lives in the `cert-manager` namespace as a Secret named `wildcard-tls`; [kubernetes-reflector](https://github.com/emberstack/kubernetes-reflector) mirrors it into every consuming namespace (`graphwise`, `graphrag`, `keycloak`, `kubernetes-dashboard`, `monitoring`). Every Ingress's `tls.secretName` is the literal `wildcard-tls` — no per-Ingress Certificate, no cert-manager annotation on app Ingresses.
-
-**Why DNS-01 instead of HTTP-01.** LE refuses to issue a wildcard cert via HTTP-01 (HTTP-01 only proves ownership of the exact hostname being challenged). DNS-01 writes a `_acme-challenge.<host>` TXT record that LE reads to prove zone ownership, which works for both apex and wildcard SANs in one Order.
-
-**Why a wildcard.** Pre-wildcard, every Ingress had its own Certificate → 15 Orders per deploy → instant rate-limit on iteration. With wildcards, one Order covers the whole stack: 5 wildcard reissues per week per `<sub>.<base>` is effectively unlimited at our pace.
-
-**How cert-manager authenticates to Route 53.** No AWS access key Secret in the cluster:
-
-```
-cert-manager pod → AWS SDK → IMDSv2 (EC2 metadata)
-                → EC2 instance role (graphwise-stack-<sub>-ec2-role)
-                → route53:ChangeResourceRecordSets on hostedzone/<route53_zone_id>
-```
-
-The role's Route 53 policy is scoped to one hostedzone ARN (Terraform `var.route53_zone_id`), so even a leaked role token can only edit DNS for this one zone. Required: `metadata_options.http_put_response_hop_limit >= 2` on `aws_instance.stack` so pods can reach IMDSv2 through kube-proxy. Set in Terraform.
-
-**Why letsencrypt-prod only (no staging).** We tried staging-as-default and reverted:
-
-- LE staging certs chain to "Pretend Pear X1" — a CA that's not in any default trust store.
-- **Browsers** can override an untrusted cert via "Advanced → Proceed". XHR/fetch from the loaded page, however, doesn't honor the click-through in Chrome/Safari — first symptom was the Kubernetes Dashboard hanging on `Http failure response for api/v1/csrftoken/login: 0 Unknown Error`.
-- **JVM clients** (PoolParty → Keycloak `uma2-configuration`, graphrag-conversation → Keycloak JWKS) have no override mechanism at all. TLS handshake fails, PoolParty hangs forever in startup-probe loops, the stack doesn't come up.
-- The only way to make staging work for in-cluster JVM HTTPS calls would be to inject the LE staging root into every pod's truststore — which we don't control image-side. Dead end.
-
-**Rate-limit math.** LE prod limits, by bucket — wildcard collapses most of them:
-
-| Limit | Window | Scope | Wildcard impact |
-|---|---|---|---|
-| 5 duplicate certs per identifier-set | 168h | Exact set of FQDNs | One identifier-set per `<sub>.<base>`. 5 fresh deploys/week per subdomain. |
-| 50 certs per registered domain | 168h | Per Public Suffix List entry | One cert per deploy (not 15). 50 deploys/week per `semantic-demo.com`. |
-| 300 New Orders per ACME account | 3h | — | Negligible. |
-| 5 Failed Validations per account+hostname | 1h | — | Separate, fast recovery. |
-
-If you ever need more headroom: rotate subdomain (`stroker` → `kent`) for fresh per-identifier-set bucket; rotate `base_domain` in `terraform.tfvars` for fresh everything. Or use `helm upgrade` instead of `reset-helm.sh` — upgrade-in-place doesn't reissue certs.
-
-**Reflector.** [emberstack/reflector](https://github.com/emberstack/kubernetes-reflector) installed by `cluster-bootstrap.sh`. The Certificate's `secretTemplate.annotations` lists every target namespace; reflector copies on creation and re-syncs on every cert renewal. If `validate-stack.sh` reports `wildcard-tls MISSING in '<ns>' namespace`, the reflector pod isn't running — `kubectl get pods -n kube-system -l app.kubernetes.io/name=reflector`.
-
-### Resolved bug catalog (recurring footguns to recognize)
-
-The following bugs are now fixed in the chart. Documented for posterity so the next time something looks like one of these we recognize the pattern.
-
-- **PoolParty stuck `0/1` looping on Keycloak `uma2-configuration`** — original theory was KIND hairpin-NAT against the public auth URL. Real root cause turned out to be **Ontotext's realm export shipping `${...}` env-var placeholders that the operator-managed KeycloakRealmImport CR doesn't substitute**. The `ppt` client's secret was the literal string `${POOLPARTY_KEYCLOAK_LOGIN_CLIENTSECRET}` so OAuth token exchange failed with `invalid_client`; the `superadmin` user's password was the literal `${POOLPARTY_SUPER_ADMIN_PASSWORD}` so login outright didn't work; and the per-client `.authorizationSettings` block (resources/scopes/policies needed for PoolParty's UMA permission ticket flow) was being silently dropped by the operator's import. **Fix:** `scripts/extract-poolparty-realm.sh` jq-substitutes the placeholders at extract time + `charts/keycloak-realms/templates/keycloak-authz-import-job.yaml` is a post-install Helm hook that re-imports the authz config via the Keycloak admin REST API (`/admin/realms/<realm>/clients/<uuid>/authz/resource-server/import`). Hairpin-NAT works fine; was never the actual problem.
-- **`unifiedviews` Deployment in `CrashLoopBackOff`** — entrypoint died with `/__cacert_entrypoint.sh: line 114: /unified-views/run-uv.sh: No such file or directory`. The chart mounts a PVC at `/unified-views` which shadows the image's binaries. The chart already had an `initContainer` named `populate-image-content` that copies the image's `/unified-views/` tree into the PVC, BUT the umbrella's bundled `charts/graphwise-stack/charts/addons-1.0.0.tgz` packaged BOTH the source `charts/addons/charts/unifiedviews/` directory AND a stale pre-packaged `charts/addons/charts/unifiedviews-1.0.0.tgz` tarball. At render time Helm preferred the stale `.tgz`, which predated the initContainer fix, so the deployed Deployment never had the initContainer attached. **Fix:** delete the inner-subchart tarballs, gitignore `charts/*/charts/*.tgz` and `charts/*/Chart.lock` to prevent recurrence, regenerate the umbrella's bundled tarball from clean source. Lesson: nested-subchart tarballs are a footgun; keep only the source directories in git.
-- **GraphDB subchart fullname collision under umbrella aliases** — the chart's `graphdb.fullname` helper used `.Release.Name` verbatim, which assumed standalone install (`helm install graphdb-embedded ./charts/graphdb`). In umbrella mode with subchart aliases (`graphdb-embedded` and `graphdb-projects` both descending from release `graphwise-stack`), both rendered with the same `metadata.name: graphwise-stack` and silently collided in the merged manifest — only the second alias survived, leaving PoolParty unable to reach `graphdb-embedded:7200`. **Fix:** helper now produces `<release>-<alias>` form (`graphwise-stack-graphdb-embedded`, `graphwise-stack-graphdb-projects`), and PoolParty's `internalUrl` was updated to match.
-- **`graphrag-realm-patch` Job `BackoffLimitExceeded` on cold-cache fresh deploys** — surfaced as `Error: failed post-install: 1 error occurred: * job graphrag-realm-patch failed: BackoffLimitExceeded` during `reset-helm.sh`. The patch script's `curl -sf .../clients/<graphrag-realm-uuid>/roles/realm-admin` returned 404, `set -e` aborted the script, and the pod retried 5x before the controller cleaned it up (so no logs survived by the time anyone looked). Two stacked root causes, BOTH structural: **(1) Race between `keycloak-bootstrap-admin-job` (hook-weight 5) and the operator-driven `KeycloakRealmImport` CRs.** Realm imports are NOT Helm hooks — they're regular resources processed asynchronously by the Keycloak operator. On a fresh-cache deploy, the realm-import pods spend ~3 min pulling the 250MB Keycloak image before the `<realm>-realm` clients exist in master. Meanwhile bootstrap-admin's "step 6: wire admin composite from `<realm>-realm` master clients" iterates whatever exists *right now* and silently misses any realm whose import hasn't completed. Warm-cache redeploys masked this for months (images already cached → realm imports complete in seconds → race wins → composite gets wired correctly). **(2) Keycloak v26 removed the composite `realm-admin` role** from the `<realm>-realm` management clients in favor of the granular `manage-realm` / `manage-clients` / `view-*` roles. The patch job's role-binding approach (`POST /users/<id>/role-mappings/clients/<realm-client-id>` with the `realm-admin` role body) was a hidden landmine that only triggered after the bootstrap-admin race made it the load-bearing step. **Fix:** (A) bootstrap-admin now reads a space-separated `EXPECTED_REALMS` env var (default `"graphrag poolparty"`, from `.Values.keycloak.bootstrapAdmin.expectedRealms`) and waits up to 5 min on `/realms/<each>/.well-known/openid-configuration` for each before doing step 6 — fixes the race for every Job that depends on the composite chain. (B) `graphrag-realm-patch-job.yaml` now uses the same composite-wiring approach as bootstrap-admin (scoped to the `graphrag-realm` client) instead of role-binding. Idempotent, race-proof with bootstrap-admin, survives Keycloak's role-model evolution. Diagnostic shortcut for the next "Job failed but no logs" recurrence: `helm template g charts/graphwise-stack -f /tmp/values-<sub>.yaml -s charts/keycloak-realms/templates/graphrag-realm-patch-job.yaml > /tmp/j.yaml; sed -i 's|set -euo pipefail|set -euxo pipefail|' /tmp/j.yaml; kubectl -n keycloak delete job graphrag-realm-patch; kubectl apply -f /tmp/j.yaml` — the `set -x` makes every curl URL + the failing line visible in the pod's logs.
-
-### Currently open issues (Helm path)
+## Currently open issues (Helm path)
 
 (none right now — full umbrella deploy validates end-to-end including PoolParty browser login and UnifiedViews. Add new entries here as they appear.)
