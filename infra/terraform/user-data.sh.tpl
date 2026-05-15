@@ -77,6 +77,20 @@ export AWS_REGION="${aws_region}"
 EOF
 chmod 644 /etc/profile.d/graphwise.sh
 
+# Login-time hint: cloud-init in progress, or shell missing docker group.
+# Sentinel /var/lib/cloud/graphwise-bootstrap-complete is touched at the
+# very end of this script. Silent in the steady state.
+cat > /etc/profile.d/graphwise-hint.sh <<'PHINT'
+[ -t 1 ] || return 0
+if [ ! -f /var/lib/cloud/graphwise-bootstrap-complete ]; then
+    echo "[graphwise] cloud-init still running -- watch: sudo tail -f /var/log/bootstrap.log"
+    echo "[graphwise] Once it finishes, log out + back in (or 'exec newgrp docker')."
+elif ! id -nG | grep -qw docker; then
+    echo "[graphwise] Shell missing 'docker' group (logged in before cloud-init added it). Run: exec newgrp docker"
+fi
+PHINT
+chmod 644 /etc/profile.d/graphwise-hint.sh
+
 # kubeconfig + aliases for ec2-user shells.
 if ! grep -q "KUBECONFIG=" "/home/$TARGET_USER/.bashrc" 2>/dev/null; then
     cat >> "/home/$TARGET_USER/.bashrc" <<'RCEOF'
@@ -145,5 +159,8 @@ Next: ~/graphwise-stack-aws/DEPLOY.md from step 3
 (or scripts/laptop/push-config.sh from your laptop).
 EOF
 chown "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/NEXT_STEPS.txt"
+
+# Sentinel for /etc/profile.d/graphwise-hint.sh (login-time hint silences once present).
+touch /var/lib/cloud/graphwise-bootstrap-complete
 
 echo "=== Bootstrap complete at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
