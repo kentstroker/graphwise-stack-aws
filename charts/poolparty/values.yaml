@@ -115,8 +115,13 @@ llm:
   region: "us-west-2"
   awsCredentialsSecret: poolparty-aws-credentials
 
-# JVM heap. 8g is comfortable for medium workloads on r6g.2xlarge.
-heapSize: "8g"
+# JVM heap. 12g lands inside a 14Gi pod limit, leaving the
+# heap=limit−2Gi headroom (metaspace, threads, off-heap caches).
+# Bumped from 8g after observing steady-state usage at 8.6 GiB on
+# the 10Gi limit (84% — GC-thrashing range, surfaced as request
+# timeouts / 500s under load). Wired into the pod via the
+# PP_HEAP_SIZE env var (image's launcher script forwards it as -Xmx).
+heapSize: "12g"
 
 service:
   type: ClusterIP
@@ -137,9 +142,9 @@ persistence:
 resources:
   requests:
     cpu: 500m
-    memory: 8Gi
+    memory: 12Gi
   limits:
-    memory: 10Gi
+    memory: 14Gi
 
 replicas: 1
 
