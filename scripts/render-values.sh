@@ -16,10 +16,10 @@
 # ============================================================
 # scripts/reset-helm.sh auto-invokes this script twice (once with
 # --umbrella, once with --graphrag) before each `helm upgrade --install`,
-# writing the rendered overlays to /tmp/values-<sub>.yaml and
-# /tmp/values-<sub>-graphrag.yaml. The standard deploy flow is just
-# `./scripts/reset-helm.sh --yes <subdomain>` -- no need to call this
-# script first.
+# writing the rendered overlays to $HOME/.graphwise-stack/values-<sub>.yaml
+# and $HOME/.graphwise-stack/values-<sub>-graphrag.yaml. The standard
+# deploy flow is just `./scripts/reset-helm.sh --yes <subdomain>` -- no
+# need to call this script first.
 #
 # Run it manually only when you want to:
 #   - Inspect the rendered overlay before applying.
@@ -30,8 +30,8 @@
 #
 # Usage:
 #   ./scripts/render-values.sh stroker
-#     -> /tmp/values-stroker.yaml          (umbrella overlay)
-#     -> /tmp/values-stroker-graphrag.yaml (graphrag overlay)
+#     -> $HOME/.graphwise-stack/values-stroker.yaml          (umbrella overlay)
+#     -> $HOME/.graphwise-stack/values-stroker-graphrag.yaml (graphrag overlay)
 #
 #   ./scripts/render-values.sh stroker semantic-proof.com
 #     same, with explicit base domain.
@@ -42,7 +42,9 @@
 #   ./scripts/render-values.sh --graphrag stroker > custom.yaml
 #     emit ONLY the graphrag overlay to stdout.
 #
-# OUT_DIR overrides /tmp.
+# OUT_DIR overrides the default $HOME/.graphwise-stack location.
+# (Persistent across reboots -- earlier versions wrote to /tmp, which
+# AL2023's systemd-tmpfiles wipes on every boot.)
 
 set -euo pipefail
 
@@ -70,7 +72,7 @@ fi
 
 SUB="$1"
 BASE="${2:-semantic-demo.com}"
-OUT_DIR="${OUT_DIR:-/tmp}"
+OUT_DIR="${OUT_DIR:-$HOME/.graphwise-stack}"
 
 # Apex + per-app hostnames.
 APEX="${SUB}.${BASE}"
@@ -216,6 +218,7 @@ case "$MODE" in
     graphrag)
         render_graphrag ;;
     both)
+        mkdir -p "$OUT_DIR"
         UMBRELLA_OUT="$OUT_DIR/values-${SUB}.yaml"
         GRAPHRAG_OUT="$OUT_DIR/values-${SUB}-graphrag.yaml"
         render_umbrella > "$UMBRELLA_OUT"

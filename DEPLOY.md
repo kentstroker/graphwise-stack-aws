@@ -821,8 +821,8 @@ existing release is upgraded in place; the graphrag release is
 installed fresh.
 
 `reset-helm.sh` (with or without `--skip-graphrag`):
-- regenerates per-subdomain values overlay at `/tmp/values-<sub>.yaml`
-  (and `/tmp/values-<sub>-graphrag.yaml` unless `--skip-graphrag`),
+- regenerates per-subdomain values overlay at `$HOME/.graphwise-stack/values-<sub>.yaml`
+  (and `$HOME/.graphwise-stack/values-<sub>-graphrag.yaml` unless `--skip-graphrag`),
 - runs `helm dependency update` on the umbrella chart path (and on
   `charts/vendor/graphrag` unless `--skip-graphrag`),
 - installs the **`graphwise-stack`** umbrella release in `graphwise` ns
@@ -939,11 +939,11 @@ Troubleshooting + the full credentials/IAM context lives in
 
 # Non-destructive upgrade after chart edits — both releases
 helm upgrade graphwise-stack ./charts/graphwise-stack -n graphwise \
-    -f charts/graphwise-stack/values.yaml -f /tmp/values-<sub>.yaml \
+    -f charts/graphwise-stack/values.yaml -f $HOME/.graphwise-stack/values-<sub>.yaml \
     --timeout 15m
 helm upgrade graphrag ./charts/vendor/graphrag -n graphrag \
     -f charts/vendor/graphrag/values-graphwise.yaml \
-    -f /tmp/values-<sub>-graphrag.yaml --timeout 15m
+    -f $HOME/.graphwise-stack/values-<sub>-graphrag.yaml --timeout 15m
 ```
 
 `cluster-resume.sh` sets `--restart=unless-stopped` on the KIND node

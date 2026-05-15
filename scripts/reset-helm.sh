@@ -39,7 +39,7 @@
 # Env overrides:
 #   RELEASE_NAME       (default: graphwise-stack)
 #   RELEASE_NAMESPACE  (default: graphwise)
-#   VALUES_FILE        (default: /tmp/values-<subdomain>.yaml)
+#   VALUES_FILE        (default: $HOME/.graphwise-stack/values-<subdomain>.yaml)
 #   HELM_TIMEOUT       (default: 15m)
 #
 # Idempotent. Safe to re-run; uninstalls/deletes use --ignore-not-found
@@ -149,8 +149,10 @@ GRAPHRAG_RELEASE="${GRAPHRAG_RELEASE:-graphrag}"
 GRAPHRAG_NAMESPACE="${GRAPHRAG_NAMESPACE:-graphrag}"
 HELM_TIMEOUT="${HELM_TIMEOUT:-15m}"
 
-UMBRELLA_VALUES="${UMBRELLA_VALUES:-/tmp/values-${SUB}.yaml}"
-GRAPHRAG_VALUES="${GRAPHRAG_VALUES:-/tmp/values-${SUB}-graphrag.yaml}"
+VALUES_DIR="${VALUES_DIR:-$HOME/.graphwise-stack}"
+UMBRELLA_VALUES="${UMBRELLA_VALUES:-$VALUES_DIR/values-${SUB}.yaml}"
+GRAPHRAG_VALUES="${GRAPHRAG_VALUES:-$VALUES_DIR/values-${SUB}-graphrag.yaml}"
+mkdir -p "$(dirname "$UMBRELLA_VALUES")" "$(dirname "$GRAPHRAG_VALUES")"
 
 # Per-deployment secrets overlay written by Terraform's cloud-init
 # (~/graphwise-secrets.yaml). EC2-local; never tracked by git.

@@ -142,10 +142,10 @@ To bring it back:
   3. ./scripts/cluster-resume.sh   # restarts KIND node containers
   4. (Optional) scale workloads back up if you scaled them down here:
         helm upgrade graphwise-stack ./charts/graphwise-stack -n graphwise \\
-            -f charts/graphwise-stack/values.yaml -f /tmp/values-<sub>.yaml \\
+            -f charts/graphwise-stack/values.yaml -f \$HOME/.graphwise-stack/values-<sub>.yaml \\
             --timeout 15m
         helm upgrade graphrag ./charts/vendor/graphrag -n graphrag \\
             -f charts/vendor/graphrag/values-graphwise.yaml \\
-            -f /tmp/values-<sub>-graphrag.yaml --timeout 15m
+            -f \$HOME/.graphwise-stack/values-<sub>-graphrag.yaml --timeout 15m
      (Helm restores the chart's declared replica counts.)
 EOF

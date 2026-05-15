@@ -600,10 +600,10 @@ For non-destructive chart edits, upgrade in place:
 
 ```bash
 # Umbrella only
-helm upgrade graphwise-stack ./charts/graphwise-stack -n graphwise -f charts/graphwise-stack/values.yaml -f /tmp/values-<sub>.yaml --timeout 15m
+helm upgrade graphwise-stack ./charts/graphwise-stack -n graphwise -f charts/graphwise-stack/values.yaml -f $HOME/.graphwise-stack/values-<sub>.yaml --timeout 15m
 
 # GraphRAG only
-helm upgrade graphrag ./charts/vendor/graphrag -n graphrag -f charts/vendor/graphrag/values-graphwise.yaml -f /tmp/values-<sub>-graphrag.yaml --timeout 15m
+helm upgrade graphrag ./charts/vendor/graphrag -n graphrag -f charts/vendor/graphrag/values-graphwise.yaml -f $HOME/.graphwise-stack/values-<sub>-graphrag.yaml --timeout 15m
 ```
 
 ---
