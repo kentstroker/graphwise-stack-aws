@@ -210,6 +210,22 @@ if ! kubectl -n graphdb get secret graphdb-license >/dev/null 2>&1; then
 else
     echo "  OK:    graphdb/graphdb-license"
 fi
+# graphdb-adeptnova namespace: third GraphDB instance (RC2) mounts a
+# third copy of graphdb-license + its own admin Secret.
+if kubectl get namespace graphdb-adeptnova >/dev/null 2>&1; then
+    if ! kubectl -n graphdb-adeptnova get secret graphdb-license >/dev/null 2>&1; then
+        echo "  ERROR: missing Secret 'graphdb-adeptnova/graphdb-license'" >&2
+        missing_licenses=1
+    else
+        echo "  OK:    graphdb-adeptnova/graphdb-license"
+    fi
+    if ! kubectl -n graphdb-adeptnova get secret graphwise-stack-graphdb-adeptnova-admin >/dev/null 2>&1; then
+        echo "  ERROR: missing Secret 'graphdb-adeptnova/graphwise-stack-graphdb-adeptnova-admin'" >&2
+        missing_licenses=1
+    else
+        echo "  OK:    graphdb-adeptnova/graphwise-stack-graphdb-adeptnova-admin"
+    fi
+fi
 if [[ $missing_licenses -ne 0 ]]; then
     cat >&2 <<'PREFLIGHT'
 
@@ -450,8 +466,8 @@ fi
 # ---------------------------------------------------------------------
 # Helm uninstall deliberately does NOT delete PVCs (StatefulSet behavior).
 # For a troubleshooting reset we want a blank slate.
-echo "Deleting PVCs in graphwise, graphdb, keycloak, graphrag namespaces..."
-for ns in graphwise graphdb keycloak graphrag; do
+echo "Deleting PVCs in graphwise, graphdb, graphdb-adeptnova, keycloak, graphrag namespaces..."
+for ns in graphwise graphdb graphdb-adeptnova keycloak graphrag; do
     if kubectl get namespace "$ns" >/dev/null 2>&1; then
         kubectl delete pvc --all -n "$ns" --wait=false --ignore-not-found || true
     fi
@@ -464,7 +480,7 @@ echo "Waiting for PVCs to terminate..."
 deadline=$(( $(date +%s) + 60 ))
 while :; do
     leftover=0
-    for ns in graphwise graphdb keycloak graphrag; do
+    for ns in graphwise graphdb graphdb-adeptnova keycloak graphrag; do
         if kubectl get namespace "$ns" >/dev/null 2>&1; then
             count=$(kubectl get pvc -n "$ns" --no-headers 2>/dev/null | wc -l)
             leftover=$(( leftover + count ))
