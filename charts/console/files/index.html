@@ -183,6 +183,11 @@ footer code {
       <div class="desc">Your data. Load repositories, run SPARQL here.</div>
       <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }}</div>
     </a>
+    <a class="card" href="https://graphdb-adeptnova.{{ $apex }}/">
+      <div class="title">GraphDB &mdash; AdeptNova</div>
+      <div class="desc">Public-accessible third instance. Browser path via this Ingress (basic auth + GraphDB native auth); direct API on <code>:17200</code> from CIDR-allowlisted hosts.</div>
+      <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }} &rarr; GraphDB admin / rdf#rocks</div>
+    </a>
     <a class="card" href="https://rdf4j.{{ $apex }}/rdf4j-workbench/">
       <div class="title">RDF4J Workbench</div>
       <div class="desc">Standalone RDF workbench; also backs UnifiedViews internally.</div>
@@ -234,6 +239,10 @@ footer code {
     <a class="card" href="https://graphdb-projects.{{ $apex }}/rest/repositories">
       <div class="title">Projects GraphDB &middot; repo list</div>
       <div class="desc">JSON inventory of repositories (basic auth)</div>
+    </a>
+    <a class="card" href="https://graphdb-adeptnova.{{ $apex }}/rest/repositories">
+      <div class="title">AdeptNova GraphDB &middot; repo list</div>
+      <div class="desc">JSON inventory of repositories (basic auth + GraphDB native auth)</div>
     </a>
   </div>
 </section>
