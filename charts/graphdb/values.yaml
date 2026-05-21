@@ -34,6 +34,11 @@ externalUrl: ""
 service:
   type: ClusterIP
   port: 7200
+  # nodePort: only used when type=NodePort. Leave unset (or 0) for
+  # ClusterIP. AdeptNova alias overrides this to 31720 in the umbrella
+  # values so KIND's extraPortMappings (host :17200 -> node :31720)
+  # routes externally.
+  nodePort: 0
 
 # Ingress with HTTPS via cert-manager + Let's Encrypt + nginx-ingress
 # basic auth.

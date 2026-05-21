@@ -12,5 +12,8 @@ spec:
       port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") (gt (int .Values.service.nodePort) 0) }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
   selector:
     {{- include "graphdb.selectorLabels" . | nindent 4 }}
