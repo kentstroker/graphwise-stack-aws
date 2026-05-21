@@ -81,6 +81,7 @@ AUTH_HOST="auth.${APEX}"
 GRAPHRAG_HOST="graphrag.${APEX}"
 GDB_E_HOST="graphdb.${APEX}"
 GDB_P_HOST="graphdb-projects.${APEX}"
+GDB_A_HOST="graphdb-adeptnova.${APEX}"
 ADF_HOST="adf.${APEX}"
 SW_HOST="semantic-workbench.${APEX}"
 GV_HOST="graphviews.${APEX}"
@@ -120,6 +121,11 @@ graphdb-projects:
   externalUrl: "https://${GDB_P_HOST}/"
   ingress:
     host: "${GDB_P_HOST}"
+
+graphdb-adeptnova:
+  externalUrl: "https://${GDB_A_HOST}/"
+  ingress:
+    host: "${GDB_A_HOST}"
 
 poolparty:
   externalUrl: "https://${PP_HOST}/"
