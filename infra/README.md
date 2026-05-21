@@ -83,6 +83,16 @@ edits to the inline `ingress` blocks in `main.tf` won't take effect
 on existing deployments — use the Console for any post-provision
 SG ingress change.
 
+**`adeptnova_cidrs`** (RC2+, `list(string)`, default `[]`) — CIDR
+ranges allowed to reach the AdeptNova GraphDB on host port `17200`.
+Empty list = no SG rule is created (the AdeptNova GraphDB still
+runs in-cluster, but `:17200` is unreachable from outside the VPC).
+Provisioned as a **standalone** `aws_security_group_rule` (not an
+inline `ingress {}` block), so it survives `lifecycle.ignore_changes
+= [ingress]` on the main SG — `terraform apply` reconciles the
+allowlist normally instead of silently no-op'ing. Example:
+`adeptnova_cidrs = ["198.51.100.42/32", "203.0.113.0/24"]`.
+
 **`-target` is not a magic shield.** It scopes the apply, but
 Terraform's dependency graph can still pull in dependent resources.
 Always read the plan.

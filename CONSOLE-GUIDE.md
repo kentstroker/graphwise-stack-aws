@@ -302,6 +302,49 @@ curl -s -u 'demo:rdf#rocks' https://graphdb-projects.<sub>.<base>/rest/repositor
 Probably an empty array on a fresh deployment. Create a repo via
 the workbench and verify it appears.
 
+---
+
+## GraphDB AdeptNova (RC2)
+
+**URL (browser admin, HTTPS):** `https://graphdb-adeptnova.<sub>.<base>/`
+**Auth:** nginx basic auth (`demo` / `rdf#rocks`) → GraphDB native login (`admin` / `rdf#rocks`)
+
+**URL (direct API, allowed CIDRs only):** `http://<EIP>:17200/`
+**Auth:** GraphDB native HTTP Basic (`admin` / `rdf#rocks`) — plain HTTP, TLS only on the subdomain path.
+
+Same pod, two ingress paths. The browser path is gated at the nginx
+Ingress by basic auth before GraphDB sees the request; the direct
+path is gated by the EC2 Security Group's CIDR allowlist
+(`var.adeptnova_cidrs`) plus GraphDB-native authentication.
+
+**Smoke test (browser admin):** load the URL, pass both auth prompts,
+see the GraphDB Workbench. The repository list will be empty on a
+fresh deploy — AdeptNova operators load their own data.
+
+**Smoke test (direct API, from an allowed CIDR):**
+
+```bash
+curl -u admin:'rdf#rocks' http://<EIP>:17200/rest/repositories
+# Expected: [] (empty array, HTTP 200)
+```
+
+**Rotating the admin password:**
+
+```bash
+kubectl -n graphdb-adeptnova create secret generic graphwise-stack-graphdb-adeptnova-admin \
+    --from-literal=username=admin --from-literal=password='new-pass' \
+    --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n graphdb-adeptnova delete job -l app.kubernetes.io/component=security-init
+helm upgrade --install graphwise-stack ./charts/graphwise-stack -n graphwise -f ...
+```
+
+**Why a third instance** instead of reusing `graphdb-projects`:
+AdeptNova client tooling expects direct port-7200-style access
+without going through an Ingress proxy. The other two instances are
+wedged behind basic auth at the Ingress to keep them out of public
+crawlers; this one is reachable on a dedicated TCP port and
+protected by IP allowlist + GraphDB-native auth instead.
+
 ## RDF4J Workbench
 
 **URL:** `https://rdf4j.<sub>.<base>/rdf4j-workbench/`

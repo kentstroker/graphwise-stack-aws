@@ -4,10 +4,11 @@ Detail backing the chart-internals references in `CLAUDE.md`. Keycloak-specific 
 
 ## GraphDB subchart fullname pattern (alias-aware) + namespace split
 
-`charts/graphdb/` is installed twice in the umbrella as subchart aliases (`graphdb-embedded`, `graphdb-projects`) to give two independent GraphDB instances. The fullname helper in `charts/graphdb/templates/_helpers.tpl` uses `printf "%s-%s" .Release.Name .Chart.Name` so the aliases produce distinct resource names:
+`charts/graphdb/` is installed three times in the umbrella as subchart aliases (`graphdb-embedded`, `graphdb-projects`, `graphdb-adeptnova`) to give three independent GraphDB instances. The fullname helper in `charts/graphdb/templates/_helpers.tpl` uses `printf "%s-%s" .Release.Name .Chart.Name` so the aliases produce distinct resource names:
 
 - `graphwise-stack-graphdb-embedded` (Service, StatefulSet, Ingress, TLS Secret) — lives in `graphwise` namespace.
 - `graphwise-stack-graphdb-projects` (same set) — lives in **`graphdb` namespace** (split out for logical separation).
+- `graphwise-stack-graphdb-adeptnova` (same set, plus a `security-init` post-install Job that enables GraphDB-native auth) — lives in **`graphdb-adeptnova` namespace**. `service.type=NodePort` with `nodePort: 31720` so KIND's `extraPortMappings` (host `:17200` → node `:31720`) routes external traffic in. Public exposure on `:17200` is gated by a CIDR-allowlisted standalone `aws_security_group_rule` (var `adeptnova_cidrs`). The other two aliases stay `ClusterIP` and are reachable only through the basic-auth Ingress.
 
 **Namespace split.** `charts/graphdb/values.yaml` exposes a `namespace` value that defaults to empty (falls back to release namespace). Every template's `metadata.namespace` reads `{{ .Values.namespace | default .Release.Namespace }}`. The umbrella sets `graphdb-projects.namespace: graphdb` so its resources land there; the embedded alias leaves it empty so it inherits `graphwise` (the release namespace). Why split: graphdb-embedded MUST stay in `graphwise` because PoolParty's `internalUrl` in `charts/poolparty/values.yaml` uses bare-name service resolution (`http://graphwise-stack-graphdb-embedded:7200`) — bare names only resolve in-namespace. graphdb-projects has no in-cluster client requiring bare-name resolution; user-facing access goes through the public Ingress; PoolParty / UnifiedViews configure it as a remote endpoint at user level (UI-driven), using either the public URL or the cross-namespace Service URL `http://graphwise-stack-graphdb-projects.graphdb:7200`.
 

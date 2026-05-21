@@ -18,7 +18,7 @@ No application source code is in this repo. Only:
 
 - `infra/kind/kind-config.yaml` — single-node KIND cluster definition
 - `infra/terraform/` — provisions an EC2 host pre-loaded with kind/kubectl/helm and a running cluster
-- `charts/graphwise-stack/` — umbrella Helm chart (PoolParty + GraphDB ×2 + addons + console + Keycloak + supporting graphrag Secrets/Postgres)
+- `charts/graphwise-stack/` — umbrella Helm chart (PoolParty + GraphDB ×3 + addons + console + Keycloak + supporting graphrag Secrets/Postgres)
 - `charts/{poolparty,graphdb,addons,console,poolparty-elasticsearch,keycloak-realms}/` — per-app sub-charts
 - `charts/vendor/graphrag*/` — vendored GraphRAG charts (chatbot, conversation, components, workflows) — installed as a separate Helm release
 - Helper scripts under `scripts/` and `scripts/laptop/` — see `docs/claude/scripts.md`
@@ -30,7 +30,7 @@ Changes are usually to a chart's `values.yaml` / `templates/`, the umbrella's `t
 
 ## Architecture in one paragraph
 
-The Helm path runs as **two separate releases**: `graphwise-stack` (in `graphwise` ns — PoolParty, GraphDB ×2, ES, console, addons, Keycloak CR + Postgres + realm imports, **plus** the supporting Secrets/ConfigMap/Postgres the GraphRAG pods need, materialized in the `graphrag` namespace) and `graphrag` (in `graphrag` ns — vendored chatbot/conversation/components/workflows pods from `charts/vendor/graphrag/`, installed as its own release because the vendor templates don't set `metadata.namespace` and would otherwise land in `graphwise` where they can't mount the supporting Secrets).
+The Helm path runs as **two separate releases**: `graphwise-stack` (in `graphwise` ns — PoolParty, GraphDB ×3, ES, console, addons, Keycloak CR + Postgres + realm imports, **plus** the supporting Secrets/ConfigMap/Postgres the GraphRAG pods need, materialized in the `graphrag` namespace) and `graphrag` (in `graphrag` ns — vendored chatbot/conversation/components/workflows pods from `charts/vendor/graphrag/`, installed as its own release because the vendor templates don't set `metadata.namespace` and would otherwise land in `graphwise` where they can't mount the supporting Secrets).
 
 **Order matters.** Install: umbrella first (creates Secrets/Postgres in `graphrag`), then graphrag. Uninstall: graphrag first (so pods release mounts/connections), then umbrella. `scripts/reset-helm.sh` enforces both.
 
@@ -45,6 +45,7 @@ Each app gets its own subdomain so ingress-nginx can mint a separate cert per ap
 | PoolParty | `poolparty.<sub>.<base>` |
 | GraphDB embedded | `graphdb.<sub>.<base>` |
 | GraphDB projects | `graphdb-projects.<sub>.<base>` |
+| GraphDB AdeptNova (RC2+) | `graphdb-adeptnova.<sub>.<base>` (HTTPS) **plus** direct `:17200` on the EIP, CIDR-allowlisted |
 | ADF | `adf.<sub>.<base>` |
 | Semantic Workbench | `semantic-workbench.<sub>.<base>` |
 | GraphViews | `graphviews.<sub>.<base>` |
@@ -67,7 +68,9 @@ DNS needs both `<sub>.<base>` (apex) and `*.<sub>.<base>` (wildcard) A-records t
 
 - **Nested-subchart `.tgz` is gitignored** (`charts/*/charts/*.tgz` + `charts/*/Chart.lock`). Committing them creates the silent-stale-tarball footgun: Helm prefers the tarball over source edits, so chart changes silently no-op. The umbrella's own `charts/graphwise-stack/charts/*.tgz` IS committed (vendored deps, intentional). If you see addons resources missing expected fields after an edit, suspect this — `rm charts/addons/charts/*.tgz charts/addons/Chart.lock` then `helm dependency update`.
 
-- **GraphDB subchart fullname must keep `.Chart.Name`** in the helper (`printf "%s-%s" .Release.Name .Chart.Name`). The umbrella installs `charts/graphdb/` twice as aliases (`graphdb-embedded`, `graphdb-projects`); dropping `.Chart.Name` collapses both into one manifest and the second silently overwrites the first. PoolParty's `internalUrl` (`http://graphwise-stack-graphdb-embedded:7200`) depends on the prefixed name. → `docs/claude/chart-internals.md`
+- **GraphDB subchart fullname must keep `.Chart.Name`** in the helper (`printf "%s-%s" .Release.Name .Chart.Name`). The umbrella installs `charts/graphdb/` three times as aliases (`graphdb-embedded`, `graphdb-projects`, `graphdb-adeptnova`); dropping `.Chart.Name` collapses them into one manifest and later aliases silently overwrite earlier ones. PoolParty's `internalUrl` (`http://graphwise-stack-graphdb-embedded:7200`) depends on the prefixed name. → `docs/claude/chart-internals.md`
+
+- **AdeptNova GraphDB is the only direct-port-public service.** Host `:17200` → KIND `:31720` → `graphwise-stack-graphdb-adeptnova` NodePort Service. CIDR allowlist lives in `var.adeptnova_cidrs` and provisions a **standalone** `aws_security_group_rule` resource — NOT an inline `ingress {}` block on `aws_security_group.stack` (that SG sets `lifecycle.ignore_changes = [ingress]` to preserve operator-added Console rules). GraphDB-native security is on for this instance (admin password in `graphdb-adeptnova/graphwise-stack-graphdb-adeptnova-admin`). KIND extraPortMappings change is **not hot-applicable** — RC2 upgrade requires a cluster recreate.
 
 - **TLS: one wildcard cert via Route 53 DNS-01**, reflector mirrors it into every consuming namespace. Every Ingress's `tls.secretName: wildcard-tls`. `letsencrypt-prod` only — staging chain isn't trusted by in-cluster JVM clients (PoolParty → Keycloak), TLS handshake fails. → `docs/claude/tls-and-ingress.md`
 
