@@ -98,3 +98,24 @@ securityContext: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# GraphDB-native security. When enabled, a post-install Helm Job
+# turns on GraphDB's built-in user database and rotates the default
+# admin password (admin/root) to the value in the <fullname>-admin
+# Secret. Defaults off so the two pre-existing instances
+# (graphdb-embedded, graphdb-projects) remain unauthenticated at
+# the GraphDB layer (their security model is nginx basic auth at
+# the Ingress).
+#
+# AdeptNova override sets this true. The Secret name is hard-coded
+# to <fullname>-admin and is created out-of-band by
+# scripts/install-licenses.sh in the chart's namespace.
+security:
+  enabled: false
+  # Image used for the init Job. Alpine + curl is enough.
+  image: alpine:3.20
+  # Default password GraphDB ships with after security is first enabled.
+  # GraphDB 11 default is admin/root (confirmed against the GraphDB 11.3
+  # "Enabling security" docs). Override only if a future GraphDB release
+  # changes the default.
+  defaultAdminPassword: "root"

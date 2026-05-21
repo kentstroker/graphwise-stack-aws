@@ -1,0 +1,126 @@
+{{- if .Values.security.enabled }}
+{{/*
+Post-install/upgrade Helm hook: enables GraphDB-native security and
+rotates the default admin password to the value in <fullname>-admin
+Secret key `password`. Implements the locked 6-step Pattern B sequence
+from docs/superpowers/specs/2026-05-21-graphdb-adeptnova-design.md:
+
+  1. Wait for /rest/repositories (security still OFF).
+  2. GET /rest/security -- if "true", skip enable + jump to step 4.
+  3. POST /rest/security body literal `true` -> 200. Default admin/root.
+  4. GET /rest/security/users/admin authed as admin:<target> --
+     if 200, password already rotated, exit success.
+  5. PATCH /rest/security/users/admin authed as admin:root,
+     body {"password":"<target>"} -> 200.
+  6. GET /rest/security/users/admin authed as admin:<target> -> 200.
+
+Idempotent under helm upgrade re-trigger and mid-Job pod restart.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "graphdb.fullname" . }}-security-init
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "graphdb.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "graphdb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: security-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: {{ .Values.security.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GRAPHDB_URL
+              value: "http://{{ include "graphdb.fullname" . }}:{{ .Values.service.port }}"
+            - name: DEFAULT_ADMIN_PW
+              value: {{ .Values.security.defaultAdminPassword | quote }}
+            - name: TARGET_ADMIN_PW
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "graphdb.fullname" . }}-admin
+                  key: password
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache curl >/dev/null
+
+              # Step 1: wait for server ready (security still OFF, no auth)
+              echo "Waiting for GraphDB at $GRAPHDB_URL/rest/repositories ..."
+              for i in $(seq 1 60); do
+                  if curl -sf -o /dev/null "$GRAPHDB_URL/rest/repositories"; then
+                      echo "  GraphDB up after $i attempt(s)"
+                      break
+                  fi
+                  [ "$i" = "60" ] && { echo "ERROR: GraphDB never came up (5min)" >&2; exit 1; }
+                  sleep 5
+              done
+
+              # Step 2: idempotency probe -- is security already on?
+              SEC_STATE=$(curl -s "$GRAPHDB_URL/rest/security" || echo "")
+              echo "Step 2: GET /rest/security -> '$SEC_STATE'"
+              case "$SEC_STATE" in
+                  true|\"true\") echo "  security already ON; skipping step 3"; SKIP_ENABLE=1 ;;
+                  *)             SKIP_ENABLE=0 ;;
+              esac
+
+              # Step 3: enable security (if not already on)
+              if [ "$SKIP_ENABLE" = "0" ]; then
+                  echo "Step 3: enabling security ..."
+                  code=$(curl -s -o /tmp/r3 -w '%{http_code}' \
+                      -X POST -H 'Content-Type: application/json' \
+                      --data 'true' "$GRAPHDB_URL/rest/security")
+                  echo "  POST /rest/security true -> HTTP $code"
+                  if [ "$code" != "200" ] && [ "$code" != "204" ]; then
+                      cat /tmp/r3 >&2
+                      exit 1
+                  fi
+              fi
+
+              # Step 4: idempotency probe -- does the target password already work?
+              code=$(curl -s -o /dev/null -w '%{http_code}' \
+                  -u "admin:$TARGET_ADMIN_PW" \
+                  "$GRAPHDB_URL/rest/security/users/admin")
+              echo "Step 4: GET admin (auth=target) -> HTTP $code"
+              if [ "$code" = "200" ]; then
+                  echo "  target password already in place; exit success"
+                  exit 0
+              fi
+
+              # Step 5: rotate admin password (auth as admin:<default>)
+              echo "Step 5: rotating admin password ..."
+              code=$(curl -s -o /tmp/r5 -w '%{http_code}' \
+                  -X PATCH -H 'Content-Type: application/json' \
+                  -u "admin:$DEFAULT_ADMIN_PW" \
+                  --data "{\"password\":\"$TARGET_ADMIN_PW\"}" \
+                  "$GRAPHDB_URL/rest/security/users/admin")
+              echo "  PATCH admin -> HTTP $code"
+              if [ "$code" != "200" ] && [ "$code" != "204" ]; then
+                  cat /tmp/r5 >&2
+                  exit 1
+              fi
+
+              # Step 6: verify
+              code=$(curl -s -o /dev/null -w '%{http_code}' \
+                  -u "admin:$TARGET_ADMIN_PW" \
+                  "$GRAPHDB_URL/rest/security/users/admin")
+              echo "Step 6: GET admin (auth=target) -> HTTP $code"
+              if [ "$code" != "200" ]; then
+                  echo "ERROR: post-rotation verify failed" >&2
+                  exit 1
+              fi
+
+              echo "Done. Security ON; admin password seeded from Secret."
+{{- end }}
