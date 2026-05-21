@@ -105,7 +105,7 @@ helm repo update
 # - keycloak:      Keycloak operator + Keycloak instance + its Postgres
 # - graphwise:     PoolParty, GraphDB, ES, add-ons
 # - graphrag:      GraphRAG chatbot/conversation/components/workflows + n8n Postgres
-for ns in ingress-nginx cert-manager cnpg-system keycloak graphwise graphdb graphrag kubernetes-dashboard monitoring; do
+for ns in ingress-nginx cert-manager cnpg-system keycloak graphwise graphdb graphdb-adeptnova graphrag kubernetes-dashboard monitoring; do
     kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
 done
 
@@ -312,9 +312,9 @@ spec:
   secretTemplate:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "graphwise,graphdb,graphrag,keycloak,kubernetes-dashboard,monitoring"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "graphwise,graphdb,graphdb-adeptnova,graphrag,keycloak,kubernetes-dashboard,monitoring"
       reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "graphwise,graphdb,graphrag,keycloak,kubernetes-dashboard,monitoring"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "graphwise,graphdb,graphdb-adeptnova,graphrag,keycloak,kubernetes-dashboard,monitoring"
 EOF
 
 # ---------------------------------------------------------------------------
