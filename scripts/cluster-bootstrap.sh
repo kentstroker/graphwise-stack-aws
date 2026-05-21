@@ -35,8 +35,60 @@
 
 set -euo pipefail
 
-: "${LE_EMAIL:?LE_EMAIL must be set, e.g. LE_EMAIL=you@example.com $0}"
-: "${GRAPHWISE_APEX:?GRAPHWISE_APEX must be set, e.g. GRAPHWISE_APEX=stroker.semantic-proof.com $0}"
+# ---------------------------------------------------------------------------
+# Preflight: required env vars
+# ---------------------------------------------------------------------------
+# Both LE_EMAIL and GRAPHWISE_APEX must be set before any cluster work
+# starts -- they're consumed by the cert-manager ClusterIssuer + the
+# observability Ingress hostnames below. We deliberately check BOTH
+# upfront and report the full missing-set in one pass (rather than the
+# bash ${var:?...} pattern, which exits on the first hit and leaves the
+# operator playing whack-a-mole). Both vars are normally written by
+# cloud-init to /etc/profile.d/graphwise.sh -- if they're missing on a
+# session that should have inherited them, sourcing that file is the
+# fast fix.
+missing=()
+[[ -z "${LE_EMAIL:-}" ]]       && missing+=(LE_EMAIL)
+[[ -z "${GRAPHWISE_APEX:-}" ]] && missing+=(GRAPHWISE_APEX)
+if (( ${#missing[@]} > 0 )); then
+    cat >&2 <<EOF
+ERROR: required env var(s) not set: ${missing[*]}
+
+LE_EMAIL        Email address for the Let's Encrypt ACME account
+                (renewal-reminder mail). LE rejects empty / malformed
+                values.
+GRAPHWISE_APEX  Apex hostname for this deployment -- e.g.
+                stroker.semantic-proof.com. Used to build the
+                observability Ingress hostnames (dashboard.<apex>,
+                prometheus.<apex>, grafana.<apex>) and the wildcard
+                Certificate's SANs.
+
+Fix options (pick one):
+
+  1) Source the cloud-init profile (works on EC2 where cloud-init
+     already wrote both values):
+
+       source /etc/profile.d/graphwise.sh
+       ./scripts/cluster-bootstrap.sh
+
+  2) Export them inline for a one-shot invocation:
+
+       LE_EMAIL=you@example.com \\
+       GRAPHWISE_APEX=stroker.semantic-proof.com \\
+       ./scripts/cluster-bootstrap.sh
+
+  3) Export them in your current shell (persists for this session):
+
+       export LE_EMAIL=you@example.com
+       export GRAPHWISE_APEX=stroker.semantic-proof.com
+       ./scripts/cluster-bootstrap.sh
+
+If /etc/profile.d/graphwise.sh is missing or empty, cloud-init didn't
+finish (or this isn't the cloud-init'd EC2 host). Confirm with:
+    sudo tail /var/log/bootstrap.log
+EOF
+    exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
