@@ -131,6 +131,12 @@ check_namespace_ready() {
 
 check_namespace_ready graphwise "graphwise namespace  (PoolParty / GraphDB embedded / addons / console)"
 check_namespace_ready graphdb   "graphdb namespace    (GraphDB projects -- standalone Workbench)"
+# AdeptNova GraphDB lives in its own namespace (RC2). Only check it
+# if the namespace exists; reset-helm.sh might have been run with the
+# AdeptNova alias disabled.
+if kubectl get namespace graphdb-adeptnova >/dev/null 2>&1; then
+    check_namespace_ready graphdb-adeptnova "graphdb-adeptnova ns (GraphDB AdeptNova -- public :17200)"
+fi
 check_namespace_ready keycloak  "keycloak namespace   (Keycloak + Postgres + bootstrap Jobs)"
 if [ "$GRAPHRAG_INSTALLED" = "yes" ]; then
     check_namespace_ready graphrag "graphrag namespace  (chatbot / conversation / components / workflows)"
@@ -155,6 +161,22 @@ if kubectl get secret -n graphdb graphdb-license >/dev/null 2>&1; then
     check_pass "graphdb/graphdb-license  (graphdb-projects mounts this)"
 else
     check_fail "graphdb/graphdb-license MISSING" "Run scripts/install-licenses.sh; it auto-installs the second copy when the graphdb namespace exists"
+fi
+# graphdb-adeptnova: third copy of license + admin credentials Secret
+# consumed by the security-init Helm hook.
+if kubectl get namespace graphdb-adeptnova >/dev/null 2>&1; then
+    if kubectl get secret -n graphdb-adeptnova graphdb-license >/dev/null 2>&1; then
+        check_pass "graphdb-adeptnova/graphdb-license  (AdeptNova GraphDB mounts this)"
+    else
+        check_fail "graphdb-adeptnova/graphdb-license MISSING" \
+                   "Run scripts/install-licenses.sh; it auto-installs the third copy when the graphdb-adeptnova namespace exists"
+    fi
+    if kubectl get secret -n graphdb-adeptnova graphwise-stack-graphdb-adeptnova-admin >/dev/null 2>&1; then
+        check_pass "graphdb-adeptnova/graphwise-stack-graphdb-adeptnova-admin  (security-init Job consumes this)"
+    else
+        check_fail "graphdb-adeptnova/graphwise-stack-graphdb-adeptnova-admin MISSING" \
+                   "Run scripts/install-licenses.sh; the AdeptNova admin Secret is created alongside the license"
+    fi
 fi
 
 # --------------------------------------------------------------------
@@ -317,6 +339,7 @@ endpoints=(
     "auth.$APEX:200|302:Keycloak"
     "graphdb.$APEX:401:GraphDB embedded (basic auth)"
     "graphdb-projects.$APEX:401:GraphDB projects (basic auth)"
+    "graphdb-adeptnova.$APEX:401:GraphDB AdeptNova (basic auth + GraphDB native auth)"
     "adf.$APEX:200|404:ADF (root 404 OK; lives at /ADF/)"
     "semantic-workbench.$APEX:200|404:Semantic Workbench (root 404 OK; lives at /SemanticWorkbench/)"
     "graphviews.$APEX:200|404:GraphViews (root 404 OK; lives at /GraphViews/)"
@@ -372,6 +395,8 @@ ${BOLD}${CYAN}Where to click next:${RESET}
                               ${DIM}basic-auth: demo / rdf#rocks${RESET}
   ${BOLD}GraphDB projects${RESET}          https://graphdb-projects.$APEX/
                               ${DIM}basic-auth: demo / rdf#rocks${RESET}
+  ${BOLD}GraphDB AdeptNova${RESET}         https://graphdb-adeptnova.$APEX/
+                            (direct :17200 also reachable from allowed CIDRs)
   ${BOLD}Keycloak admin${RESET}            https://auth.$APEX/admin/
                               ${DIM}sign in: poolparty_auth_admin / admin${RESET}
   ${BOLD}Grafana${RESET}                   https://grafana.$APEX/
