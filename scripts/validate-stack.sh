@@ -291,7 +291,7 @@ fi
 # in-namespace). Without this, Ingress TLS fails with "Secret not
 # found" and ingress-nginx serves a self-signed default cert.
 section "Wildcard Secret reflection (kubernetes-reflector)"
-reflect_targets=(graphwise graphdb graphrag keycloak kubernetes-dashboard monitoring)
+reflect_targets=(graphwise graphdb graphdb-adeptnova graphrag keycloak kubernetes-dashboard monitoring)
 for ns in "${reflect_targets[@]}"; do
     if kubectl get secret -n "$ns" wildcard-tls >/dev/null 2>&1; then
         check_pass "wildcard-tls present in '${BOLD}${ns}${RESET}' namespace"

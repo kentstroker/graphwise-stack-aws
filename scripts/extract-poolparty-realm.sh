@@ -15,6 +15,94 @@ DEST="$REPO_ROOT/charts/keycloak-realms/files/poolparty-realm.json"
 
 IMAGE="${POOLPARTY_KEYCLOAK_IMAGE:-ontotext/poolparty-keycloak:latest}"
 
+# ---------------------------------------------------------------------------
+# Preflight: docker must be on PATH and the current shell must be able to
+# reach the daemon.
+# ---------------------------------------------------------------------------
+# The classic AL2023 gotcha: cloud-init runs `usermod -aG docker ec2-user`,
+# but an SSH session opened BEFORE that ran has effective groups frozen at
+# login time and can't talk to /var/run/docker.sock. Every `docker run`
+# returns "permission denied while trying to connect to the Docker daemon
+# socket" until the operator either runs `exec newgrp docker` to promote
+# the current shell into the group, or logs out and back in. This script
+# previously failed deep inside the first `docker run` with a cryptic
+# permission error; the preflight below short-circuits that with a clear
+# message naming the fix.
+if ! command -v docker >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+ERROR: 'docker' not found on PATH.
+
+This script runs `docker run` against the poolparty-keycloak image to
+extract the realm JSON.
+
+  AL2023:  sudo dnf install -y docker && sudo systemctl enable --now docker
+  macOS:   install Docker Desktop or colima
+
+Then re-run this script.
+EOF
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    # Daemon unreachable. Distinguish the "group not in current shell" case
+    # from the "not a group member at all" case so we recommend the right fix.
+    if getent group docker 2>/dev/null | tr ',' '\n' | grep -qx "$USER"; then
+        cat >&2 <<EOF
+ERROR: cannot reach the Docker daemon, but '$USER' IS a member of the
+'docker' group per /etc/group.
+
+This SSH session was spawned BEFORE the group membership took effect --
+the cloud-init 'usermod -aG docker $USER' ran AFTER this shell already
+existed, so the shell's effective groups don't include 'docker' and
+talking to /var/run/docker.sock returns "permission denied."
+
+Fix it with EITHER:
+
+    exec newgrp docker          # promote this shell into the docker group,
+                                # then re-run scripts/extract-poolparty-realm.sh
+
+  -- OR --
+
+    exit                        # log out
+    ssh ...                     # log back in (new login picks up the group)
+
+Verify with 'id -nG' before re-running; 'docker' must appear in the output.
+EOF
+        exit 1
+    elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+        cat >&2 <<EOF
+ERROR: cannot reach the Docker daemon as '$USER', but 'sudo docker' works.
+
+'$USER' is not in the 'docker' group. Add yourself and re-login:
+
+    sudo usermod -aG docker $USER
+    exit && ssh ...             # OR: exec newgrp docker
+
+Verify with 'id -nG' before re-running; 'docker' must appear in the output.
+EOF
+        exit 1
+    else
+        cat >&2 <<EOF
+ERROR: cannot reach the Docker daemon.
+
+Check that the daemon is running:
+    sudo systemctl status docker          # AL2023 / Linux
+    open -a Docker                        # macOS Docker Desktop
+
+If it is running, confirm your user can talk to it:
+    docker info                           # should print server details
+
+If the issue is group membership (most common on a fresh EC2 boot):
+    id -nG                                # must include 'docker'
+    sudo usermod -aG docker $USER         # if not, add yourself
+    exec newgrp docker                    # then refresh this shell
+
+Re-run this script once 'docker info' succeeds without sudo.
+EOF
+        exit 1
+    fi
+fi
+
 echo "Inspecting realm imports inside $IMAGE..."
 
 # Find every JSON file under the standard Keycloak import path.

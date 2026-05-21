@@ -57,19 +57,30 @@ spec:
             - |
               apk add --no-cache curl >/dev/null
 
-              # Step 1: wait for server ready (security still OFF, no auth)
+              # Step 1: wait for server ready. Accept 200 (security still
+              # OFF), 401, or 403 (security already ON from a prior install).
+              # Cannot use `curl -sf` here because `-f` rejects 4xx and
+              # would make this loop never succeed on a `helm upgrade`
+              # re-trigger once security is already enabled -- eating the
+              # full backoffLimit before the Job gives up.
               echo "Waiting for GraphDB at $GRAPHDB_URL/rest/repositories ..."
               for i in $(seq 1 60); do
-                  if curl -sf -o /dev/null "$GRAPHDB_URL/rest/repositories"; then
-                      echo "  GraphDB up after $i attempt(s)"
-                      break
-                  fi
+                  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                      "$GRAPHDB_URL/rest/repositories" || echo "000")
+                  case "$code" in
+                      200|401|403)
+                          echo "  GraphDB up after $i attempt(s) (HTTP $code)"
+                          break ;;
+                  esac
                   [ "$i" = "60" ] && { echo "ERROR: GraphDB never came up (5min)" >&2; exit 1; }
                   sleep 5
               done
 
               # Step 2: idempotency probe -- is security already on?
-              SEC_STATE=$(curl -s "$GRAPHDB_URL/rest/security" || echo "")
+              # Once security is ON, GET /rest/security still returns the
+              # current state (no auth required for the status read in
+              # GraphDB 11.3), so this probe works in both lifecycle states.
+              SEC_STATE=$(curl -s --max-time 5 "$GRAPHDB_URL/rest/security" || echo "")
               echo "Step 2: GET /rest/security -> '$SEC_STATE'"
               case "$SEC_STATE" in
                   true|\"true\") echo "  security already ON; skipping step 3"; SKIP_ENABLE=1 ;;
