@@ -130,13 +130,16 @@ spec:
 
 - Helm hooks: `post-install,post-upgrade`, `hook-weight: 5`, `hook-delete-policy: before-hook-creation,hook-succeeded`.
 - Pattern: mirrors `charts/addons/templates/uv-password-reset-job.yaml` (UnifiedViews password reset).
-- Steps (exact API sequence to be confirmed against GraphDB 11.3.3 docs during implementation — see "Open questions"):
-  1. Wait for the GraphDB Service to answer `/rest/repositories` (curl loop, 90s timeout).
-  2. Enable security and seed the admin password from the `graphdb-adeptnova-admin` Secret, using whichever of the two GraphDB 11 patterns is supported:
-     - **Pattern A** (security-off-first): create/replace the admin user via `POST /rest/security/users/admin` (no auth required while security is off), then `POST /rest/security` body `true` to flip security on.
-     - **Pattern B** (security-on-first): `POST /rest/security` body `true` (creates default `admin/admin`), then `PUT /rest/security/users/admin` authenticated as `admin/admin` to set the password from the Secret.
-- The Secret is created by `scripts/install-licenses.sh` (it already creates per-namespace Secrets; one more is trivial). Key names: `username` / `password`. Default password: `rdf#rocks` (per the repo's default-password convention in CLAUDE.md).
-- Job is idempotent in either pattern — re-running against an already-secured server with the correct admin credentials is a no-op.
+- API sequence (Pattern B — security-on-first; see "Resolved questions" for rationale):
+  1. Wait for the GraphDB Service to answer `GET /rest/repositories` (curl loop, 90s timeout). On a freshly-booted GraphDB with security still OFF, this returns `200 []` with no auth.
+  2. Check current security state: `GET /rest/security` returns `"true"` or `"false"`. If `"true"`, skip to step 4 (the Job is being re-run; security is already on).
+  3. Enable GraphDB-native security: `POST /rest/security` with header `Content-Type: application/json` and body literal `true`. No auth required (security is OFF at this point). GraphDB now serves as `admin/root` by default.
+  4. Try the target credentials first: `GET /rest/security/users/admin` with HTTP Basic `admin:<target-password-from-secret>`. If `200`, the Job is a re-run against an already-rotated admin — exit success.
+  5. Otherwise rotate the password: `PATCH /rest/security/users/admin` with HTTP Basic `admin:root`, header `Content-Type: application/json`, body `{"password":"<target-password-from-secret>"}`. Expected `200`.
+  6. Verify: `GET /rest/security/users/admin` with HTTP Basic `admin:<target-password-from-secret>` returns `200`. Exit success.
+- The `<target-password-from-secret>` is read from the `graphdb-adeptnova-admin` Secret's `password` key. Default value: `rdf#rocks` (per the repo's default-password convention in CLAUDE.md).
+- The Secret is created by `scripts/install-licenses.sh` (it already creates per-namespace Secrets; one more is trivial). Key names: `username` / `password`.
+- Job is idempotent: steps 2 and 4 short-circuit on re-run, so the Job survives partial-failure restart and `helm upgrade` re-triggering the hook.
 
 Rationale for an init Job over an initContainer: GraphDB's REST security endpoints require the server to be fully up and the cluster API to be reachable; an initContainer would race the main container's startup probe. The hook pattern is what the existing `uv-password-reset` Job uses for the same reason.
 
@@ -315,6 +318,50 @@ After RC2 deploy on a test EIP with `adeptnova_cidrs = ["<my-laptop>/32"]`:
 - `infra/README.md` — document `var.adeptnova_cidrs` in the variable table.
 - `infra/terraform/terraform.tfvars.example` — show `adeptnova_cidrs = []` with a comment about what to set it to.
 
-## Open questions
+## Resolved questions
 
-1. **GraphDB 11.3.3 security-init API sequence.** Verify against the GraphDB 11 REST API reference whether Pattern A (create user while security is off, then enable) or Pattern B (enable security, then change the default admin password) is supported. Pattern B is more conservative because it doesn't depend on a writable user endpoint when security is off, but it requires the Job to know that the seed password is `admin` before the change. The implementation plan will pick one and code only that path.
+1. **GraphDB 11.3.3 security-init API sequence — Pattern B (security-on-first).**
+
+   **Decision:** Pattern B. Enable security first, then rotate the default admin password.
+
+   **GraphDB 11 default admin credentials:** `admin / root` (lowercase, no quotes). Sourced from the GraphDB 11.3 "Enabling security" documentation, which states: *"The default admin credentials are: username: **admin** password: **root**."* This matches what GraphDB seeds into its user database the first time `POST /rest/security` body `true` is called against a fresh install.
+
+   **Canonical API sequence (locked into the implementation plan):**
+
+   ```text
+   # 1. Wait for server ready (security still OFF; no auth needed)
+   GET  /rest/repositories                              -> 200 []
+
+   # 2. Read current security state (idempotency check)
+   GET  /rest/security                                  -> "true" | "false"
+        # if "true", jump to step 4
+
+   # 3. Enable GraphDB-native security
+   POST /rest/security
+        Content-Type: application/json
+        Body: true                                      -> 200
+        # GraphDB now requires auth; default admin is admin/root
+
+   # 4. Idempotency probe: does the target password already work?
+   GET  /rest/security/users/admin
+        Authorization: Basic <admin:target-password>    -> 200 (done) | 401 (continue)
+
+   # 5. Rotate the admin password
+   PATCH /rest/security/users/admin
+        Authorization: Basic <admin:root>
+        Content-Type: application/json
+        Body: {"password":"<target-password>"}          -> 200
+
+   # 6. Verify
+   GET  /rest/security/users/admin
+        Authorization: Basic <admin:target-password>    -> 200
+   ```
+
+   **Why Pattern B and not Pattern A:**
+   - Pattern B is what GraphDB itself ships and documents: a fresh server boots with security OFF, the operator (or our Job) toggles `POST /rest/security` true, then rotates `admin/root` to a real password. This is the path the Workbench UI exercises and the path the docs assume.
+   - Pattern A (create the user via `POST /rest/security/users/<name>` while security is OFF, then flip security on) would technically work — the endpoint exists — but the docs don't promise the create-user endpoint accepts unauthenticated requests when security is off, and we'd be relying on undocumented behavior. Pattern B uses only documented contracts.
+   - Both patterns are idempotent on re-run; Pattern B's `GET /rest/security` and "try target creds first" probes (steps 2 and 4) make the Job safe under `helm upgrade` re-triggering the hook or under mid-Job pod restart.
+
+   **Sources consulted:**
+   - GraphDB 11.3 *Administration via HTTP with curl* — endpoint paths, methods, and curl examples for `POST /rest/security`, `POST /rest/security/users/<username>`, `PATCH /rest/security/users/<username>`.
+   - GraphDB 11.3 *Enabling security* — default `admin/root` credentials and the "change the default password as soon as possible" guidance that motivates step 5.
