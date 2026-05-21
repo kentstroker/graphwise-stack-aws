@@ -5,7 +5,7 @@ description: |
   Workbench, GraphViews, RDF4J, UnifiedViews. Each is toggleable via
   <name>.enabled in values.yaml. Mirrors today's addons.yaml.
 type: application
-version: 1.0.0-rc1
+version: 1.0.0-rc2
 appVersion: "1.0.0"
 maintainers:
   - name: graphwise-stack-aws

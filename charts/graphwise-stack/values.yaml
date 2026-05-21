@@ -264,6 +264,28 @@ graphdb-projects:
   ingress:
     host: ""
 
+# Third GraphDB instance, exposed publicly on host :17200 via KIND
+# extraPortMappings + a CIDR-allowlisted SG rule, with GraphDB-native
+# security enabled (defense-in-depth). Used by AdeptNova-style demos
+# that need direct triple-store access from external client tooling
+# without going through the basic-auth nginx Ingress.
+#
+# Lives in its own namespace `graphdb-adeptnova` (created by
+# scripts/cluster-bootstrap.sh; license + admin Secrets installed by
+# scripts/install-licenses.sh).
+graphdb-adeptnova:
+  enabled: true
+  namespace: graphdb-adeptnova
+  externalUrl: ""              # filled by render-values.sh
+  ingress:
+    host: ""                   # filled by render-values.sh
+  service:
+    type: NodePort
+    port: 7200
+    nodePort: 31720
+  security:
+    enabled: true
+
 # PoolParty.
 poolparty:
   enabled: true

@@ -20,7 +20,7 @@ description: |
   Ingress is HTTPS-only via cert-manager + Let's Encrypt, gated by
   HTTP basic auth (matches the existing demo's demo:rdf#rocks pattern).
 type: application
-version: 1.0.0-rc1
+version: 1.0.0-rc2
 appVersion: "11.3.3"
 maintainers:
   - name: graphwise-stack-aws

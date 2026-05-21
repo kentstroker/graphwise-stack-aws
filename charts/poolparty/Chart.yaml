@@ -15,7 +15,7 @@ description: |
   decoder strict-equality matches this against the issuer claim. See
   CLAUDE.md "OIDC issuer-match rule".
 type: application
-version: 1.0.0-rc1
+version: 1.0.0-rc2
 appVersion: "10.2.0"
 maintainers:
   - name: graphwise-stack-aws

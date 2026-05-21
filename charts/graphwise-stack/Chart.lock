@@ -1,24 +1,27 @@
 dependencies:
 - name: keycloak-realms
   repository: file://../keycloak-realms
-  version: 1.0.0-rc1
+  version: 1.0.0-rc2
 - name: poolparty-elasticsearch
   repository: file://../poolparty-elasticsearch
-  version: 1.0.0-rc1
+  version: 1.0.0-rc2
 - name: graphdb
   repository: file://../graphdb
-  version: 1.0.0-rc1
+  version: 1.0.0-rc2
 - name: graphdb
   repository: file://../graphdb
-  version: 1.0.0-rc1
+  version: 1.0.0-rc2
+- name: graphdb
+  repository: file://../graphdb
+  version: 1.0.0-rc2
 - name: poolparty
   repository: file://../poolparty
-  version: 1.0.0-rc1
+  version: 1.0.0-rc2
 - name: console
   repository: file://../console
-  version: 1.0.0-rc1
+  version: 1.0.0-rc2
 - name: addons
   repository: file://../addons
-  version: 1.0.0-rc1
-digest: sha256:d7e610600a3098c1e1b736d7d4c931bb313c73d2c5dd4a9ff30cb927608a293e
-generated: "2026-05-04T07:38:37.222706-07:00"
+  version: 1.0.0-rc2
+digest: sha256:4222c46b23f3f2b315cf60ae90902f42d1edbaf33d47370cdecd4eb09b45303c
+generated: "2026-05-21T14:53:50.088385-07:00"
