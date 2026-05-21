@@ -76,5 +76,26 @@ if kubectl get namespace graphdb >/dev/null 2>&1; then
     create_or_replace graphdb graphdb-license graphdb.license "$LICENSES_DIR/graphdb.license"
 fi
 
+# Third GraphDB instance (AdeptNova, added in RC2) lives in its own
+# namespace `graphdb-adeptnova`. Needs the same license file AND an
+# admin-credentials Secret consumed by the security-init Helm hook
+# (charts/graphdb/templates/security-init-job.yaml). Default admin
+# password follows the repo's `rdf#rocks` convention (CLAUDE.md
+# "Default password convention"). Rotate by editing the Secret and
+# bouncing the security-init Job (or letting the next helm upgrade
+# re-fire the post-upgrade hook).
+if kubectl get namespace graphdb-adeptnova >/dev/null 2>&1; then
+    create_or_replace graphdb-adeptnova graphdb-license graphdb.license "$LICENSES_DIR/graphdb.license"
+
+    # Admin Secret. The chart's security-init Job reads this via
+    # secretKeyRef to <fullname>-admin =
+    # graphwise-stack-graphdb-adeptnova-admin.
+    kubectl -n graphdb-adeptnova delete secret graphwise-stack-graphdb-adeptnova-admin --ignore-not-found
+    kubectl -n graphdb-adeptnova create secret generic graphwise-stack-graphdb-adeptnova-admin \
+        --from-literal=username=admin \
+        --from-literal=password='rdf#rocks'
+    echo "  ✓ graphdb-adeptnova/graphwise-stack-graphdb-adeptnova-admin (admin user)"
+fi
+
 echo
 echo "License Secrets installed. Next: helm install the umbrella chart."
