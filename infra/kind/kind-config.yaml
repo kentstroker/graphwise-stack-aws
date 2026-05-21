@@ -61,6 +61,16 @@ nodes:
       - containerPort: 443
         hostPort: 443
         protocol: TCP
+      # AdeptNova GraphDB direct (RC2). Public access on host :17200
+      # forwards to KIND node :31720, which the
+      # graphwise-stack-graphdb-adeptnova NodePort Service listens on.
+      # Public exposure is gated separately by a CIDR-allowlisted SG
+      # rule -- see infra/terraform/main.tf (aws_security_group_rule
+      # "adeptnova_graphdb").
+      - containerPort: 31720
+        hostPort: 17200
+        protocol: TCP
+        listenAddress: "0.0.0.0"
     # Mount the EC2's standardized ingest landing pad into the KIND
     # control-plane container so it can be exposed to pods via a
     # hostPath PV. Cloud-init creates /home/ec2-user/staging-data on
