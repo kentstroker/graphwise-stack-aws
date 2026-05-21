@@ -277,6 +277,30 @@ resource "aws_security_group" "stack" {
 }
 
 # ---------------------------------------------------------------------------
+# AdeptNova GraphDB ingress rule (RC2)
+# ---------------------------------------------------------------------------
+# Standalone aws_security_group_rule resource, NOT an inline `ingress`
+# block on aws_security_group.stack. The SG has lifecycle.ignore_changes
+# = [ingress] (see SG resource above), which causes Terraform to ignore
+# inline ingress block drift; standalone rule resources are managed
+# separately from inline blocks and respond to terraform plan/apply
+# normally.
+#
+# Gated on var.adeptnova_cidrs being non-empty: empty list -> no rule
+# created -> :17200 unreachable from outside the VPC even though the
+# instance is still listening.
+resource "aws_security_group_rule" "adeptnova_graphdb" {
+  count             = length(var.adeptnova_cidrs) > 0 ? 1 : 0
+  type              = "ingress"
+  from_port         = 17200
+  to_port           = 17200
+  protocol          = "tcp"
+  cidr_blocks       = var.adeptnova_cidrs
+  security_group_id = aws_security_group.stack.id
+  description       = "AdeptNova GraphDB direct (host :17200 to KIND :31720)"
+}
+
+# ---------------------------------------------------------------------------
 # EC2 instance
 # ---------------------------------------------------------------------------
 

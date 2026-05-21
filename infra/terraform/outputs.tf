@@ -88,3 +88,18 @@ output "bootstrap_log_hint" {
   description = "Path on the instance where the cloud-init bootstrap script writes its log. The KIND cluster bring-up runs in this script and adds ~3-5 minutes to the usual provisioning time. Tail this on first SSH to confirm the install finished cleanly."
   value       = "ssh -i $GRAPHWISE_KEY $GRAPHWISE_USER@$GRAPHWISE_HOST 'sudo tail -f /var/log/bootstrap.log'   # GRAPHWISE_HOST=${local.public_ip} or your subdomain"
 }
+
+output "graphdb_adeptnova" {
+  description = "HTTPS subdomain for the AdeptNova GraphDB workbench (browser admin)."
+  value       = "https://graphdb-adeptnova.${var.subdomain}.${var.base_domain}/"
+}
+
+output "graphdb_adeptnova_direct" {
+  description = <<-EOT
+    Direct (non-Ingress) URL for the AdeptNova GraphDB, on host port
+    17200. Reachable only from CIDRs listed in var.adeptnova_cidrs.
+    Reports "(disabled - var.adeptnova_cidrs is empty)" when the SG
+    rule is not provisioned.
+  EOT
+  value       = length(var.adeptnova_cidrs) > 0 ? "http://${local.public_ip}:17200/" : "(disabled - var.adeptnova_cidrs is empty)"
+}

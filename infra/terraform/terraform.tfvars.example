@@ -110,3 +110,8 @@ existing_eip_allocation_id = "eipalloc-CHANGEME"
 #   Customer   = "acme-corp"
 #   CostCenter = "presales-demos"
 # }
+
+# AdeptNova GraphDB direct-access CIDR allowlist (RC2).
+# Empty list = SG rule not created; host :17200 unreachable externally.
+# Example: adeptnova_cidrs = ["198.51.100.42/32"]
+adeptnova_cidrs = []

@@ -112,3 +112,24 @@ variable "existing_eip_allocation_id" {
     error_message = "existing_eip_allocation_id must be empty or a valid EIP allocation ID (e.g. eipalloc-0123456789abcdef0)."
   }
 }
+
+variable "adeptnova_cidrs" {
+  type        = list(string)
+  default     = []
+  description = <<-EOT
+    CIDR ranges allowed to reach the AdeptNova GraphDB on host port
+    17200 (the third, publicly-exposed GraphDB instance added in RC2).
+
+    Empty list (default) = no SG rule is created; the instance still
+    runs and listens on :31720 inside KIND, but the EC2 security group
+    won't admit external traffic to host :17200.
+
+    Example for a single laptop + a customer office:
+      adeptnova_cidrs = ["198.51.100.42/32", "203.0.113.0/24"]
+
+    NOTE: the SG rule is created as a standalone
+    aws_security_group_rule resource, NOT as an inline ingress block
+    on aws_security_group.stack -- that SG has lifecycle.ignore_changes
+    = [ingress] to preserve operator-added Console rules.
+  EOT
+}
