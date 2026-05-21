@@ -135,7 +135,7 @@ spec:
   2. Check current security state: `GET /rest/security` returns `"true"` or `"false"`. If `"true"`, skip to step 4 (the Job is being re-run; security is already on).
   3. Enable GraphDB-native security: `POST /rest/security` with header `Content-Type: application/json` and body literal `true`. No auth required (security is OFF at this point). GraphDB now serves as `admin/root` by default.
   4. Try the target credentials first: `GET /rest/security/users/admin` with HTTP Basic `admin:<target-password-from-secret>`. If `200`, the Job is a re-run against an already-rotated admin — exit success.
-  5. Otherwise rotate the password: `PATCH /rest/security/users/admin` with HTTP Basic `admin:root`, header `Content-Type: application/json`, body `{"password":"<target-password-from-secret>"}`. Expected `200`.
+  5. Otherwise rotate the password: `PATCH /rest/security/users/admin` with HTTP Basic `admin:root`, header `Content-Type: application/json`, body `{"password":"<target-password-from-secret>"}`. Expected `200`. (Note: GraphDB's documented PATCH example shows the full user object; we send only `{"password":"..."}` on the assumption that PATCH treats missing fields as unchanged. Verify with `curl` against the running server during implementation; if `appSettings` get clobbered, switch to a full-object body that round-trips the existing user resource.)
   6. Verify: `GET /rest/security/users/admin` with HTTP Basic `admin:<target-password-from-secret>` returns `200`. Exit success.
 - The `<target-password-from-secret>` is read from the `graphdb-adeptnova-admin` Secret's `password` key. Default value: `rdf#rocks` (per the repo's default-password convention in CLAUDE.md).
 - The Secret is created by `scripts/install-licenses.sh` (it already creates per-namespace Secrets; one more is trivial). Key names: `username` / `password`.
@@ -347,6 +347,11 @@ After RC2 deploy on a test EIP with `adeptnova_cidrs = ["<my-laptop>/32"]`:
         Authorization: Basic <admin:target-password>    -> 200 (done) | 401 (continue)
 
    # 5. Rotate the admin password
+   #    Note: GraphDB's documented PATCH example shows the full user object;
+   #    we send only {"password":"..."} on the assumption that PATCH treats
+   #    missing fields as unchanged. Verify with curl during implementation;
+   #    if appSettings get clobbered, switch to a full-object body that
+   #    round-trips the existing user resource.
    PATCH /rest/security/users/admin
         Authorization: Basic <admin:root>
         Content-Type: application/json
@@ -363,5 +368,5 @@ After RC2 deploy on a test EIP with `adeptnova_cidrs = ["<my-laptop>/32"]`:
    - Both patterns are idempotent on re-run; Pattern B's `GET /rest/security` and "try target creds first" probes (steps 2 and 4) make the Job safe under `helm upgrade` re-triggering the hook or under mid-Job pod restart.
 
    **Sources consulted:**
-   - GraphDB 11.3 *Administration via HTTP with curl* — endpoint paths, methods, and curl examples for `POST /rest/security`, `POST /rest/security/users/<username>`, `PATCH /rest/security/users/<username>`.
-   - GraphDB 11.3 *Enabling security* — default `admin/root` credentials and the "change the default password as soon as possible" guidance that motivates step 5.
+   - GraphDB 11.3 [*Administration via HTTP with curl*](https://graphdb.ontotext.com/documentation/11.3/admin-with-curl.html) — endpoint paths, methods, and curl examples for `POST /rest/security`, `POST /rest/security/users/<username>`, `PATCH /rest/security/users/<username>`.
+   - GraphDB 11.3 [*Enabling security*](https://graphdb.ontotext.com/documentation/11.3/enabling-security.html) — default `admin/root` credentials and the "change the default password as soon as possible" guidance that motivates step 5.
