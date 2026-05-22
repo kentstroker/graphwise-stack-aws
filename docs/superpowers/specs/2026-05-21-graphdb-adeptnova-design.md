@@ -131,12 +131,12 @@ spec:
 - Helm hooks: `post-install,post-upgrade`, `hook-weight: 5`, `hook-delete-policy: before-hook-creation,hook-succeeded`.
 - Pattern: mirrors `charts/addons/templates/uv-password-reset-job.yaml` (UnifiedViews password reset).
 - API sequence (Pattern B — security-on-first; see "Resolved questions" for rationale):
-  1. Wait for the GraphDB Service to answer `GET /rest/repositories` (curl loop, 90s timeout). On a freshly-booted GraphDB with security still OFF, this returns `200 []` with no auth.
+  1. Wait for the GraphDB Service to answer `GET /rest/repositories` (curl loop, 90s timeout). Accept 200 (security OFF), 401, or 403 (security already ON from a prior install) — using `curl -sf` would make this loop never exit on a `helm upgrade` re-trigger.
   2. Check current security state: `GET /rest/security` returns `"true"` or `"false"`. If `"true"`, skip to step 4 (the Job is being re-run; security is already on).
   3. Enable GraphDB-native security: `POST /rest/security` with header `Content-Type: application/json` and body literal `true`. No auth required (security is OFF at this point). GraphDB now serves as `admin/root` by default.
-  4. Try the target credentials first: `GET /rest/security/users/admin` with HTTP Basic `admin:<target-password-from-secret>`. If `200`, the Job is a re-run against an already-rotated admin — exit success.
-  5. Otherwise rotate the password: `PATCH /rest/security/users/admin` with HTTP Basic `admin:root`, header `Content-Type: application/json`, body `{"password":"<target-password-from-secret>"}`. Expected `200`. (Note: GraphDB's documented PATCH example shows the full user object; we send only `{"password":"..."}` on the assumption that PATCH treats missing fields as unchanged. Verify with `curl` against the running server during implementation; if `appSettings` get clobbered, switch to a full-object body that round-trips the existing user resource.)
-  6. Verify: `GET /rest/security/users/admin` with HTTP Basic `admin:<target-password-from-secret>` returns `200`. Exit success.
+  4. Idempotency probe — `GET /rest/security/users/admin` authed as `admin:<target>`, `Accept: application/json`. Exit success ONLY if `200` AND the response body contains `ROLE_ADMIN`. A 200 without the role means a previous PATCH ran with a partial body and cleared `grantedAuthorities`; we need to re-PATCH.
+  5. PATCH `/rest/security/users/admin` with body `{"password":"<target>","grantedAuthorities":["ROLE_ADMIN"]}`. The body MUST include `grantedAuthorities` — GraphDB 11's PATCH is not true-partial-merge and a missing-field body clears the authorities list. Auth: try `admin:root` (fresh install) first; on 401/403 retry as `admin:<target>` (recovery from already-rotated-but-broken state).
+  6. Verify: `GET /rest/security/users/admin` authed as `admin:<target>` returns `200` AND response body contains `ROLE_ADMIN`. Exit success only on both.
 - The `<target-password-from-secret>` is read from the `graphdb-adeptnova-admin` Secret's `password` key. Default value: `rdf#rocks` (per the repo's default-password convention in CLAUDE.md).
 - The Secret is created by `scripts/install-licenses.sh` (it already creates per-namespace Secrets; one more is trivial). Key names: `username` / `password`.
 - Job is idempotent: steps 2 and 4 short-circuit on re-run, so the Job survives partial-failure restart and `helm upgrade` re-triggering the hook.
@@ -342,24 +342,39 @@ After RC2 deploy on a test EIP with `adeptnova_cidrs = ["<my-laptop>/32"]`:
         Body: true                                      -> 200
         # GraphDB now requires auth; default admin is admin/root
 
-   # 4. Idempotency probe: does the target password already work?
+   # 4. Idempotency probe: does the target password already work AND
+   #    does the admin user still have ROLE_ADMIN? We must check BOTH.
+   #    Authenticating successfully is not enough -- a previous PATCH
+   #    with a partial body can leave the user authn'd but lacking the
+   #    role, which makes the Workbench show literal i18n placeholders
+   #    ({{'no.access.permission.to.functionality.error' | translate}})
+   #    because every API call 403s and the JS translation bundle
+   #    fails to load.
    GET  /rest/security/users/admin
-        Authorization: Basic <admin:target-password>    -> 200 (done) | 401 (continue)
+        Authorization: Basic <admin:target-password>
+        Accept: application/json
+        # if 200 AND response body contains "ROLE_ADMIN", exit success.
+        # Otherwise (401, or 200 without role), continue to step 5.
 
-   # 5. Rotate the admin password
-   #    Note: GraphDB's documented PATCH example shows the full user object;
-   #    we send only {"password":"..."} on the assumption that PATCH treats
-   #    missing fields as unchanged. Verify with curl during implementation;
-   #    if appSettings get clobbered, switch to a full-object body that
-   #    round-trips the existing user resource.
+   # 5. Rotate password AND guarantee ROLE_ADMIN. GraphDB 11's PATCH
+   #    endpoint is NOT true-partial-merge -- a body that omits
+   #    grantedAuthorities clears the authority list. The body must
+   #    include both fields. Auth: try DEFAULT_ADMIN_PW (admin:root)
+   #    first for the fresh-install case; if it 401/403s, retry with
+   #    the target password to cover the recovery-from-broken-state
+   #    case where password was already rotated but role was cleared.
    PATCH /rest/security/users/admin
-        Authorization: Basic <admin:root>
+        Authorization: Basic <admin:root>  (or admin:target on retry)
         Content-Type: application/json
-        Body: {"password":"<target-password>"}          -> 200
+        Body: {"password":"<target-password>","grantedAuthorities":["ROLE_ADMIN"]}
+                                                        -> 200
 
-   # 6. Verify
+   # 6. Verify -- GET the user back and confirm ROLE_ADMIN is in the
+   #    grantedAuthorities array. If not, exit 1.
    GET  /rest/security/users/admin
-        Authorization: Basic <admin:target-password>    -> 200
+        Authorization: Basic <admin:target-password>
+        Accept: application/json
+        # must return 200 with "ROLE_ADMIN" in body
    ```
 
    **Why Pattern B and not Pattern A:**

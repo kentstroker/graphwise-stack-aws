@@ -100,38 +100,67 @@ spec:
                   fi
               fi
 
-              # Step 4: idempotency probe -- does the target password already work?
-              code=$(curl -s -o /dev/null -w '%{http_code}' \
+              # Step 4: idempotency probe -- does the target password already
+              # work AND does the user still have ROLE_ADMIN? We MUST check
+              # the role here, not just authentication. GraphDB 11's PATCH
+              # endpoint is not true-partial-merge: a body that omits
+              # `grantedAuthorities` clears the authorities list, leaving
+              # an admin user that authenticates but can't use the Workbench
+              # (Spring 403s every API call; the JS translation bundle
+              # fails to load so the UI shows literal i18n keys). Verifying
+              # the role here means a Job re-run after we've fixed step 5
+              # actually re-PATCHes the broken user instead of exiting
+              # success on a partial-broken state.
+              USER_JSON=$(curl -s --max-time 5 \
                   -u "admin:$TARGET_ADMIN_PW" \
-                  "$GRAPHDB_URL/rest/security/users/admin")
-              echo "Step 4: GET admin (auth=target) -> HTTP $code"
-              if [ "$code" = "200" ]; then
-                  echo "  target password already in place; exit success"
+                  -H 'Accept: application/json' \
+                  "$GRAPHDB_URL/rest/security/users/admin" || echo "")
+              if echo "$USER_JSON" | grep -q 'ROLE_ADMIN'; then
+                  echo "Step 4: target password works AND ROLE_ADMIN present; exit success"
                   exit 0
               fi
+              echo "Step 4: need to (re-)PATCH admin (response so far: ${USER_JSON:0:120})"
 
-              # Step 5: rotate admin password (auth as admin:<default>)
-              echo "Step 5: rotating admin password ..."
+              # Step 5: rotate admin password AND guarantee ROLE_ADMIN.
+              # The body MUST include `grantedAuthorities` -- otherwise
+              # GraphDB 11's PATCH wipes the role (see Step 4 comment).
+              # Auth: try DEFAULT_ADMIN_PW first (fresh install). If that
+              # 401s, this is a recovery from an already-rotated-but-
+              # broken state, so fall back to TARGET_ADMIN_PW.
+              PATCH_BODY="{\"password\":\"$TARGET_ADMIN_PW\",\"grantedAuthorities\":[\"ROLE_ADMIN\"]}"
+              echo "Step 5: rotating admin password + granting ROLE_ADMIN ..."
               code=$(curl -s -o /tmp/r5 -w '%{http_code}' \
                   -X PATCH -H 'Content-Type: application/json' \
                   -u "admin:$DEFAULT_ADMIN_PW" \
-                  --data "{\"password\":\"$TARGET_ADMIN_PW\"}" \
+                  --data "$PATCH_BODY" \
                   "$GRAPHDB_URL/rest/security/users/admin")
-              echo "  PATCH admin -> HTTP $code"
+              echo "  PATCH admin (auth=default) -> HTTP $code"
+              if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                  echo "  default auth rejected; retrying as admin:<target> (recovery from broken state)"
+                  code=$(curl -s -o /tmp/r5 -w '%{http_code}' \
+                      -X PATCH -H 'Content-Type: application/json' \
+                      -u "admin:$TARGET_ADMIN_PW" \
+                      --data "$PATCH_BODY" \
+                      "$GRAPHDB_URL/rest/security/users/admin")
+                  echo "  PATCH admin (auth=target) -> HTTP $code"
+              fi
               if [ "$code" != "200" ] && [ "$code" != "204" ]; then
                   cat /tmp/r5 >&2
                   exit 1
               fi
 
-              # Step 6: verify
-              code=$(curl -s -o /dev/null -w '%{http_code}' \
+              # Step 6: verify role is actually present after the PATCH.
+              USER_JSON=$(curl -s --max-time 5 \
                   -u "admin:$TARGET_ADMIN_PW" \
-                  "$GRAPHDB_URL/rest/security/users/admin")
-              echo "Step 6: GET admin (auth=target) -> HTTP $code"
-              if [ "$code" != "200" ]; then
-                  echo "ERROR: post-rotation verify failed" >&2
+                  -H 'Accept: application/json' \
+                  "$GRAPHDB_URL/rest/security/users/admin" || echo "")
+              if echo "$USER_JSON" | grep -q 'ROLE_ADMIN'; then
+                  echo "Step 6: admin authenticates with target password AND has ROLE_ADMIN."
+              else
+                  echo "ERROR: post-PATCH admin is missing ROLE_ADMIN." >&2
+                  echo "  user JSON: $USER_JSON" >&2
                   exit 1
               fi
 
-              echo "Done. Security ON; admin password seeded from Secret."
+              echo "Done. Security ON; admin password + role seeded from Secret."
 {{- end }}
