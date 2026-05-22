@@ -385,3 +385,46 @@ After RC2 deploy on a test EIP with `adeptnova_cidrs = ["<my-laptop>/32"]`:
    **Sources consulted:**
    - GraphDB 11.3 [*Administration via HTTP with curl*](https://graphdb.ontotext.com/documentation/11.3/admin-with-curl.html) — endpoint paths, methods, and curl examples for `POST /rest/security`, `POST /rest/security/users/<username>`, `PATCH /rest/security/users/<username>`.
    - GraphDB 11.3 [*Enabling security*](https://graphdb.ontotext.com/documentation/11.3/enabling-security.html) — default `admin/root` credentials and the "change the default password as soon as possible" guidance that motivates step 5.
+
+## Addendum (post-spec): strong credential hardening
+
+The earlier sections describe an `admin:rdf#rocks` rotation flow. **The shipped implementation goes further:** instead of just rotating the default `admin` user's password to a chart-default literal, the chart now creates a dedicated admin user with an auto-generated unguessable username and password, then locks out the default `admin/root`. This was a security hardening request after RC2 went up — direct-port-public on `:17200` raised the bar on what counts as "good enough" auth.
+
+**Shape:**
+
+- `~/graphwise-secrets.yaml` gains a top-level block:
+  ```yaml
+  graphdbAdeptnova:
+    username: "adept-admin-<6hex>"       # 12-byte total entropy in the prefix+suffix
+    password: "<40-char URL-safe base64>" # ~240 bits
+  ```
+- `scripts/install-licenses.sh` reads this block. If both fields are present and non-empty, it reuses them; otherwise it generates them (Python `secrets.token_hex(3)` + `secrets.token_urlsafe(30)`), writes them back atomically, and surfaces them via (a) a banner on stdout and (b) `$HOME/.graphwise-stack/adeptnova-credentials.txt` (chmod 0600). The K8s Secret `graphwise-stack-graphdb-adeptnova-admin` gets `username` and `password` keys from those values.
+- `scripts/laptop/pull-config.sh` reads the K8s Secret back into the snapshot's `graphdbAdeptnova` block on every snapshot; `scripts/laptop/push-config.sh` already round-trips the whole document, so a fresh EC2 (`terraform destroy → terraform apply`) restores the same username + password from the operator's last snapshot.
+- `scripts/reset-helm.sh`'s secrets preflight emits an `OK` line when the block is populated and an `INFO` line when it's missing (non-blocking — install-licenses generates on first run).
+
+**Revised security-init Job flow** (replaces the steps shown above):
+
+1. Wait ready (200/401/403 — unchanged).
+2. GET `/rest/security` — skip step 3 if already on (unchanged).
+3. POST `/rest/security` body `true` — enable security (unchanged).
+4. Idempotency probe — GET `/rest/security/users/<TARGET_USERNAME>` authed as `<TARGET_USERNAME>:<TARGET_PASSWORD>` (from Secret). Exit success iff `200` AND response body contains `ROLE_ADMIN`.
+5. Create the custom admin user — POST `/rest/security/users/<TARGET_USERNAME>` with body `{"username":"<u>","password":"<p>","grantedAuthorities":["ROLE_ADMIN"]}` authed as `admin:root`. If 409 (exists from a partial prior run), fall through to PATCH with the same body — first try authed as `admin:root`, fall back to authed as the target user on 401/403 (recovery for a role-less existing user).
+6. Verify the custom user authenticates + has `ROLE_ADMIN` (re-GET).
+7. Lock out default admin/root — generate a 30-byte URL-safe base64 throwaway password inside the container (`head -c 30 /dev/urandom | base64 | tr '+/' '_-' | tr -d '=\n'`), PATCH `/rest/security/users/admin` to that value with `grantedAuthorities:["ROLE_ADMIN"]`. The throwaway is never persisted — `admin/root` becomes unusable. A failure here is logged as WARN but does not fail the Job (custom user is the load-bearing success).
+
+**Why custom user first, lockout last:** if the Job dies between step 5 and step 7, `admin/root` still works, so the next run can recover via the same admin:root auth for the PATCH path. Reverse order would deadlock if step 7 succeeded but step 6's verification was racy.
+
+**What the operator sees:**
+
+```
+=============================================================================
+  graphdb-adeptnova admin credentials -- NEWLY GENERATED -- SAVE THESE
+=============================================================================
+  Username:  adept-admin-3f8a2c
+  Password:  Kz7p9x_Y8f-Qm2v...
+  Persisted in: ~/graphwise-secrets.yaml (chmod 0600)
+  Saved copy:   ~/.graphwise-stack/adeptnova-credentials.txt (chmod 0600)
+=============================================================================
+```
+
+On subsequent runs against the same overlay, install-licenses replaces the banner with a one-liner: `(re-using existing AdeptNova credentials from ~/graphwise-secrets.yaml)`.

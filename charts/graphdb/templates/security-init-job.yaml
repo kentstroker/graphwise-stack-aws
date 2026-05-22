@@ -1,20 +1,49 @@
 {{- if .Values.security.enabled }}
 {{/*
-Post-install/upgrade Helm hook: enables GraphDB-native security and
-rotates the default admin password to the value in <fullname>-admin
-Secret key `password`. Implements the locked 6-step Pattern B sequence
-from docs/superpowers/specs/2026-05-21-graphdb-adeptnova-design.md:
+Post-install/upgrade Helm hook: turns on GraphDB-native security,
+creates a custom admin user from the <fullname>-admin Secret, and
+locks out the default admin/root account.
 
-  1. Wait for /rest/repositories (security still OFF).
-  2. GET /rest/security -- if "true", skip enable + jump to step 4.
-  3. POST /rest/security body literal `true` -> 200. Default admin/root.
-  4. GET /rest/security/users/admin authed as admin:<target> --
-     if 200, password already rotated, exit success.
-  5. PATCH /rest/security/users/admin authed as admin:root,
-     body {"password":"<target>"} -> 200.
-  6. GET /rest/security/users/admin authed as admin:<target> -> 200.
+The flow:
+  1. Wait for /rest/repositories (200/401/403 -- accept any of them
+     so a helm-upgrade re-run against an already-secured server
+     doesn't burn the backoffLimit on a never-200).
+  2. GET /rest/security -- if "true", skip enable.
+  3. POST /rest/security body literal `true` -> 200. GraphDB now
+     requires auth; default admin/root is active.
+  4. Idempotency probe: GET /rest/security/users/<TARGET_USERNAME>
+     authed as the target creds AND verify the body contains
+     ROLE_ADMIN. If both true, the Job has already run successfully;
+     exit success.
+  5. Create the custom admin user via
+     POST /rest/security/users/<TARGET_USERNAME>
+     body {"username":"<u>", "password":"<p>", "grantedAuthorities":["ROLE_ADMIN"]}
+     authed as admin:root. If 409 (already exists from a partial
+     prior run), PATCH it instead -- same body, same auth.
+  6. Verify: GET the custom user with target creds, body must
+     contain ROLE_ADMIN.
+  7. Lock out default admin: generate a one-shot 30-byte random
+     "throwaway" password inside the container, PATCH
+     /rest/security/users/admin to that with
+     grantedAuthorities:["ROLE_ADMIN"] (the role grant is the bug
+     fix from 9a28dcc -- GraphDB 11's PATCH is NOT true-partial-
+     merge, a missing grantedAuthorities field clears authorities).
+     The throwaway value is discarded immediately; admin/root is
+     now unusable.
 
-Idempotent under helm upgrade re-trigger and mid-Job pod restart.
+Idempotent under helm-upgrade re-trigger: on a clean prior success,
+step 4 short-circuits without touching anything. On a partial prior
+failure where the custom user exists but lacks the role (a known
+pre-bug-fix state), step 5's POST returns 409 and we fall through
+to PATCH which restores the role.
+
+The default admin lockout (step 7) is intentionally LAST so steps
+5+6 still have a working admin:root if the prior run died before
+locking. A partial failure between step 5 and step 7 leaves
+admin/root still usable, so the next run can recover. A partial
+failure inside step 7 (admin's password is mid-rotation) breaks
+admin auth permanently but the custom user still works, so step 4
+short-circuits subsequent runs.
 */}}
 apiVersion: batch/v1
 kind: Job
@@ -46,7 +75,12 @@ spec:
               value: "http://{{ include "graphdb.fullname" . }}:{{ .Values.service.port }}"
             - name: DEFAULT_ADMIN_PW
               value: {{ .Values.security.defaultAdminPassword | quote }}
-            - name: TARGET_ADMIN_PW
+            - name: TARGET_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "graphdb.fullname" . }}-admin
+                  key: username
+            - name: TARGET_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "graphdb.fullname" . }}-admin
@@ -57,12 +91,21 @@ spec:
             - |
               apk add --no-cache curl >/dev/null
 
-              # Step 1: wait for server ready. Accept 200 (security still
-              # OFF), 401, or 403 (security already ON from a prior install).
-              # Cannot use `curl -sf` here because `-f` rejects 4xx and
-              # would make this loop never succeed on a `helm upgrade`
-              # re-trigger once security is already enabled -- eating the
-              # full backoffLimit before the Job gives up.
+              # Validate Secret content -- the username + password must
+              # be non-empty or the rest of the flow is meaningless.
+              if [ -z "${TARGET_USERNAME:-}" ] || [ -z "${TARGET_PASSWORD:-}" ]; then
+                  echo "ERROR: TARGET_USERNAME or TARGET_PASSWORD env is empty;" >&2
+                  echo "       check the <fullname>-admin Secret -- " >&2
+                  echo "       scripts/install-licenses.sh should have populated it." >&2
+                  exit 1
+              fi
+              # Don't echo the password itself; just confirm shape.
+              echo "Target user: $TARGET_USERNAME (password length: ${#TARGET_PASSWORD})"
+
+              # Step 1: wait for server ready. Accept 200/401/403 -- on a
+              # helm-upgrade re-run against an already-secured server,
+              # /rest/repositories returns 401 anonymous and curl -sf
+              # would never succeed. We just want to know the JVM is up.
               echo "Waiting for GraphDB at $GRAPHDB_URL/rest/repositories ..."
               for i in $(seq 1 60); do
                   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
@@ -76,10 +119,8 @@ spec:
                   sleep 5
               done
 
-              # Step 2: idempotency probe -- is security already on?
-              # Once security is ON, GET /rest/security still returns the
-              # current state (no auth required for the status read in
-              # GraphDB 11.3), so this probe works in both lifecycle states.
+              # Step 2: is security already on? GET /rest/security returns
+              # the state (no auth required) in both ON and OFF lifecycles.
               SEC_STATE=$(curl -s --max-time 5 "$GRAPHDB_URL/rest/security" || echo "")
               echo "Step 2: GET /rest/security -> '$SEC_STATE'"
               case "$SEC_STATE" in
@@ -87,7 +128,7 @@ spec:
                   *)             SKIP_ENABLE=0 ;;
               esac
 
-              # Step 3: enable security (if not already on)
+              # Step 3: enable security if not already on.
               if [ "$SKIP_ENABLE" = "0" ]; then
                   echo "Step 3: enabling security ..."
                   code=$(curl -s -o /tmp/r3 -w '%{http_code}' \
@@ -100,67 +141,102 @@ spec:
                   fi
               fi
 
-              # Step 4: idempotency probe -- does the target password already
-              # work AND does the user still have ROLE_ADMIN? We MUST check
-              # the role here, not just authentication. GraphDB 11's PATCH
-              # endpoint is not true-partial-merge: a body that omits
-              # `grantedAuthorities` clears the authorities list, leaving
-              # an admin user that authenticates but can't use the Workbench
-              # (Spring 403s every API call; the JS translation bundle
-              # fails to load so the UI shows literal i18n keys). Verifying
-              # the role here means a Job re-run after we've fixed step 5
-              # actually re-PATCHes the broken user instead of exiting
-              # success on a partial-broken state.
+              # Step 4: idempotency probe -- does the custom user exist,
+              # authenticate with the target password, AND have
+              # ROLE_ADMIN? Verifying the role here (not just authn) is
+              # critical: GraphDB 11's PATCH endpoint is not true-partial-
+              # merge, so a missing-grantedAuthorities body clears the
+              # authority list. If a previous run wrote the role-less user,
+              # we MUST re-PATCH or the Workbench will be inaccessible.
+              CUSTOM_URL="$GRAPHDB_URL/rest/security/users/$TARGET_USERNAME"
               USER_JSON=$(curl -s --max-time 5 \
-                  -u "admin:$TARGET_ADMIN_PW" \
+                  -u "$TARGET_USERNAME:$TARGET_PASSWORD" \
                   -H 'Accept: application/json' \
-                  "$GRAPHDB_URL/rest/security/users/admin" || echo "")
+                  "$CUSTOM_URL" || echo "")
               if echo "$USER_JSON" | grep -q 'ROLE_ADMIN'; then
-                  echo "Step 4: target password works AND ROLE_ADMIN present; exit success"
+                  echo "Step 4: custom user '$TARGET_USERNAME' present + ROLE_ADMIN; exit success"
                   exit 0
               fi
-              echo "Step 4: need to (re-)PATCH admin (response so far: ${USER_JSON:0:120})"
+              echo "Step 4: need to (re-)create custom user '$TARGET_USERNAME'"
 
-              # Step 5: rotate admin password AND guarantee ROLE_ADMIN.
-              # The body MUST include `grantedAuthorities` -- otherwise
-              # GraphDB 11's PATCH wipes the role (see Step 4 comment).
-              # Auth: try DEFAULT_ADMIN_PW first (fresh install). If that
-              # 401s, this is a recovery from an already-rotated-but-
-              # broken state, so fall back to TARGET_ADMIN_PW.
-              PATCH_BODY="{\"password\":\"$TARGET_ADMIN_PW\",\"grantedAuthorities\":[\"ROLE_ADMIN\"]}"
-              echo "Step 5: rotating admin password + granting ROLE_ADMIN ..."
+              # Step 5: create the custom admin user via POST. Body MUST
+              # include `grantedAuthorities` (see step 4 comment for why).
+              # If POST returns 409 (user already exists from a partial
+              # prior run), fall through to PATCH with the same body --
+              # this restores role on an existing but role-less user.
+              USER_BODY="{\"username\":\"$TARGET_USERNAME\",\"password\":\"$TARGET_PASSWORD\",\"grantedAuthorities\":[\"ROLE_ADMIN\"]}"
+              echo "Step 5a: POST $CUSTOM_URL ..."
               code=$(curl -s -o /tmp/r5 -w '%{http_code}' \
-                  -X PATCH -H 'Content-Type: application/json' \
+                  -X POST -H 'Content-Type: application/json' \
                   -u "admin:$DEFAULT_ADMIN_PW" \
-                  --data "$PATCH_BODY" \
-                  "$GRAPHDB_URL/rest/security/users/admin")
-              echo "  PATCH admin (auth=default) -> HTTP $code"
-              if [ "$code" = "401" ] || [ "$code" = "403" ]; then
-                  echo "  default auth rejected; retrying as admin:<target> (recovery from broken state)"
+                  --data "$USER_BODY" \
+                  "$CUSTOM_URL")
+              echo "  POST -> HTTP $code"
+              if [ "$code" = "409" ]; then
+                  echo "Step 5b: user already exists; PATCHing instead ..."
                   code=$(curl -s -o /tmp/r5 -w '%{http_code}' \
                       -X PATCH -H 'Content-Type: application/json' \
-                      -u "admin:$TARGET_ADMIN_PW" \
-                      --data "$PATCH_BODY" \
-                      "$GRAPHDB_URL/rest/security/users/admin")
-                  echo "  PATCH admin (auth=target) -> HTTP $code"
+                      -u "admin:$DEFAULT_ADMIN_PW" \
+                      --data "$USER_BODY" \
+                      "$CUSTOM_URL")
+                  echo "  PATCH (auth=default) -> HTTP $code"
+                  if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                      echo "  default admin rejected; trying as the target user itself ..."
+                      code=$(curl -s -o /tmp/r5 -w '%{http_code}' \
+                          -X PATCH -H 'Content-Type: application/json' \
+                          -u "$TARGET_USERNAME:$TARGET_PASSWORD" \
+                          --data "$USER_BODY" \
+                          "$CUSTOM_URL")
+                      echo "  PATCH (auth=target) -> HTTP $code"
+                  fi
               fi
-              if [ "$code" != "200" ] && [ "$code" != "204" ]; then
+              if [ "$code" != "200" ] && [ "$code" != "201" ] && [ "$code" != "204" ]; then
                   cat /tmp/r5 >&2
                   exit 1
               fi
 
-              # Step 6: verify role is actually present after the PATCH.
+              # Step 6: verify the custom user authenticates AND has the role.
               USER_JSON=$(curl -s --max-time 5 \
-                  -u "admin:$TARGET_ADMIN_PW" \
+                  -u "$TARGET_USERNAME:$TARGET_PASSWORD" \
                   -H 'Accept: application/json' \
-                  "$GRAPHDB_URL/rest/security/users/admin" || echo "")
-              if echo "$USER_JSON" | grep -q 'ROLE_ADMIN'; then
-                  echo "Step 6: admin authenticates with target password AND has ROLE_ADMIN."
-              else
-                  echo "ERROR: post-PATCH admin is missing ROLE_ADMIN." >&2
+                  "$CUSTOM_URL" || echo "")
+              if ! echo "$USER_JSON" | grep -q 'ROLE_ADMIN'; then
+                  echo "ERROR: post-create/patch custom user is missing ROLE_ADMIN." >&2
                   echo "  user JSON: $USER_JSON" >&2
                   exit 1
               fi
+              echo "Step 6: custom user '$TARGET_USERNAME' authenticates + ROLE_ADMIN OK."
 
-              echo "Done. Security ON; admin password + role seeded from Secret."
+              # Step 7: lock out the default admin user. Generate a 30-byte
+              # URL-safe base64 throwaway password inside the container and
+              # PATCH /rest/security/users/admin to that value. The value is
+              # never stored anywhere; admin/root becomes unusable. We keep
+              # ROLE_ADMIN on the admin entry (GraphDB ships the user with
+              # the role and removing it might have surprising side effects
+              # given admin is a "special" account in some GraphDB versions).
+              # Done LAST so steps 5+6 always had a working admin:root.
+              LOCKOUT_PW=$(head -c 30 /dev/urandom | base64 | tr '+/' '_-' | tr -d '=\n')
+              if [ -z "$LOCKOUT_PW" ]; then
+                  echo "ERROR: failed to generate lockout password" >&2
+                  exit 1
+              fi
+              LOCKOUT_BODY="{\"password\":\"$LOCKOUT_PW\",\"grantedAuthorities\":[\"ROLE_ADMIN\"]}"
+              echo "Step 7: locking out default admin/root ..."
+              code=$(curl -s -o /tmp/r7 -w '%{http_code}' \
+                  -X PATCH -H 'Content-Type: application/json' \
+                  -u "admin:$DEFAULT_ADMIN_PW" \
+                  --data "$LOCKOUT_BODY" \
+                  "$GRAPHDB_URL/rest/security/users/admin")
+              echo "  PATCH admin (auth=default) -> HTTP $code"
+              if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                  echo "  default admin already locked; nothing to do"
+              elif [ "$code" != "200" ] && [ "$code" != "204" ]; then
+                  echo "WARN: lockout PATCH returned HTTP $code -- default admin may still be reachable" >&2
+                  cat /tmp/r7 >&2
+                  # Don't fail the whole Job here; the custom user is already
+                  # in place and that's the load-bearing success.
+              fi
+              unset LOCKOUT_PW LOCKOUT_BODY
+
+              echo "Done. Security ON; custom user '$TARGET_USERNAME' is the sole admin; default admin/root locked out."
 {{- end }}

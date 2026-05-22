@@ -297,6 +297,16 @@ if filled(ek):
     print('OK|n8n license activation key')
 else:
     print('MISSING|n8n license activationKey')
+
+# graphdb-adeptnova admin creds (RC2+). Surfaced for visibility only;
+# install-licenses.sh auto-generates them on first deploy if the
+# block is missing or empty, so MISSING here is NOT a deploy blocker.
+ga = d.get('graphdbAdeptnova') or {}
+ga_user, ga_pass = ga.get('username'), ga.get('password')
+if filled(ga_user) and filled(ga_pass):
+    print(f'OK|graphdbAdeptnova admin (username={ga_user})')
+else:
+    print('INFO|graphdbAdeptnova admin not in overlay -- install-licenses.sh will generate on first run')
 PY
 )
     missing_count=0
@@ -305,6 +315,7 @@ PY
             OK)      printf '  OK:    %s\n' "$detail" ;;
             MISSING) printf '  %sMISSING%s: %s\n' "$YELLOW" "$RESET" "$detail"
                      missing_count=$((missing_count + 1)) ;;
+            INFO)    printf '  INFO:  %s\n' "$detail" ;;
         esac
     done <<<"$secrets_status"
 
