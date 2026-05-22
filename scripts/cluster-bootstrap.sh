@@ -66,6 +66,43 @@ fi
 missing=()
 [[ -z "${LE_EMAIL:-}" ]]       && missing+=(LE_EMAIL)
 [[ -z "${GRAPHWISE_APEX:-}" ]] && missing+=(GRAPHWISE_APEX)
+
+# Even when LE_EMAIL is set, LE bounces RFC 2606 reserved domains
+# (example.com / .org / .net) and the literal CHANGEME placeholder.
+# Catching it here saves the operator a 5-minute debug session against
+# a wedged cert-manager (the failure mode is `Failed to register ACME
+# account: 400 urn:ietf:params:acme:error:invalidContact: contact email
+# has forbidden domain "example.com"` -- LE rejects, ClusterIssuer is
+# never Ready, every Certificate is parked, every Ingress shows a
+# self-signed default cert).
+if [[ -n "${LE_EMAIL:-}" ]]; then
+    le_lower=$(echo "$LE_EMAIL" | tr '[:upper:]' '[:lower:]')
+    if [[ "$le_lower" =~ @(example\.(com|org|net))$ ]] || [[ "$LE_EMAIL" == *CHANGEME* ]]; then
+        cat >&2 <<EOF
+ERROR: LE_EMAIL='$LE_EMAIL' uses a placeholder/reserved domain that
+Let's Encrypt rejects at ACME account registration ("forbidden domain").
+
+Set le_email in infra/terraform/terraform.tfvars to a real address
+(e.g. your-handle@gmail.com) and either:
+
+  a) terraform apply              # rewrites /etc/profile.d/graphwise.sh
+                                  # via cloud-init on the NEXT EC2 boot
+
+  b) Patch this host without a rebuild:
+       sudo sed -i 's|^export LE_EMAIL=.*|export LE_EMAIL="you@real-domain.tld"|' /etc/profile.d/graphwise.sh
+       source /etc/profile.d/graphwise.sh
+       ./scripts/cluster-bootstrap.sh
+
+If cert-manager already registered the failed account, also clear it:
+       kubectl -n cert-manager delete secret letsencrypt-prod-account-key --ignore-not-found
+       kubectl delete clusterissuer letsencrypt-prod --ignore-not-found
+
+Then re-run cluster-bootstrap.sh.
+EOF
+        exit 1
+    fi
+fi
+
 if (( ${#missing[@]} > 0 )); then
     cat >&2 <<EOF
 ERROR: required env var(s) not set: ${missing[*]}

@@ -42,12 +42,21 @@ variable "route53_zone_id" {
 }
 
 variable "le_email" {
-  description = "Email address for the Let's Encrypt ACME account. LE rejects empty / malformed values. Used by scripts/cluster-bootstrap.sh when it creates the cert-manager ClusterIssuer for DNS-01 wildcard cert issuance. cloud-init writes this to /etc/profile.d/graphwise.sh so the script picks it up automatically -- no manual export needed."
+  description = "Email address for the Let's Encrypt ACME account. LE rejects empty / malformed values AND rejects the RFC 2606 reserved domains (example.com / example.org / example.net). Used by scripts/cluster-bootstrap.sh when it creates the cert-manager ClusterIssuer for DNS-01 wildcard cert issuance. cloud-init writes this to /etc/profile.d/graphwise.sh so the script picks it up automatically -- no manual export needed."
   type        = string
 
   validation {
     condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.le_email))
-    error_message = "le_email must look like an email address, e.g. you@example.com."
+    error_message = "le_email must look like an email address (e.g. you@example.com)."
+  }
+
+  # LE explicitly bounces example.com / example.org / example.net per RFC 2606
+  # with `urn:ietf:params:acme:error:invalidContact: forbidden domain`. Catching
+  # the placeholder here saves the operator 5-10 minutes of wedged cert-manager
+  # debugging. Also bans the literal CHANGEME guard string from terraform.tfvars.example.
+  validation {
+    condition     = !can(regex("@(example\\.(com|org|net))$", lower(var.le_email))) && !can(regex("CHANGEME", var.le_email))
+    error_message = "le_email cannot use RFC 2606 reserved domains (@example.com / .org / .net) or the literal 'CHANGEME' placeholder -- Let's Encrypt rejects these with 'forbidden domain' at ACME account registration. Set le_email in terraform.tfvars to a real address (e.g. your-handle@gmail.com)."
   }
 }
 
