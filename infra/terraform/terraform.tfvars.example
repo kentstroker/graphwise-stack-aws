@@ -42,6 +42,12 @@ base_domain = "semantic-demo.com"
 # can ONLY edit records here, not anywhere else in the account).
 route53_zone_id = "ZCHANGEME"
 
+# Email address for the Let's Encrypt ACME account (renewal-reminder
+# mail goes here; LE rejects empty / malformed values). cloud-init
+# writes this to /etc/profile.d/graphwise.sh so scripts/cluster-
+# bootstrap.sh picks it up automatically -- no manual export needed.
+le_email = "CHANGEME@example.com"
+
 # Your subdomain under base_domain. Per-deployment. Final hostnames:
 #   <subdomain>.<base_domain>           -- Console landing
 #   <app>.<subdomain>.<base_domain>     -- every app (poolparty, auth, ...)

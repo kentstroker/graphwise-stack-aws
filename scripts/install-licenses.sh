@@ -225,4 +225,5 @@ BANNER
 fi
 
 echo
-echo "License Secrets installed. Next: helm install the umbrella chart."
+echo "License Secrets installed."
+echo "Next: ./scripts/reset-helm.sh --yes <subdomain>      # or --skip-graphrag"

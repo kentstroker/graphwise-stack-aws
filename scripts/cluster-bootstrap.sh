@@ -36,17 +36,33 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Auto-source cloud-init's env file before any preflight runs.
+# ---------------------------------------------------------------------------
+# cloud-init writes /etc/profile.d/graphwise.sh on first EC2 boot,
+# exporting GRAPHWISE_APEX / ROUTE53_ZONE_ID / AWS_REGION / LE_EMAIL.
+# Login shells inherit it automatically, but a non-login shell (e.g.
+# `bash scripts/cluster-bootstrap.sh` invoked from a script, or an SSH
+# command that runs this directly) doesn't. Sourcing it ourselves makes
+# the script Just Work without a manual `source /etc/profile.d/graphwise.sh`
+# dance. Harmless on hosts where the file doesn't exist (e.g. tests
+# from a laptop) -- the preflight below then catches the missing vars.
+if [ -r /etc/profile.d/graphwise.sh ]; then
+    # shellcheck disable=SC1091
+    . /etc/profile.d/graphwise.sh
+fi
+
+# ---------------------------------------------------------------------------
 # Preflight: required env vars
 # ---------------------------------------------------------------------------
-# Both LE_EMAIL and GRAPHWISE_APEX must be set before any cluster work
+# LE_EMAIL and GRAPHWISE_APEX must both be set before any cluster work
 # starts -- they're consumed by the cert-manager ClusterIssuer + the
-# observability Ingress hostnames below. We deliberately check BOTH
-# upfront and report the full missing-set in one pass (rather than the
-# bash ${var:?...} pattern, which exits on the first hit and leaves the
-# operator playing whack-a-mole). Both vars are normally written by
-# cloud-init to /etc/profile.d/graphwise.sh -- if they're missing on a
-# session that should have inherited them, sourcing that file is the
-# fast fix.
+# observability Ingress hostnames below. We check BOTH upfront and
+# report the full missing-set in one pass (rather than the bash
+# ${var:?...} pattern, which exits on the first hit and leaves the
+# operator playing whack-a-mole). Both come from cloud-init's
+# /etc/profile.d/graphwise.sh which we auto-source just above; if
+# they're still missing, cloud-init didn't finish OR the operator
+# didn't set var.le_email in terraform.tfvars before `terraform apply`.
 missing=()
 [[ -z "${LE_EMAIL:-}" ]]       && missing+=(LE_EMAIL)
 [[ -z "${GRAPHWISE_APEX:-}" ]] && missing+=(GRAPHWISE_APEX)

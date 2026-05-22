@@ -100,6 +100,7 @@ data "cloudinit_config" "bootstrap" {
       n8n_encryption_key = random_id.n8n_encryption_key.hex
       route53_zone_id    = var.route53_zone_id
       aws_region         = var.region
+      le_email           = var.le_email
     })
   }
 }

@@ -41,6 +41,16 @@ variable "route53_zone_id" {
   }
 }
 
+variable "le_email" {
+  description = "Email address for the Let's Encrypt ACME account. LE rejects empty / malformed values. Used by scripts/cluster-bootstrap.sh when it creates the cert-manager ClusterIssuer for DNS-01 wildcard cert issuance. cloud-init writes this to /etc/profile.d/graphwise.sh so the script picks it up automatically -- no manual export needed."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.le_email))
+    error_message = "le_email must look like an email address, e.g. you@example.com."
+  }
+}
+
 variable "instance_type" {
   description = "EC2 instance type. r6g.2xlarge (8 vCPU / 64 GB, Graviton ARM64) is the tested minimum for the KIND-on-Docker stack: KIND control plane (~1.5 GB) + ingress-nginx + cert-manager + CNPG + Keycloak operator + Keycloak + 2 Postgres clusters + 2 GraphDB instances + Elasticsearch (8 GB heap) + PoolParty (8 GB heap) + 5 add-ons + 4 GraphRAG services adds up to ~50–55 GB working set. Down-shift only if you're pruning the stack."
   type        = string

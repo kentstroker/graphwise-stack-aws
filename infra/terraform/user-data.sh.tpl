@@ -68,12 +68,17 @@ mv "/tmp/linux-$ARCH/helm" /usr/local/bin/helm
 chmod +x /usr/local/bin/helm
 rm -rf "/tmp/linux-$ARCH"
 
-# System-wide env vars (apex hostname + Route 53 zone + region).
-# Consumed by cluster-bootstrap.sh + cert-manager DNS-01 solver.
+# System-wide env vars (apex hostname + Route 53 zone + region +
+# LE ACME contact email). All consumed by cluster-bootstrap.sh
+# (cert-manager ClusterIssuer needs LE_EMAIL; the DNS-01 solver
+# needs ROUTE53_ZONE_ID + AWS_REGION). cluster-bootstrap.sh
+# auto-sources this file at the top so operators never have to
+# remember the `source /etc/profile.d/graphwise.sh` dance.
 cat > /etc/profile.d/graphwise.sh <<EOF
 export GRAPHWISE_APEX="${hostname_fqdn}"
 export ROUTE53_ZONE_ID="${route53_zone_id}"
 export AWS_REGION="${aws_region}"
+export LE_EMAIL="${le_email}"
 EOF
 chmod 644 /etc/profile.d/graphwise.sh
 

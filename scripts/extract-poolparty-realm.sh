@@ -208,6 +208,24 @@ echo "keycloak-realms is a subchart of the umbrella (charts/graphwise-stack)"
 echo "and consumes this file via .Files.Get at render time. The next umbrella"
 echo "install picks it up automatically -- no separate helm command needed."
 echo
-echo "Next steps in the standard deploy flow:"
-echo "  ./scripts/install-licenses.sh"
-echo "  ./scripts/reset-helm.sh --yes <subdomain>      # or --skip-graphrag for umbrella-only"
+
+# ---------------------------------------------------------------------------
+# Chain into install-licenses.sh
+# ---------------------------------------------------------------------------
+# Both this script and install-licenses.sh are "after cluster-bootstrap.sh,
+# before reset-helm.sh" prep steps. Running them as a single command means
+# operators don't have to remember the second one (which is easy to forget
+# now that this script handles two things). Pass through SKIP_LICENSES=1
+# to opt out of the chain if you really do want extract-only.
+if [ "${SKIP_LICENSES:-0}" = "1" ]; then
+    echo "SKIP_LICENSES=1 set; not chaining into install-licenses.sh."
+    echo "Next steps in the standard deploy flow:"
+    echo "  ./scripts/install-licenses.sh"
+    echo "  ./scripts/reset-helm.sh --yes <subdomain>      # or --skip-graphrag for umbrella-only"
+    exit 0
+fi
+
+echo "============================================================================"
+echo "  Chaining into scripts/install-licenses.sh (set SKIP_LICENSES=1 to opt out)"
+echo "============================================================================"
+exec "$SCRIPT_DIR/install-licenses.sh"
