@@ -273,7 +273,7 @@ report(
 # 1e) graphdb-adeptnova admin credentials (RC2+). install-licenses.sh
 # generates and persists them in ~/graphwise-secrets.yaml on first
 # deploy; we read them back from the K8s Secret so a redeploy on a
-# fresh EC2 (e.g. after `terraform destroy && terraform apply`) can
+# fresh EC2 (e.g. after \`terraform destroy && terraform apply\`) can
 # restore the same username + password from the snapshot.
 adeptnova_admin = get_secret_data('graphdb-adeptnova',
                                   'graphwise-stack-graphdb-adeptnova-admin') or {}

@@ -283,6 +283,25 @@ graphdb-adeptnova:
     type: NodePort
     port: 7200
     nodePort: 31720
+  # Disable the inherited ingress nginx HTTP Basic auth (subchart
+  # default is true). AdeptNova's auth model is GraphDB-native security
+  # (below) on BOTH the HTTPS ingress and the direct :17200 path -- the
+  # standalone-GraphDB model the design comment above intends.
+  #
+  # Stacking nginx Basic in front of GraphDB security deadlocks the
+  # HTTPS Workbench, proven by curl against the live host:
+  #   - Workbench sends `Authorization: GDB <jwt>` after login; nginx's
+  #     auth_basic rejects any non-Basic scheme -> 401 + WWW-Authenticate
+  #     Basic (nginx's own page), so the browser endlessly re-pops the
+  #     Basic dialog after the splash flashes. THIS is the login loop.
+  #   - There is also no single Basic credential that satisfies both:
+  #     nginx forwards the header it validated, so the nginx cred
+  #     (demo:rdf#rocks) reaches GraphDB and fails there (not a GraphDB
+  #     user). One Authorization header, two consumers, two user DBs.
+  # GraphDB-native security gates equally on the ingress and :17200
+  # paths, so it is the correct single layer for both access methods.
+  basicAuth:
+    enabled: false
   security:
     enabled: true
 

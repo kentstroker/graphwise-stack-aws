@@ -185,8 +185,8 @@ footer code {
     </a>
     <a class="card" href="https://graphdb-adeptnova.{{ $apex }}/">
       <div class="title">GraphDB &mdash; AdeptNova</div>
-      <div class="desc">Public-accessible third instance. Browser path via this Ingress (basic auth + GraphDB native auth); direct API on <code>:17200</code> from CIDR-allowlisted hosts.</div>
-      <div class="auth">basic &middot; {{ .Values.credentials.basicAuth }} &rarr; GraphDB admin / rdf#rocks</div>
+      <div class="desc">Public-accessible third instance. GraphDB-native security only (no ingress basic auth): browser Workbench via this Ingress, direct API on <code>:17200</code> from CIDR-allowlisted hosts &mdash; same GraphDB credentials on both paths.</div>
+      <div class="auth">GraphDB native &middot; see <code>~/.graphwise-stack/adeptnova-credentials.txt</code></div>
     </a>
     <a class="card" href="https://rdf4j.{{ $apex }}/rdf4j-workbench/">
       <div class="title">RDF4J Workbench</div>
