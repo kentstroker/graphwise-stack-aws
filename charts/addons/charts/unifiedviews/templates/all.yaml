@@ -71,6 +71,42 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /target
+
+        # UnifiedViews' Tomcat /master context calls
+        # http://rdf4j:8080/rdf4j-server during startup to bootstrap the
+        # `uv` repository. If RDF4J isn't accepting connections yet, UV
+        # gets a single `Connection refused` -- Tomcat marks the context
+        # FAILED, but the JVM keeps running with port 8080 listening
+        # (Tomcat itself is healthy). The pod stays Running 1/1, the
+        # readiness probe passes, but UV is permanently dead: the `uv`
+        # repository is never created, every login path is broken, and
+        # the umbrella's uv-password-reset Job deadlocks waiting for
+        # the repo to appear.
+        #
+        # Resolved on a fresh deploy by `kubectl rollout restart` (UV
+        # bootstrap succeeds the second time once rdf4j is up), but
+        # that's a manual recovery -- this initContainer makes it
+        # impossible by holding the main container off until rdf4j
+        # answers /rdf4j-server/protocol. 5-second poll x 60 attempts
+        # = 5-minute cap; RDF4J typically warms up in ~30s on a fresh
+        # KIND cluster.
+        - name: wait-for-rdf4j
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "Waiting for rdf4j at http://rdf4j:8080/rdf4j-server/protocol ..."
+              for i in $(seq 1 60); do
+                  if wget -q -O- "http://rdf4j:8080/rdf4j-server/protocol" >/dev/null 2>&1; then
+                      echo "  rdf4j up after $i attempt(s)"
+                      exit 0
+                  fi
+                  sleep 5
+              done
+              echo "ERROR: rdf4j never answered (5min). UV cannot bootstrap." >&2
+              exit 1
       containers:
         - name: unifiedviews
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
