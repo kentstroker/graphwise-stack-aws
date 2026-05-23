@@ -51,6 +51,7 @@ Each app gets its own subdomain so ingress-nginx can mint a separate cert per ap
 | GraphViews | `graphviews.<sub>.<base>` |
 | RDF4J | `rdf4j.<sub>.<base>` |
 | UnifiedViews | `unifiedviews.<sub>.<base>` |
+| Ontotext Refine | `refine.<sub>.<base>` (CIDR-allowlisted via `admin_cidr`) |
 | GraphRAG (chatbot + conversation + workflows) | `graphrag.<sub>.<base>` (different paths) |
 | Kubernetes Dashboard | `dashboard.<sub>.<base>` |
 | Prometheus | `prometheus.<sub>.<base>` |
