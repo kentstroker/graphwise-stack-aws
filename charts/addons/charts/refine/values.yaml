@@ -1,0 +1,44 @@
+image:
+  repository: ontotext/refine
+  tag: "1.2.2"
+  pullPolicy: IfNotPresent
+
+# Filled in by the umbrella graphwise-stack values overlay
+# (scripts/render-values.sh emits this on every run).
+externalUrl: ""                         # https://refine.<sub>.<base>
+
+# CIDR allowlist applied to the Ingress via the nginx annotation
+# `whitelist-source-range`. Refine v1.2 ships unauth'd; without this,
+# anyone who learns the URL has admin. Sourced from terraform.tfvars
+# admin_cidr by scripts/render-values.sh. Empty list → annotation
+# omitted → ingress is open (rendered with a WARN by render-values.sh
+# if tfvars couldn't be parsed).
+allowedCidrs: []
+
+# Display-only metadata surfaced on the console landing page and in
+# CONSOLE-GUIDE.md. Refine has no env var for default GraphDB URL —
+# the user pastes this into Refine's Settings → Connect to GraphDB
+# on first project. We never template a preferences.json over Refine's
+# own state file at /opt/ontorefine/data.
+graphdb:
+  internalUrl: "http://graphwise-stack-graphdb-projects:7200"
+
+service:
+  port: 7333
+
+ingress:
+  enabled: true
+  className: nginx
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
+
+persistence:
+  enabled: true
+  size: 20Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""
