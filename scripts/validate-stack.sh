@@ -345,6 +345,7 @@ endpoints=(
     "graphviews.$APEX:200|404:GraphViews (root 404 OK; lives at /GraphViews/)"
     "rdf4j.$APEX:401:RDF4J Workbench (basic auth)"
     "unifiedviews.$APEX:200|404:UnifiedViews (root 404 OK; lives at /UnifiedViews/)"
+    "refine.$APEX:200|302|403:Ontotext Refine (403 expected from EC2 since EC2's public IP is not in admin_cidr)"
     "dashboard.$APEX:200|302:Kubernetes Dashboard"
     "prometheus.$APEX:401:Prometheus (basic auth)"
     "grafana.$APEX:200|302:Grafana"
