@@ -146,6 +146,13 @@ footer code {
       <div class="desc">ETL / pipeline platform (own login system)</div>
       <div class="auth">default &middot; {{ .Values.credentials.unifiedviews }}</div>
     </a>
+    <a class="card" href="https://refine.{{ $apex }}/">
+      <div class="title">Ontotext Refine</div>
+      <div class="desc">CSV/JSON/Excel &rarr; RDF cleaning &amp; mapping (v1.2)</div>
+      <div class="auth">no auth &middot; CIDR-restricted (admin_cidr)</div>
+      <div class="hint">In Refine UI &rarr; Settings &rarr; Connect to GraphDB, paste:<br>
+        <code>http://graphwise-stack-graphdb-projects:7200</code></div>
+    </a>
   </div>
 </section>
 
