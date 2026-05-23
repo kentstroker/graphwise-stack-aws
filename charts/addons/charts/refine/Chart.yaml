@@ -1,0 +1,15 @@
+apiVersion: v2
+name: refine
+description: |
+  Ontotext Refine — GraphDB-adapted fork of OpenRefine. CSV/JSON/Excel
+  cleaning + RDF mapping. v1.2.x ships as a single Docker image with
+  no license, no Keycloak SSO, and no env-var for default GraphDB
+  URL (set per-project in the UI). We expose it as a sub-chart of
+  addons, gated by `refine.enabled`, on subdomain `refine.<sub>.<base>`
+  with the ingress CIDR-allowlisted from terraform.tfvars admin_cidr.
+type: application
+version: 1.0.0-rc3
+appVersion: "1.2.2"
+maintainers:
+  - name: graphwise-stack-aws
+    url: https://github.com/kentstroker/graphwise-stack-aws
