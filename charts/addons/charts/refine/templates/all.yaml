@@ -1,0 +1,94 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "refine.fullname" . }}-data
+  labels: {{- include "refine.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.accessMode | quote }}]
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "refine.fullname" . }}
+  labels: {{- include "refine.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  selector: {{- include "refine.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "refine.fullname" . }}
+  labels: {{- include "refine.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{- include "refine.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "refine.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: refine
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 7333
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /opt/ontorefine/data
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "refine.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "refine.fullname" . }}
+  labels: {{- include "refine.labels" . | nindent 4 }}
+  annotations:
+    # Refine v1.2 has no built-in auth. Without an allowlist anyone who
+    # learns the URL has full admin (project create/delete, SPARQL push
+    # to GraphDB, file upload). admin_cidr from terraform.tfvars is the
+    # single source of truth; render-values.sh wires it in.
+    {{- if .Values.allowedCidrs }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," .Values.allowedCidrs | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ include "refine.host" . | quote }}]
+      secretName: wildcard-tls
+  rules:
+    - host: {{ include "refine.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "refine.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
