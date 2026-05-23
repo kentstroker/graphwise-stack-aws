@@ -2,8 +2,9 @@ apiVersion: v2
 name: addons
 description: |
   Umbrella chart for the optional Graphwise add-ons: ADF, Semantic
-  Workbench, GraphViews, RDF4J, UnifiedViews. Each is toggleable via
-  <name>.enabled in values.yaml. Mirrors today's addons.yaml.
+  Workbench, GraphViews, RDF4J, UnifiedViews, Refine. Each is
+  toggleable via <name>.enabled in values.yaml. Mirrors today's
+  addons.yaml.
 type: application
 version: 1.0.0-rc3
 appVersion: "1.0.0"
