@@ -87,6 +87,25 @@ SW_HOST="semantic-workbench.${APEX}"
 GV_HOST="graphviews.${APEX}"
 RDF4J_HOST="rdf4j.${APEX}"
 UV_HOST="unifiedviews.${APEX}"
+REFINE_HOST="refine.${APEX}"
+
+# ---------------------------------------------------------------------
+# Refine ingress is CIDR-allowlisted using the same CIDR that gates
+# SSH/admin in the Terraform layer. tfvars is the single source of
+# truth -- read it here so deploy-time changes there propagate without
+# manual sync. If tfvars is missing or admin_cidr can't be parsed, the
+# stack still deploys; the ingress just isn't restricted (a WARN is
+# printed).
+# ---------------------------------------------------------------------
+TFVARS_PATH="${TFVARS_PATH:-$(cd "$(dirname "$0")/.." && pwd)/infra/terraform/terraform.tfvars}"
+if [ -f "$TFVARS_PATH" ]; then
+    ADMIN_CIDR=$(grep -E '^[[:space:]]*admin_cidr[[:space:]]*=' "$TFVARS_PATH" \
+                  | sed -E 's/#.*//' | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/' | head -n1)
+fi
+if [ -z "${ADMIN_CIDR:-}" ]; then
+    echo "WARN: could not parse admin_cidr from $TFVARS_PATH -- Refine ingress will not be CIDR-restricted" >&2
+    ADMIN_CIDR="0.0.0.0/0"
+fi
 
 # ---------------------------------------------------------------------
 # Umbrella overlay (graphwise-stack release)
@@ -160,6 +179,9 @@ addons:
     externalUrl: "https://${RDF4J_HOST}"
   unifiedviews:
     externalUrl: "https://${UV_HOST}"
+  refine:
+    externalUrl: "https://${REFINE_HOST}"
+    allowedCidrs: ["${ADMIN_CIDR}"]
 EOF
 }
 
