@@ -261,43 +261,6 @@ independent of Keycloak.
 
 ---
 
-## Ontotext Refine
-
-**URL:** `https://refine.<sub>.<base>/`
-**Login:** none — Refine v1.2 has no built-in auth. The ingress is
-CIDR-allowlisted using `admin_cidr` from `infra/terraform/terraform.tfvars`.
-If your laptop's public IP isn't in `admin_cidr`, the ingress returns
-**HTTP 403** before Refine even sees the request.
-
-Refine is a GraphDB-adapted fork of OpenRefine — load CSV/JSON/Excel,
-clean/reshape in a spreadsheet UI, push results to GraphDB as RDF.
-
-**Connecting to GraphDB:** Refine has no env var for default GraphDB
-URL. On first project, in the Refine UI go to **Settings → Connect to
-GraphDB** and paste:
-
-```
-http://graphwise-stack-graphdb-projects:7200
-```
-
-(Note: this is the **in-cluster** Service DNS name. Refine runs inside
-the cluster and resolves it directly; you don't paste an `https://`
-URL or your subdomain.)
-
-**Persistence:** Refine writes project state to a 20Gi PVC at
-`/opt/ontorefine/data`. Survives pod restarts; wiped by
-`scripts/reset-helm.sh`.
-
-**Widening the CIDR allowlist** (e.g. to demo from a different
-network): update `admin_cidr` in `infra/terraform/terraform.tfvars`,
-then re-run `scripts/render-values.sh <sub>` + `helm upgrade
-graphwise-stack ./charts/graphwise-stack -n graphwise -f
-$HOME/.graphwise-stack/values-<sub>.yaml`. The terraform `apply` is
-NOT required for this — the Refine annotation pulls from tfvars, not
-from the Terraform-managed SG.
-
----
-
 ## GraphDB — embedded (PoolParty's store)
 
 **URL:** `https://graphdb.<sub>.<base>/`
@@ -381,6 +344,43 @@ without going through an Ingress proxy. The other two instances are
 wedged behind basic auth at the Ingress to keep them out of public
 crawlers; this one is reachable on a dedicated TCP port and
 protected by IP allowlist + GraphDB-native auth instead.
+
+## Ontotext Refine
+
+**URL:** `https://refine.<sub>.<base>/`
+**Login:** none — Refine v1.2 has no built-in auth. The ingress is
+CIDR-allowlisted using `admin_cidr` from `infra/terraform/terraform.tfvars`.
+If your laptop's public IP isn't in `admin_cidr`, the ingress returns
+**HTTP 403** before Refine even sees the request.
+
+Refine is a GraphDB-adapted fork of OpenRefine — load CSV/JSON/Excel,
+clean/reshape in a spreadsheet UI, push results to GraphDB as RDF.
+
+**Connecting to GraphDB:** Refine has no env var for default GraphDB
+URL. On first project, in the Refine UI go to **Settings → Connect to
+GraphDB** and paste:
+
+```
+http://graphwise-stack-graphdb-projects:7200
+```
+
+(Note: this is the **in-cluster** Service DNS name. Refine runs inside
+the cluster and resolves it directly; you don't paste an `https://`
+URL or your subdomain.)
+
+**Persistence:** Refine writes project state to a 20Gi PVC at
+`/opt/ontorefine/data`. Survives pod restarts; wiped by
+`scripts/reset-helm.sh`.
+
+**Widening the CIDR allowlist** (e.g. to demo from a different
+network): update `admin_cidr` in `infra/terraform/terraform.tfvars`,
+then re-run `scripts/render-values.sh <sub>` + `helm upgrade
+graphwise-stack ./charts/graphwise-stack -n graphwise -f
+$HOME/.graphwise-stack/values-<sub>.yaml`. The terraform `apply` is
+NOT required for this — the Refine annotation pulls from tfvars, not
+from the Terraform-managed SG.
+
+---
 
 ## RDF4J Workbench
 
