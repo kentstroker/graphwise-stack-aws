@@ -279,7 +279,7 @@ charts/graphwise-stack/         ◄── the umbrella chart
     ├── graphdb-embedded/       ◄── (alias of graphdb)
     ├── graphdb-projects/       ◄── (alias of graphdb)
     ├── poolparty-elasticsearch/
-    ├── addons/                 ◄── ADF, Semantic Workbench, GraphViews, RDF4J, UnifiedViews
+    ├── addons/                 ◄── ADF, Semantic Workbench, GraphViews, RDF4J, UnifiedViews, Refine
     ├── console/                ◄── apex landing page
     └── keycloak-realms/        ◄── KeycloakRealmImport CRs
 ```
