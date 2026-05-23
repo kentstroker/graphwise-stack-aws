@@ -261,6 +261,43 @@ independent of Keycloak.
 
 ---
 
+## Ontotext Refine
+
+**URL:** `https://refine.<sub>.<base>/`
+**Login:** none — Refine v1.2 has no built-in auth. The ingress is
+CIDR-allowlisted using `admin_cidr` from `infra/terraform/terraform.tfvars`.
+If your laptop's public IP isn't in `admin_cidr`, the ingress returns
+**HTTP 403** before Refine even sees the request.
+
+Refine is a GraphDB-adapted fork of OpenRefine — load CSV/JSON/Excel,
+clean/reshape in a spreadsheet UI, push results to GraphDB as RDF.
+
+**Connecting to GraphDB:** Refine has no env var for default GraphDB
+URL. On first project, in the Refine UI go to **Settings → Connect to
+GraphDB** and paste:
+
+```
+http://graphwise-stack-graphdb-projects:7200
+```
+
+(Note: this is the **in-cluster** Service DNS name. Refine runs inside
+the cluster and resolves it directly; you don't paste an `https://`
+URL or your subdomain.)
+
+**Persistence:** Refine writes project state to a 20Gi PVC at
+`/opt/ontorefine/data`. Survives pod restarts; wiped by
+`scripts/reset-helm.sh`.
+
+**Widening the CIDR allowlist** (e.g. to demo from a different
+network): update `admin_cidr` in `infra/terraform/terraform.tfvars`,
+then re-run `scripts/render-values.sh <sub>` + `helm upgrade
+graphwise-stack ./charts/graphwise-stack -n graphwise -f
+$HOME/.graphwise-stack/values-<sub>.yaml`. The terraform `apply` is
+NOT required for this — the Refine annotation pulls from tfvars, not
+from the Terraform-managed SG.
+
+---
+
 ## GraphDB — embedded (PoolParty's store)
 
 **URL:** `https://graphdb.<sub>.<base>/`
@@ -520,6 +557,7 @@ What you'll actually type into a UI or sign-in dialog.
 | Grafana app login | `admin` | `demo-graphwise-2026` | `charts/observability/kube-prometheus-stack-values.yaml` → `grafana.adminPassword` |
 | Kubernetes Dashboard | bearer token / kubeconfig | permanent | `~/dashboard-kubeconfig.yaml` on the EC2; `kubectl -n kubernetes-dashboard get secret dashboard-admin-token -o jsonpath='{.data.token}' \| base64 -d ; echo` |
 | UnifiedViews (app-local) | `admin` | `admin` | UnifiedViews image default |
+| Ontotext Refine | (none) | — | no built-in auth; ingress CIDR-allowlisted |
 | n8n owner | (set on first visit) | (set on first visit) | n8n's own DB |
 
 ### B. Internal service-to-service secrets
