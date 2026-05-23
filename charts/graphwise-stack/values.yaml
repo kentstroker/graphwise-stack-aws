@@ -366,6 +366,10 @@ addons:
   unifiedviews:
     enabled: true
     externalUrl: ""
+  refine:
+    enabled: true
+    externalUrl: ""
+    allowedCidrs: []
 
 # Note: vendored GraphRAG values (chatbot/conversation/components/
 # workflows) are NOT defined here -- the graphrag chart is installed

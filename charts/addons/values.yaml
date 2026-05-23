@@ -60,3 +60,17 @@ unifiedviews:
   license:
     secretName: unifiedviews-license
     secretKey: uv-license.key
+
+refine:
+  enabled: true
+  image:
+    repository: ontotext/refine
+    tag: "1.2.2"
+  externalUrl: ""           # https://refine.<sub>.<base>
+  # CIDR allowlist for the Ingress (terraform.tfvars admin_cidr).
+  # Empty -> annotation omitted -> ingress open. render-values.sh
+  # populates this on every deploy.
+  allowedCidrs: []
+  graphdb:
+    # Display-only; surfaced on the console card. No env wiring.
+    internalUrl: "http://graphwise-stack-graphdb-projects:7200"
