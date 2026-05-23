@@ -105,6 +105,13 @@ fi
 if [ -z "${ADMIN_CIDR:-}" ]; then
     echo "WARN: could not parse admin_cidr from $TFVARS_PATH -- Refine ingress will not be CIDR-restricted" >&2
     ADMIN_CIDR="0.0.0.0/0"
+elif ! [[ "$ADMIN_CIDR" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]]; then
+    # Defense in depth: if the sed pipeline produces something that
+    # isn't a valid IPv4 CIDR (e.g. tfvars writes admin_cidr unquoted,
+    # which is invalid HCL but caught only at apply time), fail loud
+    # rather than emit garbage into the ingress annotation.
+    echo "WARN: admin_cidr parsed as '$ADMIN_CIDR' which is not a valid IPv4 CIDR -- Refine ingress will not be CIDR-restricted" >&2
+    ADMIN_CIDR="0.0.0.0/0"
 fi
 
 # ---------------------------------------------------------------------
