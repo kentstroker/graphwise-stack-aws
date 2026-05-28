@@ -460,6 +460,25 @@ docker pull "$KEYCLOAK_RUNTIME_IMAGE"
 kind load docker-image "$KEYCLOAK_RUNTIME_IMAGE" --name "$KIND_CLUSTER_NAME"
 
 # ---------------------------------------------------------------------------
+# Build + load the arm64-compatible Refine image (optional)
+# ---------------------------------------------------------------------------
+# ontotext/refine:1.2.x on Docker Hub is amd64-only (single-platform
+# manifest.v2). Graphwise also ships a platform-independent zip (Java
+# only, no native binaries) that runs fine on arm64 under any JRE 11.
+# If the operator has dropped that zip under refine/ontorefine-1.2.1/,
+# wrap it in a local image and `kind load` it. Otherwise skip silently
+# -- vanilla deploys without Refine still work, the chart defaults
+# addons.refine.enabled=false so no pod is created.
+if [ -d "$REPO_ROOT/refine/ontorefine-1.2.1" ]; then
+    echo "Found Refine distribution; building arm64-compatible image..."
+    "$REPO_ROOT/scripts/build-refine-image.sh"
+else
+    echo "No Refine distribution at refine/ontorefine-1.2.1/ -- skipping"
+    echo "  Refine image build. Drop the vendor zip there + re-run this"
+    echo "  script if you want Refine on this deploy."
+fi
+
+# ---------------------------------------------------------------------------
 # metrics-server (for HPA + `kubectl top`)
 # ---------------------------------------------------------------------------
 # --kubelet-insecure-tls is required on KIND because the kubelet's

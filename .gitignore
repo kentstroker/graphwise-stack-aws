@@ -26,6 +26,17 @@ files/dash.yaml
 files/.DS_Store
 
 # ---------------------------------------------------------------------------
+# Ontotext Refine vendor distribution
+# ---------------------------------------------------------------------------
+# The platform-independent Refine zip (Java-based, no native binaries)
+# is the workaround for ontotext/refine:1.2.x being amd64-only on
+# Docker Hub. Operators drop the extracted dist into refine/ontorefine-*/
+# locally; scripts/build-refine-image.sh wraps it in an arm64-compatible
+# eclipse-temurin base + `kind load`s it. ~330MB; treat like a license
+# file -- never commit.
+refine/ontorefine-*/
+
+# ---------------------------------------------------------------------------
 # Extracted Keycloak realm exports
 # ---------------------------------------------------------------------------
 # scripts/extract-poolparty-realm.sh writes a realm JSON containing client

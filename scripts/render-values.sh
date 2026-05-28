@@ -115,6 +115,21 @@ elif ! [[ "$ADMIN_CIDR" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]]; then
 fi
 
 # ---------------------------------------------------------------------
+# Refine: detect whether the operator has dropped the vendor zip under
+# refine/ontorefine-*/. If yes, cluster-bootstrap.sh has (or will)
+# build the arm64-compatible image; auto-emit the enable + image
+# override so the chart picks up the local image. If no, leave Refine
+# at the chart default (enabled=false) -- ontotext/refine:1.2.x is
+# amd64-only and would crash-loop on Graviton.
+# ---------------------------------------------------------------------
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -d "${REPO_ROOT}/refine/ontorefine-1.2.1" ]; then
+    REFINE_ENABLE_BLOCK=$'\n    enabled: true\n    image:\n      repository: graphwise-refine\n      tag: local\n      pullPolicy: IfNotPresent'
+else
+    REFINE_ENABLE_BLOCK=""
+fi
+
+# ---------------------------------------------------------------------
 # Umbrella overlay (graphwise-stack release)
 # ---------------------------------------------------------------------
 render_umbrella() {
@@ -186,7 +201,7 @@ addons:
     externalUrl: "https://${RDF4J_HOST}"
   unifiedviews:
     externalUrl: "https://${UV_HOST}"
-  refine:
+  refine:${REFINE_ENABLE_BLOCK}
     externalUrl: "https://${REFINE_HOST}"
     allowedCidrs: ["${ADMIN_CIDR}"]
 EOF
