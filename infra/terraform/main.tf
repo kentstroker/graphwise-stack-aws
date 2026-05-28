@@ -96,6 +96,7 @@ data "cloudinit_config" "bootstrap" {
     filename     = "bootstrap.sh"
     content = templatefile("${path.module}/user-data.sh.tpl", {
       github_repo_url    = var.github_repo_url
+      github_branch      = var.github_branch
       hostname_fqdn      = "${var.subdomain}.${var.base_domain}"
       n8n_encryption_key = random_id.n8n_encryption_key.hex
       route53_zone_id    = var.route53_zone_id

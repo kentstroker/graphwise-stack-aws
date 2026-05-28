@@ -6,9 +6,9 @@
 # graphwise.sh exporting GRAPHWISE_APEX/ROUTE53_ZONE_ID/AWS_REGION.
 # Operators run scripts/cluster-bootstrap.sh next.
 #
-# Template substitutions: $${github_repo_url}, $${hostname_fqdn},
-# $${n8n_encryption_key}, $${route53_zone_id}, $${aws_region}.
-# Other shell expansions need $$ to survive Terraform.
+# Template substitutions: $${github_repo_url}, $${github_branch},
+# $${hostname_fqdn}, $${n8n_encryption_key}, $${route53_zone_id},
+# $${aws_region}. Other shell expansions need $$ to survive Terraform.
 #
 # AWS user-data has a 16KB limit (after base64-encode). Keep this
 # file lean -- detailed rationale belongs in CLAUDE.md, not here.
@@ -112,7 +112,7 @@ fi
 sudo -u "$TARGET_USER" -i bash <<INNER
 set -euo pipefail
 cd "\$HOME"
-[[ -d "graphwise-stack-aws" ]] || git clone "$REPO_URL" graphwise-stack-aws
+[[ -d "graphwise-stack-aws" ]] || git clone -b "${github_branch}" "$REPO_URL" graphwise-stack-aws
 cd graphwise-stack-aws
 if ! kind get clusters 2>/dev/null | grep -qx graphwise; then
     kind create cluster --name graphwise --config infra/kind/kind-config.yaml

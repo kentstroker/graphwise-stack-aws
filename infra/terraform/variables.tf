@@ -93,6 +93,12 @@ variable "github_repo_url" {
   default     = "https://github.com/kentstroker/graphwise-stack-aws.git"
 }
 
+variable "github_branch" {
+  description = "Branch of github_repo_url that cloud-init clones onto the EC2. Default \"main\" matches the canonical deploy path. Set to a feature branch (e.g. \"refine-rc3\") when running destroy/apply to test in-flight chart changes that haven't been merged yet -- otherwise the new EC2 boots with the GitHub default-branch state and any local-only edits get clobbered."
+  type        = string
+  default     = "main"
+}
+
 variable "availability_zone" {
   description = "Availability zone to place the instance in (e.g. \"us-west-2a\"). Must be in the chosen region. When unset, Terraform picks whichever default-VPC subnet AWS lists first — which may not match your admin_cidr subnet."
   type        = string
