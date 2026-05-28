@@ -53,6 +53,15 @@ le_email = "CHANGEME@example.com"
 #   <app>.<subdomain>.<base_domain>     -- every app (poolparty, auth, ...)
 subdomain = "CHANGEME"                       # e.g. "scott", "acme-corp", or multi-level "demo.stroker"
 
+# Operator-attribution tags surfaced on every AWS resource Terraform
+# creates (Billing, Cost Explorer, Resource Groups). `creator` is
+# REQUIRED (validation rejects an empty string) so nothing lands in
+# the account anonymously. `purpose` is optional but strongly
+# recommended -- helps later shared-account cleanup tell live demos
+# from forgotten test rigs.
+creator = "CHANGEME"                         # e.g. "Kent Stroker" or "kent.stroker@graphwise.ai"
+purpose = "CHANGEME"                         # e.g. "Chevron presales demo", "RC3 internal validation"
+
 # An EXISTING key pair in the target region (EC2 → Network & Security →
 # Key Pairs). You must already have the matching .pem file on your
 # laptop — Terraform does not create or download key material.
