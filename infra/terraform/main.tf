@@ -199,6 +199,8 @@ locals {
     Subdomain = var.subdomain
     ManagedBy = "terraform"
     Project   = "graphwise-stack-aws"
+    Creator   = var.creator
+    Purpose   = var.purpose
   }
 
   tags = merge(local.base_tags, var.extra_tags)

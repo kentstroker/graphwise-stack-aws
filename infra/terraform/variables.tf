@@ -110,8 +110,24 @@ variable "instance_name_prefix" {
   default     = "graphwise-stack"
 }
 
+variable "creator" {
+  description = "Name (or email) of the operator running this deployment. Surfaced as the Creator tag on every AWS resource Terraform creates -- shows up in Billing/Cost Explorer, AWS Config, and Resource Groups so shared-account spend can be attributed and orphaned resources can be traced back to their owner. Required: empty string fails the validation below to prevent unattributed deploys from landing in the account."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.creator)) > 0
+    error_message = "creator must be set to a name or email so AWS resources are attributable. Add `creator = \"Your Name\"` to terraform.tfvars."
+  }
+}
+
+variable "purpose" {
+  description = "Short free-text label describing what this deployment is FOR (e.g. \"Chevron presales demo\", \"RC3 internal validation\", \"customer X workshop 2026-06\"). Surfaced as the Purpose tag on every AWS resource. Helps shared-account cleanup -- you can scan tags later and tell which EC2s are still load-bearing for a live engagement vs. someone's forgotten test rig. Optional but strongly recommended; defaults to the literal string \"unspecified\"."
+  type        = string
+  default     = "unspecified"
+}
+
 variable "extra_tags" {
-  description = "Additional tags applied to every resource Terraform creates. Useful for your org's cost allocation or owner tagging. Merged with the module's own tags (Name, Subdomain, ManagedBy)."
+  description = "Additional tags applied to every resource Terraform creates. Useful for org-specific cost allocation or compliance tagging beyond the Creator/Purpose pair. Merged AFTER local.base_tags, so an extra_tags entry with the same key overrides the module default (escape hatch for orgs whose tagging policy expects, say, `Owner` instead of `Creator`)."
   type        = map(string)
   default     = {}
 }
