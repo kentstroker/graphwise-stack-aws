@@ -189,6 +189,77 @@ SMC step:**
 The actual Bedrock API error (if any) appears in
 `kubectl -n graphwise logs deploy/graphwise-stack-poolparty | grep -iE 'bedrock|accessdenied'`.
 
+### Use the standalone graphdb-projects instance (optional)
+
+PoolParty defaults to its in-namespace embedded GraphDB
+(`graphwise-stack-graphdb-embedded`). To point a PoolParty project at
+the standalone `graphdb-projects` instance instead (separate
+namespace, independent JVM/heap, lifecycle decoupled from the
+PoolParty pod), configure the project's SPARQL endpoint at the
+**in-cluster Service URL**:
+
+```
+http://graphwise-stack-graphdb-projects.graphdb.svc.cluster.local:7200/repositories/<repo-id>
+```
+
+Update endpoint (when PoolParty asks for it separately):
+
+```
+http://graphwise-stack-graphdb-projects.graphdb.svc.cluster.local:7200/repositories/<repo-id>/statements
+```
+
+> **Do NOT use the public hostname**
+> (`https://graphdb-projects.<sub>.<base>/...`). PoolParty runs
+> inside the cluster; the public URL forces egress through the EIP
+> and re-entry via ingress, and KIND-on-Docker doesn't reliably
+> hairpin that path — symptom is "doesn't work" with nothing in
+> ingress logs. The cluster-DNS URL is plain HTTP on port 7200,
+> pod-to-pod (~10 ms round trip), no TLS handshake.
+
+**The repository must exist first.** Create it from the GraphDB
+Workbench at `https://graphdb-projects.<sub>.<base>/` (Setup →
+Repositories → Create new repository); pick the `<repo-id>` and
+substitute it into the URLs above.
+
+**Verify reachability from PoolParty's pod** before pointing
+PoolParty at it:
+
+```bash
+POOLPARTY_POD=$(kubectl -n graphwise get pod -l app.kubernetes.io/name=poolparty -o jsonpath='{.items[0].metadata.name}')
+kubectl -n graphwise exec "$POOLPARTY_POD" -- curl -sS -o /dev/null -w 'HTTP=%{http_code}\n' http://graphwise-stack-graphdb-projects.graphdb.svc.cluster.local:7200/rest/repositories
+```
+
+Expect `HTTP=200`. The JSON body (drop `-o /dev/null` to see it)
+lists every repository in `graphdb-projects` — confirm `<repo-id>`
+appears there. Then probe the repository's SPARQL endpoint directly:
+
+```bash
+kubectl -n graphwise exec "$POOLPARTY_POD" -- curl -sS -G \
+    --data-urlencode 'query=ASK { ?s ?p ?o }' \
+    -H 'Accept: application/sparql-results+json' \
+    http://graphwise-stack-graphdb-projects.graphdb.svc.cluster.local:7200/repositories/<repo-id>
+```
+
+Expect `{"head":{},"boolean":true|false}`.
+
+**Troubleshooting:**
+
+- PoolParty "could not connect" / generic failure: the URL is the
+  public `graphdb-projects.<sub>.<base>` hostname, not the cluster
+  Service. Switch to the `…svc.cluster.local:7200/...` form above.
+- 401 / 403 from the verification curl: GraphDB-native security is
+  on for `graphdb-projects` (uncommon — defaults off; only the
+  AdeptNova instance ships with it on). Check
+  `kubectl -n graphdb get secret | grep admin` for the admin
+  password and provide credentials in PoolParty's config.
+- 404 on `/repositories/<repo-id>`: the repository doesn't exist in
+  `graphdb-projects` yet. Create it via the Workbench (above).
+- `curl: (6/7)` or hang from the verification: cross-namespace DNS
+  or NetworkPolicy issue — confirm
+  `kubectl -n graphdb get svc graphwise-stack-graphdb-projects`
+  returns a ClusterIP, and check `kubectl get netpol -A` for
+  anything restricting ingress into the `graphdb` namespace.
+
 ## PoolParty GraphSearch
 
 **URL:** `https://poolparty.<sub>.<base>/GraphSearch/`

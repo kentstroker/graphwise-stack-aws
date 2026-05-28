@@ -921,6 +921,36 @@ active. "Build Your Taxonomy" now works in the taxonomy editor.
 Troubleshooting + the full credentials/IAM context lives in
 [CONSOLE-GUIDE → PoolParty Thesaurus → Build Your Taxonomy](CONSOLE-GUIDE.md#build-your-taxonomy-llm-assisted-optional).
 
+### 11. Optional — Point PoolParty at the standalone `graphdb-projects`
+
+By default PoolParty stores project data in its in-namespace embedded
+GraphDB sidecar (`graphwise-stack-graphdb-embedded`). To use the
+standalone `graphdb-projects` instance instead (separate namespace,
+independent JVM/heap, lifecycle decoupled from the PoolParty pod),
+configure the PoolParty project's SPARQL endpoint to the **in-cluster
+Service URL**:
+
+```
+http://graphwise-stack-graphdb-projects.graphdb.svc.cluster.local:7200/repositories/<repo-id>
+```
+
+Critical: use the in-cluster URL, NOT the public
+`graphdb-projects.<sub>.<base>` hostname. The public URL forces
+traffic out of the cluster through the EIP and back in via ingress;
+KIND-on-Docker doesn't reliably hairpin that path, and the symptom
+is "doesn't work" with nothing useful in ingress logs. The
+cluster-DNS URL is plain HTTP on port 7200, pod-to-pod (~10 ms), no
+TLS handshake.
+
+The repository must exist in `graphdb-projects` first — create it via
+the Workbench at `https://graphdb-projects.<sub>.<base>/` (Setup →
+Repositories → Create new repository), then substitute `<repo-id>`
+into the URL above.
+
+Full URL-shape reference (query vs update endpoints, in-pod
+reachability probes, troubleshooting checklist) lives in
+[CONSOLE-GUIDE → PoolParty Thesaurus → Use the standalone graphdb-projects instance](CONSOLE-GUIDE.md#use-the-standalone-graphdb-projects-instance-optional).
+
 ---
 
 ## Day-2 lifecycle
