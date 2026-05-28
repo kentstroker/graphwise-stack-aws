@@ -103,6 +103,11 @@ existing_eip_allocation_id = "eipalloc-CHANGEME"
 # Repo to clone on first boot. Default is the public upstream.
 # github_repo_url = "https://github.com/kentstroker/graphwise-stack-aws.git"
 
+# Branch of github_repo_url that cloud-init clones onto the EC2.
+# "main" is the canonical deploy path. Override to a feature branch
+# only when destroy/applying chart changes that haven't merged yet.
+# github_branch = "main"
+
 # Tag prefix. Final Name tag is "<prefix>-<subdomain>".
 # instance_name_prefix = "graphwise-stack"
 
