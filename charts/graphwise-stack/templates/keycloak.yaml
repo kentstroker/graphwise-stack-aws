@@ -21,6 +21,22 @@ metadata:
     {{- include "graphwise-stack.labels" . | nindent 4 }}
 spec:
   instances: {{ .Values.keycloak.instances }}
+  {{- if .Values.keycloak.image }}
+  # Custom Keycloak runtime image (default: ontotext/poolparty-keycloak,
+  # which bundles PoolParty's poolparty-default-settings-provider SPI +
+  # poolparty login theme into a Keycloak 25.0.6 distribution). Without
+  # this, post-deploy user creation 500s in PoolParty with "skosView is
+  # missing" because the SPI that bridges Keycloak user-creation events
+  # to PoolParty's per-user settings DB isn't on the classpath.
+  #
+  # startOptimized=false is required for any custom-provider image:
+  # the operator's default `kc.sh start --optimized` path assumes the
+  # image was built with `kc.sh build` covering its current arg set.
+  # Setting it false runs the auto-build step at pod startup so the
+  # vendored providers actually register.
+  image: {{ .Values.keycloak.image | quote }}
+  startOptimized: false
+  {{- end }}
   db:
     vendor: postgres
     host: {{ .Values.keycloak.postgres.name }}-rw
@@ -33,8 +49,9 @@ spec:
       key: password
   ingress:
     # Operator-managed Ingress is HTTP-only when http.httpEnabled=true,
-    # and the operator (v26.x) gives us no way to inject a `tls:` block
-    # via the CR. Without `tls:`, cert-manager's ingress-shim never
+    # and the operator gives us no way to inject a `tls:` block via the
+    # CR (true for every operator version we've tested through 25.0.6 /
+    # 26.4.x). Without `tls:`, cert-manager's ingress-shim never
     # mints a cert and every https://auth.<apex> request fails the
     # handshake. We ship our own Ingress in keycloak-ingress.yaml with
     # the TLS block + cert-manager annotation, matching every other

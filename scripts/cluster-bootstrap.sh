@@ -150,7 +150,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INGRESS_NGINX_CHART_VERSION="4.11.3"
 CERT_MANAGER_VERSION="v1.16.2"
 CNPG_CHART_VERSION="0.22.1"
-KEYCLOAK_OPERATOR_VERSION="26.4.2"
+KEYCLOAK_OPERATOR_VERSION="25.0.6"
 METRICS_SERVER_CHART_VERSION="3.12.2"
 KUBERNETES_DASHBOARD_VERSION="v2.7.0"   # raw-YAML install (see Dashboard block below)
 KUBE_PROMETHEUS_STACK_VERSION="65.5.0"
@@ -434,9 +434,30 @@ helm upgrade --install cnpg cnpg/cloudnative-pg \
 # Keycloak operator + CRDs
 # ---------------------------------------------------------------------------
 # CRDs first (cluster-scoped), then the operator into the keycloak ns.
+# Operator pinned to 25.0.6 so it manages a v25.x Keycloak server --
+# matches the Keycloak version baked into ontotext/poolparty-keycloak
+# (see Keycloak runtime image pre-load just below). Bumping past 25.x
+# breaks the SPI: PoolParty's poolparty-default-settings-provider was
+# built against the KC 25 SPI ABI and silently fails to register in
+# KC 26, leaving newly-created users with no skosView row -- visible
+# downstream as PoolParty INTERNAL ERROR on their first login.
 kubectl apply -f "https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/${KEYCLOAK_OPERATOR_VERSION}/kubernetes/keycloaks.k8s.keycloak.org-v1.yml"
 kubectl apply -f "https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/${KEYCLOAK_OPERATOR_VERSION}/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml"
 kubectl -n keycloak apply -f "https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/${KEYCLOAK_OPERATOR_VERSION}/kubernetes/kubernetes.yml"
+
+# ---------------------------------------------------------------------------
+# Pre-load the PoolParty-flavoured Keycloak runtime image into KIND
+# ---------------------------------------------------------------------------
+# The umbrella's Keycloak CR points at ontotext/poolparty-keycloak (which
+# is a full Keycloak 25.0.6 distribution with PoolParty's SPI + login
+# theme baked in). Pulling on the host + `kind load`-ing it into the
+# cluster's node containers avoids the KIND nodes trying to pull from
+# Docker Hub on every cluster recreate (and lets us pin by digest in
+# values.yaml without needing a private registry).
+KEYCLOAK_RUNTIME_IMAGE="${KEYCLOAK_RUNTIME_IMAGE:-ontotext/poolparty-keycloak:latest}"
+KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-graphwise}"
+docker pull "$KEYCLOAK_RUNTIME_IMAGE"
+kind load docker-image "$KEYCLOAK_RUNTIME_IMAGE" --name "$KIND_CLUSTER_NAME"
 
 # ---------------------------------------------------------------------------
 # metrics-server (for HPA + `kubectl top`)

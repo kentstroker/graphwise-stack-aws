@@ -139,6 +139,18 @@ keycloak:
   name: graphwise-keycloak
   namespace: keycloak
   instances: 1
+  # Keycloak runtime image. Default: PoolParty's flavour of Keycloak
+  # 25.0.6 -- a full distribution with poolparty-default-settings-
+  # provider (the SPI that creates each new user's skosView row in
+  # PoolParty's DB on Keycloak CREATE_USER events) and the poolparty
+  # login theme already on the classpath. Without it, post-deploy
+  # users 500 in PoolParty with "skosView is missing" on first login
+  # (only the chart-seeded `superadmin` works). Empty string ("")
+  # falls back to the operator's default Keycloak image -- DON'T use
+  # that with this stack unless you know you're testing the gap.
+  # Pre-loaded into KIND by cluster-bootstrap.sh so this name doesn't
+  # need to be reachable from inside the cluster.
+  image: "ontotext/poolparty-keycloak:latest"
   postgres:
     name: keycloak-postgres
     instances: 1
