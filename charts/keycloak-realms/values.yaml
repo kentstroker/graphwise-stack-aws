@@ -43,3 +43,12 @@ graphrag:
 # installs successfully, but PoolParty will have no realm to bind to).
 poolparty:
   enabled: true
+  # Realm role composed into `default-roles-poolparty` so every newly-
+  # created Keycloak user automatically gets login authorization for
+  # the `ppt` client without an admin having to grant a role per user.
+  # Default `PoolPartyUser` is the minimum-privilege login-capable role
+  # (`PoolPartyReadOnly` doesn't satisfy the UMA policies; `local-user`
+  # alone gets a 403 / not_authorized). Set to `PoolPartySuperAdmin`
+  # if you want every demo user to be a super-admin out of the gate.
+  # See poolparty-default-roles-patch-job.yaml for the wiring.
+  defaultUserRole: PoolPartyUser

@@ -1,0 +1,164 @@
+{{- if .Values.poolparty.enabled }}
+{{/*
+Helm post-install/post-upgrade hook that composes a default user role
+into `default-roles-poolparty` so every newly-created Keycloak user
+in the poolparty realm automatically has login authorization for the
+`ppt` client.
+
+Why this exists:
+  The realm export from `ontotext/poolparty-keycloak` ships a
+  `default-roles-poolparty` composite that includes only the standard
+  Keycloak defaults (`uma_authorization`, `offline_access`) -- NOT
+  PoolPartyUser. The vendor's expected user-creation flow is LDAP-
+  driven: their `poolparty-default-role-ldap-mapper` SPI tags incoming
+  LDAP users with the right realm role. Users created directly in
+  Keycloak (admin UI, kcadm, PoolParty's own admin UI which proxies
+  the Keycloak admin REST API) fall outside that flow and end up with
+  no PoolParty-authorizing role -- they authenticate fine but hit
+  `403 access_denied / not_authorized` from PoolParty's UMA layer.
+
+  This Job runs `POST /admin/realms/poolparty/roles/default-roles-
+  poolparty/composites` with the configured role (default
+  `PoolPartyUser`), making it implicit for every new local user. POST
+  is idempotent: re-adding a role to a composite no-ops with HTTP 204.
+
+Auth flow (mirrors graphrag-realm-patch-job.yaml):
+  1. Wait for /realms/poolparty/.well-known/openid-configuration so we
+     know the realm import (async, operator-driven) has completed.
+  2. Get a temp-admin token from master.
+  3. Wire poolparty-realm client roles into master's admin composite
+     (same pattern bootstrap-admin uses for the global realm list --
+     safe to re-run, no-ops on already-wired roles). Without this the
+     temp-admin token doesn't carry manage-realm rights on poolparty.
+  4. Refresh the token so the new roles appear in the JWT.
+  5. GET the role we want to compose (defaults to PoolPartyUser) and
+     POST it to the default-roles-poolparty composite.
+
+Hook semantics:
+  - post-install,post-upgrade: runs on every install + upgrade.
+  - hook-weight: 8 (after bootstrap-admin at 5).
+  - hook-delete-policy: before-hook-creation,hook-succeeded.
+
+Lives in the keycloak namespace because Keycloak runs there.
+*/}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: poolparty-default-roles-patch
+  namespace: {{ .Values.keycloakNamespace | default "keycloak" }}
+  labels:
+    {{- include "keycloak-realms.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "8"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak-realms.labels" . | nindent 8 }}
+        app.kubernetes.io/name: poolparty-default-roles-patch
+        app.kubernetes.io/component: poolparty-default-roles-patch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: patch
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KC_SERVER
+              value: "http://{{ .Values.keycloakCRName }}-service.{{ .Values.keycloakNamespace | default "keycloak" }}:8080"
+            - name: TEMP_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloakCRName }}-initial-admin
+                  key: username
+            - name: TEMP_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloakCRName }}-initial-admin
+                  key: password
+            - name: REALM
+              value: "poolparty"
+            - name: DEFAULT_COMPOSITE
+              value: "default-roles-poolparty"
+            - name: COMPOSE_ROLE
+              value: {{ .Values.poolparty.defaultUserRole | default "PoolPartyUser" | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache bash curl jq >/dev/null
+              exec /bin/bash <<'PATCH_EOF'
+              set -euo pipefail
+
+              get_token() {
+                  curl -sf \
+                      --data-urlencode "client_id=admin-cli" \
+                      --data-urlencode "grant_type=password" \
+                      --data-urlencode "username=$TEMP_ADMIN_USER" \
+                      --data-urlencode "password=$TEMP_ADMIN_PASS" \
+                      "$KC_SERVER/realms/master/protocol/openid-connect/token" \
+                      | jq -r .access_token
+              }
+
+              # 1. Wait for poolparty realm to exist (operator may still
+              # be importing it on first install).
+              echo "Waiting for $REALM realm at $KC_SERVER/realms/$REALM ..."
+              for i in $(seq 1 60); do
+                  if curl -sf -o /dev/null \
+                      "$KC_SERVER/realms/$REALM/.well-known/openid-configuration"; then
+                      echo "  realm '$REALM' present after $i attempt(s)"
+                      break
+                  fi
+                  [ "$i" = "60" ] && { echo "ERROR: realm '$REALM' never appeared (5min)" >&2; exit 1; }
+                  sleep 5
+              done
+
+              # 2. Auth as temp-admin (master).
+              TOKEN=$(get_token)
+              [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] && { echo "ERROR: temp-admin auth failed" >&2; exit 1; }
+
+              # 3. Wire poolparty-realm client roles into master's admin
+              # composite so the temp-admin token carries manage-realm
+              # rights on poolparty. Idempotent.
+              echo "Wiring $REALM-realm client roles into master admin composite..."
+              REALM_CLIENT_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/master/clients?clientId=$REALM-realm" \
+                  | jq -r '.[0].id // empty')
+              if [ -z "$REALM_CLIENT_ID" ]; then
+                  echo "ERROR: $REALM-realm client doesn't exist in master (realm import failed?)" >&2
+                  exit 1
+              fi
+              ROLES=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/master/clients/$REALM_CLIENT_ID/roles")
+              COUNT=$(echo "$ROLES" | jq 'length')
+              curl -s -o /dev/null -w "  composite POST -> HTTP %{http_code} (${COUNT} roles wired)\n" \
+                  -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                  "$KC_SERVER/admin/realms/master/roles/admin/composites" \
+                  -d "$ROLES"
+
+              # 4. Refresh the token so the new composite roles appear.
+              TOKEN=$(get_token)
+
+              # 5. GET the role we want to compose, POST it to the
+              # default-roles-poolparty composite. POST is idempotent;
+              # re-adding an existing composite member returns 204.
+              echo "Composing '$COMPOSE_ROLE' into '$DEFAULT_COMPOSITE' on realm '$REALM'..."
+              ROLE_REPR=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+                  "$KC_SERVER/admin/realms/$REALM/roles/$COMPOSE_ROLE")
+              if [ -z "$ROLE_REPR" ] || [ "$(echo "$ROLE_REPR" | jq -r .name)" != "$COMPOSE_ROLE" ]; then
+                  echo "ERROR: realm role '$COMPOSE_ROLE' not found in '$REALM' (realm import incomplete or role name typo'd?)" >&2
+                  exit 1
+              fi
+              curl -s -o /dev/null -w "  compose POST -> HTTP %{http_code}\n" \
+                  -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                  "$KC_SERVER/admin/realms/$REALM/roles/$DEFAULT_COMPOSITE/composites" \
+                  -d "[ $ROLE_REPR ]"
+
+              echo "Done. New users in '$REALM' will inherit '$COMPOSE_ROLE' via '$DEFAULT_COMPOSITE'."
+              PATCH_EOF
+{{- end }}
