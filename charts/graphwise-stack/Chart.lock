@@ -1,7 +1,7 @@
 dependencies:
 - name: keycloak-realms
   repository: file://../keycloak-realms
-  version: 1.0.0-rc2
+  version: 1.0.0-rc4
 - name: poolparty-elasticsearch
   repository: file://../poolparty-elasticsearch
   version: 1.0.0-rc2
@@ -22,6 +22,6 @@ dependencies:
   version: 1.0.0-rc2
 - name: addons
   repository: file://../addons
-  version: 1.0.0-rc3
-digest: sha256:4147925a18503e644f6c047ab5d34b1a2d8952b72144dd92487fecd92b2917ea
-generated: "2026-05-23T13:31:15.139286-07:00"
+  version: 1.0.0-rc4
+digest: sha256:c332905e09171bf05b2d39c3fb61d665fb9d0f933c33938d340092d0f64fafc9
+generated: "2026-05-28T06:53:43.203801-07:00"
