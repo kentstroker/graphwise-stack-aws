@@ -144,9 +144,16 @@ spec:
               # 4. Refresh the token so the new composite roles appear.
               TOKEN=$(get_token)
 
-              # 5. GET the role we want to compose, POST it to the
-              # default-roles-poolparty composite. POST is idempotent;
-              # re-adding an existing composite member returns 204.
+              # 5. GET the role we want to compose, wrap it cleanly in a
+              # single-element JSON array with `jq -s`, POST to the
+              # composite. POST is idempotent: re-adding an existing
+              # composite member returns 204. Earlier version of this
+              # block built the body with shell string interpolation
+              # (`-d "[ $ROLE_REPR ]"`) and did not check the response
+              # code; multi-line JSON inside the quoted shell expansion
+              # silently malformed the body, the server returned 400,
+              # and Helm still saw the Job as succeeded because curl's
+              # exit code is 0 for completed-with-HTTP-error.
               echo "Composing '$COMPOSE_ROLE' into '$DEFAULT_COMPOSITE' on realm '$REALM'..."
               ROLE_REPR=$(curl -sf -H "Authorization: Bearer $TOKEN" \
                   "$KC_SERVER/admin/realms/$REALM/roles/$COMPOSE_ROLE")
@@ -154,10 +161,28 @@ spec:
                   echo "ERROR: realm role '$COMPOSE_ROLE' not found in '$REALM' (realm import incomplete or role name typo'd?)" >&2
                   exit 1
               fi
-              curl -s -o /dev/null -w "  compose POST -> HTTP %{http_code}\n" \
+              echo "$ROLE_REPR" | jq -s '.' > /tmp/compose.json
+              HTTP=$(curl -s -o /tmp/compose.resp -w '%{http_code}' \
                   -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
                   "$KC_SERVER/admin/realms/$REALM/roles/$DEFAULT_COMPOSITE/composites" \
-                  -d "[ $ROLE_REPR ]"
+                  --data-binary @/tmp/compose.json)
+              echo "  compose POST -> HTTP $HTTP"
+              if [ "$HTTP" != "204" ] && [ "$HTTP" != "201" ]; then
+                  echo "ERROR: composite POST failed. Response body:" >&2
+                  cat /tmp/compose.resp >&2
+                  echo >&2
+                  exit 1
+              fi
+
+              # 6. Verify the composite now actually contains the role
+              # (defense-in-depth against future server-side behaviour
+              # changes that swallow the POST silently).
+              if ! curl -sf -H "Authorization: Bearer $TOKEN" \
+                      "$KC_SERVER/admin/realms/$REALM/roles/$DEFAULT_COMPOSITE/composites" \
+                      | jq -e --arg n "$COMPOSE_ROLE" 'map(.name) | index($n)' >/dev/null; then
+                  echo "ERROR: '$COMPOSE_ROLE' is not in '$DEFAULT_COMPOSITE' after POST -- the composite-add didn't take." >&2
+                  exit 1
+              fi
 
               echo "Done. New users in '$REALM' will inherit '$COMPOSE_ROLE' via '$DEFAULT_COMPOSITE'."
               PATCH_EOF
