@@ -62,7 +62,12 @@ unifiedviews:
     secretKey: uv-license.key
 
 refine:
-  enabled: true
+  # OFF by default: ontotext/refine:1.2.2 is amd64-only (single-platform
+  # docker manifest.v2). On the canonical Graviton (arm64) deploy this
+  # pod crashes immediately with `exec /opt/ontorefine/dist/bin/ontorefine:
+  # exec format error`. The umbrella also defaults this to false; flip
+  # both to true ONLY on an amd64-instance deploy.
+  enabled: false
   image:
     repository: ontotext/refine
     tag: "1.2.2"

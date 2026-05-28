@@ -379,7 +379,15 @@ addons:
     enabled: true
     externalUrl: ""
   refine:
-    enabled: true
+    # OFF by default: ontotext/refine:1.2.2 ships an amd64-only image
+    # (manifest is a single-platform manifest.v2, no ARM64 variant). The
+    # canonical deploy targets AL2023 Graviton (arm64), where the pod
+    # crashes immediately with `exec /opt/ontorefine/dist/bin/ontorefine:
+    # exec format error`. Flip to true ONLY on an amd64-instance deploy
+    # (e.g. swap `instance_type` to a non-r6g family in tfvars). See
+    # CLAUDE.md "Currently open issues" for the vendor-side request to
+    # publish a multi-arch tag.
+    enabled: false
     externalUrl: ""
     allowedCidrs: []
 
