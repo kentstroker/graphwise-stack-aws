@@ -20,10 +20,11 @@
 # Dockerfile produces a working image on either CPU family without
 # `--platform` shenanigans.
 #
-# Distribution: refine/ontorefine-1.2.1/ is operator-supplied (gitignored,
-# treated like a license file). scripts/build-refine-image.sh expects it
-# to exist before running; cluster-bootstrap.sh skips the build cleanly
-# if the directory is absent.
+# Distribution: refine/ontorefine-1.2.1/ is checked in to the repo so
+# a plain `git clone` is enough -- no separate download step.
+# scripts/build-refine-image.sh expects it to exist before running;
+# cluster-bootstrap.sh skips the build cleanly if the directory is
+# somehow absent (shallow clone, sparse checkout, etc.).
 
 FROM eclipse-temurin:11-jre
 

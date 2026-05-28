@@ -1,0 +1,10 @@
+{
+  "project-configurations-extension/menu-label": "Export project configurations",
+  "project-configurations-extension/dialog-header": "Export Project Configurations",
+  "project-configurations-extension/copy": "Copy",
+  "project-configurations-extension/copied": "Copied!",
+  "project-configurations-extension/no-support": "No support :(",
+  "project-configurations-extension/press": "Press",
+  "project-configurations-extension/to-with-spaces": " to ",
+  "project-configurations-extension/download": "Download"
+}

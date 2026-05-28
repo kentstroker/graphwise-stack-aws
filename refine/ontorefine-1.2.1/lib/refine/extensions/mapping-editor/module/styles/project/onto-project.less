@@ -1,0 +1,150 @@
+@import url("../onto-commons.less");
+@import url("../onto-refine-icons.css");
+
+#header {
+  display: block !important;
+  height: 40px;
+  margin: 10px;
+  margin-bottom: 0px;
+  position: relative;
+  overflow: hidden;
+}
+
+// removes the OpenRefine icon from the info note in the facets side-bar
+.browsing-panel-help h1, .history-panel-help h1 {
+  background: unset;
+}
+
+.browsing-panel-help, .history-panel-help {
+  background: rgba(17, 176, 161, 0.2);
+  border: 1px solid rgb(12, 176, 160);
+  color: rgb(51, 51, 51);
+  .sharp_corners();
+}
+
+div.data-table-cell-content {
+  font-size: 12px;
+}
+
+a.column-header-menu .icon-caret-down {
+  border: 1px solid #ddd;
+  padding: 0;
+  font-size: 1.2em;
+  background: white;
+}
+
+#left-panel, .history-panel-body, .history-panel-filter {
+  background: transparent;
+}
+
+#left-panel .refine-tabs.ui-widget.ui-widget-content {
+  border: none;
+}
+
+div.data-table-container .column-header-name {
+  font-weight: normal;
+  font-size: 11px;
+}
+
+.history-panel-filter {
+  border: 1px solid #ddd;
+}
+
+.history-now {
+  background: rgb(12, 176, 160);
+}
+  
+.history-past a.history-entry:hover, .history-future a.history-entry:hover {
+  background-color: rgba(17, 176, 161, 0.2);
+}
+
+#or-proj-facFil, #or-proj-undoRedo {
+  color: #000
+}
+
+.facet-range-body {
+  padding: 5px;
+  background: #f2f2f2;
+}
+
+li.facet-container {
+  background: rgb(203, 238, 234);
+  border: 1px solid rgb(0, 54, 99);
+  color: white;
+  .sharp_corners();
+}
+  
+#right-panel {
+  background: #eee;
+}
+
+.viewpanel-header {
+  background: white;
+}
+
+.viewpanel-paging a {
+  background-color: unset;
+}
+  
+#extension-bar .button:not(:last-child) {
+  margin-right: 3px;
+}
+
+// Removes the pen icon after the project title, which does the same as clicking the title itself, but it has issues on FF
+#project-title .button-icon {
+  display: none;
+}
+
+#tool-panel {
+  position: relative;
+  height: 32px;
+}
+
+#summary-bar {
+  font-weight: normal;
+}
+
+#extension-bar {
+  float: right;
+  white-space: nowrap;
+  font-size: 1em;
+  padding: 0px;
+}
+
+#project-title {
+  left: 0px;
+  right: 400px;
+  height: 40px;
+  padding: 5px;
+  font-size: 1.6em;
+}
+
+#left-panel, #right-panel {
+  top: 50px !important;
+}
+
+.ui-tabs .ui-tabs-panel {
+  border: 1px solid #ddd;
+}
+
+.ui-tabs .ui-tabs-nav .ui-state-active, .ui-tabs .ui-tabs-nav .ui-widget-content .ui-state-active {
+  border: 1px solid #ddd;
+}
+
+#project-name-button {
+  display: inline-block;
+  max-width: 250px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+#project-permalink-button {
+  display: inline-block !important;
+  font-size: 0px;
+}
+
+#project-permalink-button:before {
+  color: @onto_orange;
+  padding-bottom: 25px;
+}

@@ -1,0 +1,51 @@
+@import-less url("../onto-commons.less");
+
+#create-project-ui-source-selection {
+  font-size: 1.3em;
+  background: white;
+}
+
+#create-project-ui-source-selection-tabs {
+  width: 15em;
+  padding-bottom: 15px;
+  padding-left: 0px;
+  color: #333;
+  border-right: 1px solid #ddd;
+}
+
+#create-project-ui-source-selection-tabs > div#or-create-from {
+  font-size: 1.4em;
+  font-weight: 400;
+}
+
+.create-project-ui-source-selection-tab.selected {
+  cursor: default;
+  color: black;
+  background: white;
+  border: 1px solid #ddd;
+  margin-right: -1px;
+  padding-right: 1px;
+  .sharp_corners();
+}
+
+.create-project-ui-source-selection-tab {
+  color: #333;
+  background: white;
+  border-block-color: #ddd;
+}
+
+// TODO: no idea why the upper selector does do anything as it matches the same element(s) that this one does
+#create-project-ui-source-selection-layout > tbody > tr > td {
+  background: white;
+  border-block-color: #ddd;
+}
+
+// both declarations below are replacing the content of the formats in order to remove the statement for the Google Drive documents
+#or-create-formats {
+  font-size: 0px;
+}
+
+#or-create-formats:before {
+  font-size: 13px;
+  content: "TSV, CSV, *SV, Excel (.xls and .xlsx), JSON, XML, RDF as XML are all supported. Support for other formats can be added with OpenRefine extensions."
+}

@@ -1,0 +1,60 @@
+// Contains all styles related to the project aliases components,
+// including the project identifier ones
+
+.aliases-select {
+  width: 275px;
+}
+
+.aliases-label,
+.identifier-label {
+  font-weight: bold;
+}
+
+.aliases-label,
+.identifier-label,
+#projectIdentifier {
+  font-size: medium;
+  cursor: default;
+}
+
+#projectIdentifier {
+  margin-left: 5px;
+}
+
+#project-identifier-container,
+#project-aliases-container {
+  margin-left: 1%;
+  vertical-align: super;
+}
+
+#project-identifier-container {
+  display: inline-flex;
+}
+
+#project-aliases-container {
+  display: inline-block;
+}
+
+.select2-container .select2-selection {
+  height: 32px;
+  overflow-y: auto;
+}
+
+// toast position adjustment, because it is cut a bit at the end
+// due to visualization in the iframe instead of the entire page
+.jq-toast-single {
+  right: 20%;
+  font-size: 14px;
+}
+
+// *******************************************************************
+// ************************* Safari **********************************
+
+// makes an adjustment to the button for Tag removal from the select 2 
+@media not all and (min-resolution:.001dpcm) {
+  @supports (-webkit-appearance:none) and (stroke-color:transparent) {
+    #project-aliases-container .select2-selection__choice__remove {
+      font-size: 80%;
+    }
+  }
+}

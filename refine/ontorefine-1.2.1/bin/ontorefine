@@ -1,0 +1,149 @@
+#!/bin/bash
+
+# OPTIONS:
+#    -h"
+#    --help        print command line options"
+#    --extensions  set Ontotext Refine butterfly module extensions
+#    -Dprop        set Java system property"
+#    -Xprop        set non-standard Java system property"
+#
+# CONTROLLING STARTUP:
+#
+# You can use these environment variables to control some options:
+#
+#    ONTOREFINE_JAVA_OPTS      - Sets additional Java options (-D or -X)
+#    ONTOREFINE_JAVA_32BIT     - Configures (if set to true) OntoRefine to run on 32bit Java
+#    ONTOREFINE_MIN_MEM        - Sets the Java minimum heap size (-Xms option).
+#    ONTOREFINE_MAX_MEM        - Sets the Java maximum heap size (-Xmx option).
+#    ONTOREFINE_HEAP_SIZE      - Sets the Java minimum and maximum heap size (-Xms and -Xmx option).
+#                         Overrides both ONTOREFINE_MIN_MEM and ONTOREFINE_MAX_MEM.
+#                         Recommended if you need to specify the heap size.
+#    ONTOREFINE_HEAP_NEWSIZE   - Sets the initial and maximum heap size for the young generation (-Xmn option).
+#    ONTOREFINE_GC_LOG         - Enables (if set to true) the logging of Java garbage collection.
+#                         The log will be written to gc-<pid>.log in the distribution directory,
+#                         unless ONTOREFINE_GC_LOG_FILE is set to a custom file.
+#    ONTOREFINE_GC_LOG_FILE    - Specifies a custom file for GC logging.
+
+SCRIPT="$0"
+
+# SCRIPT may be an arbitrarily deep series of symlinks. Loop until we have the concrete path.
+while [ -h "$SCRIPT" ] ; do
+  ls=`ls -ld "$SCRIPT"`
+  # Drop everything prior to ->
+  link=`expr "$ls" : '.*-> \(.*\)$'`
+  if expr "$link" : '/.*' > /dev/null; then
+    SCRIPT="$link"
+  else
+    SCRIPT=`dirname "$SCRIPT"`/"$link"
+  fi
+done
+
+# determine OntoRefine dist
+ONTOREFINE_DIST=`dirname "$SCRIPT"`/..
+
+# make ONTOREFINE_DIST absolute
+ONTOREFINE_DIST=`cd "$ONTOREFINE_DIST"; pwd`
+
+. "$ONTOREFINE_DIST"/bin/setvars.in.sh
+
+# Special-case path variables.
+case `uname` in
+    CYGWIN*)
+        ONTOREFINE_CLASSPATH=`cygpath -p -w "$ONTOREFINE_CLASSPATH"`
+        ONTOREFINE_DIST=`cygpath -p -w "$ONTOREFINE_DIST"`
+    ;;
+esac
+
+launch_service()
+{
+    pidpath=$1
+    daemonized=$2
+    serveronly=$3
+    props=$4
+    ONTOREFINE_parms=""
+
+    # Make sure we dont use any predefined locale, as we check some exception message strings and rely on english language
+    # As those strings are created by the OS, they are dependant on the configured locale
+    LANG=en_US.UTF-8
+    LC_ALL=en_US.UTF-8
+
+    # TODO: Why is this needed?
+    #export HOSTNAME=`hostname -s`
+
+    mainclass=OntoRefine
+
+    exec "$JAVA" "${JAVA_OPTS_ARRAY[@]}" $ONTOREFINE_JAVA_OPTS $ONTOREFINE_parms -Dontorefine.dist="$ONTOREFINE_DIST" -cp "$ONTOREFINE_CLASSPATH" $props \
+            com.ontotext.ontorefine.$mainclass
+}
+
+# Print command line usage / help
+usage() {
+    echo "Usage: $0 [-vdsh] [-p pidfile] [-Dprop] [-Xprop]"
+    echo "Start Ontotext Refine."
+    echo "    -h"
+    echo "    --help        print command line options"
+    echo "    --extensions  set Ontotext Refine butterfly module extensions"
+    echo "    -Dprop        set Java system property"
+    echo "    -Xprop        set non-standard Java system property"
+}
+
+# Parse any long getopt options and put them into properties before calling getopt below
+# Be dash compatible to make sure running under ubuntu works
+ARGV=""
+while [ $# -gt 0 ]
+do
+    case $1 in
+      --help) ARGV="$ARGV -h"; shift;;
+      --*=*) properties="$properties -Dontorefine.${1#--}"
+           shift 1
+           ;;
+      --*) [ $# -le 1 ] && {
+                echo "Option requires an argument: '$1'."
+                shift
+                continue
+            }
+           properties="$properties -Dontorefine.${1#--}=$2"
+           shift 2
+           ;;
+      *) ARGV="$ARGV $1" ; shift
+    esac
+done
+
+# Parse any command line options.
+args=`getopt vdshp:D:X: $ARGV`
+eval set -- "$args"
+
+while true; do
+    case $1 in
+        -h)
+            usage
+            exit 0
+        ;;
+        --extensions)
+            properties="$properties -Dbutterfly.modules.path=$2"
+            shift 2
+        ;;
+        -D)
+            properties="$properties -D$2"
+            shift 2
+        ;;
+        -X)
+            properties="$properties -X$2"
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        *)
+            echo "Error parsing argument $1!" >&2
+            usage
+            exit 1
+        ;;
+    esac
+done
+
+# Start up the service
+launch_service "$pidfile" "$daemonized" "$serveronly" "$properties"
+
+exit $?

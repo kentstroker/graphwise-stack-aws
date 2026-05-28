@@ -1,0 +1,28 @@
+<div class="dialog-frame project-configurations-dialog">
+  <div class="dialog-border">
+    <div class="dialog-header" bind="dialogHeader"></div>
+    <div class="dialog-body" bind="dialogBody">
+      <div class="grid-layout layout-normal layout-full">
+        <div class="project-configurations-textarea-container">
+          <textarea id="pc-textarea"
+                    spellcheck="false"
+                    wrap="off" 
+                    class="project-configurations-textarea"
+                    bind="textarea" 
+                    readonly>
+          </textarea>
+        </div>
+        <div class="buttons-container">
+          <button class="button project-configurations-copy-btn"
+                  data-clipboard-target="#pc-textarea"
+                  bind="copyButton">
+          </button>
+          <button class="button project-configurations-download-btn" bind="downloadButton"></button>
+        </div>
+      </div>
+    </div>
+    <div class="dialog-footer" bind="dialogFooter">
+      <button class="button" bind="closeButton"></button>
+    </div>
+  </div>
+</div>

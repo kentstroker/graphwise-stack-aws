@@ -46,17 +46,11 @@ if [ ! -d "$DIST_DIR" ]; then
 ${RED}ERROR:${RESET} Refine distribution missing at:
     $DIST_DIR
 
-This script wraps the platform-independent Refine zip into an
-arm64-compatible container. The zip is vendor-supplied (Graphwise);
-treat like a license file.
-
-To obtain:
-  1. Get the Refine 1.2.1 platform-independent zip from your Graphwise
-     contact.
-  2. Extract it under ${REPO_ROOT}/refine/ so the layout is:
-       refine/ontorefine-1.2.1/bin/ontorefine
-       refine/ontorefine-1.2.1/lib/...
-  3. Re-run this script.
+The extracted Refine 1.2.1 platform-independent dist normally ships
+checked in to the repo. If it's missing here, you're probably on a
+shallow / partial clone -- re-run \`git clone\` against this repo
+without --depth, or \`git checkout\` the refine/ subtree if you're
+on a sparse-checkout.
 
 Set REFINE_IMAGE or KIND_CLUSTER_NAME if you need different names.
 EOF

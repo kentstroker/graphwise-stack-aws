@@ -1,0 +1,32 @@
+.default-importing-wizard-header {
+  background: transparent;
+}
+
+#or-import-parsopt {
+  text-decoration: capitalize;
+}
+
+input[bind="projectNameInput"] {
+  padding: 6px;
+  vertical-align: middle;
+}
+
+table.data-table td.column-header {
+  background: #ebeef8;
+  border-bottom: 2px solid #003663;
+  font-weight: normal;
+}
+
+.default-importing-parsing-data-panel table td.column-header {
+  text-align: center;
+  border: 1px solid #003663;
+}
+
+// this is so (d)ucked up
+#right-panel-body > div:nth-child(1) > div:nth-child(5) > div > div.default-importing-parsing-data-panel > table > tbody > tr:nth-child(1) > td:nth-child(1) {
+  border-left: 0;
+}
+
+#right-panel-body > div:nth-child(1) > div:nth-child(5) > div > div.default-importing-parsing-data-panel > table > tbody > tr:nth-child(1) > td:last-child {
+  border-right: 0;
+}

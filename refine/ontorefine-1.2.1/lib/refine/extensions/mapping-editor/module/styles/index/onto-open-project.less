@@ -1,0 +1,30 @@
+@import url("../onto-commons.less");
+@import url("../onto-refine-icons.css");
+
+#projects-container .project .last-modified {
+  white-space: nowrap;
+  color: #003663;
+}
+
+.delete-project > img {
+  display: none;
+}
+  
+.delete-project:hover {
+  text-decoration: none;
+  color: @onto_orange !important;
+}
+
+// hides the 'About' text from the tag so that only the icon could appear
+.project td .secondary {
+  font-size: 0px;
+}
+
+.project td .secondary:before {
+  font-size: 18px;
+  color: @onto_orange;
+}
+  
+.project td .secondary:hover {
+  text-decoration: none;
+}
